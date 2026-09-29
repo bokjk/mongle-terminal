@@ -124,6 +124,23 @@ test('conditional acquire advertises support, takes a free terminal and permits 
   assert.equal(Object.hasOwn(((core as any).store as HostStore).load()!,'capabilities'),false,'Connection capabilities are not persisted workspace data');
 });
 
+test('a granted lease is in the ordered state stream before its reply resolves',async t=>{
+  const {core,request}=await harness(t),events:any[]=[];
+  const desktop=owner();desktop.deviceName='현재 컴퓨터';core.connect(desktop,event=>events.push(event));
+  const info:TerminalInfo=await request('terminals.create',{groupId:core.getState().groups[0].id,profileId:core.getState().profiles.find(p=>p.id==='cmd')?.id});const r=ref(core,info);
+  const controller=(event:any):any=>event.state.terminals.find((item:TerminalInfo)=>item.id===info.id)?.controller;
+  const states=()=>events.filter(event=>event.type==='state');
+  events.length=0;
+  const grant=await core.handle('control.acquire',{...r,cols:80,rows:24,takeover:false},desktop);
+  // The desktop renderer can receive this reply before these events. It keeps the
+  // grant until the ordered stream reports it, so every earlier snapshot must be older.
+  const reported=states().findIndex(event=>controller(event)?.epoch===grant.epoch&&controller(event)?.connectionId===desktop.id);
+  assert.ok(reported>=0,'The grant is broadcast before its reply resolves');
+  assert.ok(states().slice(0,reported).every(event=>(controller(event)?.epoch??0)<grant.epoch),'Snapshots sent before the grant carry no newer lease');
+  await core.handle('terminal.ack',{...r,seq:grant.frame.seq,epoch:grant.epoch},desktop);
+  assert.equal(controller(states().at(-1))?.ready,true,'The ACK that readies the lease is broadcast too');
+});
+
 test('conditional acquire rejects another live controller without revocation, resize, broadcast or input reset',async t=>{
   const {core,ctx,request}=await harness(t),observer=owner();observer.owner=false;observer.deviceName='휴대폰';
   let observerStates=0;core.connect(observer,event=>{if(event.type==='state')observerStates++;});
