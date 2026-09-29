@@ -1,0 +1,15 @@
+import { build } from 'esbuild';
+import { build as viteBuild } from 'vite';
+import { mkdir, copyFile } from 'node:fs/promises';
+import path from 'node:path';
+import { prepareRuntime } from '../apps/desktop/runtime';
+import { ensureHelper } from '../packages/local-ipc/index';
+const root = process.cwd();
+await mkdir(path.join(root,'dist'),{recursive:true});
+await prepareRuntime(root);
+await ensureHelper();
+await viteBuild();
+await build({ entryPoints:['packages/host/main.ts'], outfile:'dist/host/main.cjs', bundle:true, platform:'node', target:'node24', format:'cjs', external:['node-pty','bufferutil','utf-8-validate'], sourcemap:true, logLevel:'info' });
+await build({ entryPoints:['apps/desktop/main.ts'], outfile:'dist/desktop/main.cjs', bundle:true, platform:'node', target:'node24', format:'cjs', external:['electron','bufferutil','utf-8-validate'], sourcemap:true, logLevel:'info' });
+await build({ entryPoints:['apps/desktop/preload.ts'], outfile:'dist/desktop/preload.cjs', bundle:true, platform:'node', target:'node24', format:'cjs', external:['electron'], logLevel:'info' });
+console.log('Web, host, and desktop builds finished.');

@@ -1,0 +1,13 @@
+{
+  "testedAt": "2026-09-28T23:34:18.482Z",
+  "scope": "This Windows PC through private Tailscale HTTPS/WSS. Other PC and physical mobile not tested.",
+  "serveEnabled": true,
+  "status": "PASS",
+  "https": true,
+  "pairing": true,
+  "websocket": true,
+  "cleanup": {
+    "ok": true,
+    "serveRemoved": true
+  }
+}

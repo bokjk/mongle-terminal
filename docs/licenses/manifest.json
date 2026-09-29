@@ -1,0 +1,186 @@
+{
+  "schemaVersion": 1,
+  "lockfileSha256": "5a7d8f732e3db0bde1130b856253b4e4fb58ca11be9197af92d6260084241917",
+  "productionPackages": 13,
+  "notices": [
+    {
+      "name": "@xterm/addon-fit",
+      "version": "0.11.0",
+      "license": "MIT",
+      "source": "https://github.com/xtermjs/xterm.js/tree/master/addons/addon-fit",
+      "integrity": "sha512-jYcgT6xtVYhnhgxh3QgYDnnNMYTcf8ElbxxFzX0IZo+vabQqSPAjC3c1wJrKB5E19VwQei89QCiZZP86DCPF7g==",
+      "files": [
+        "licenses/xterm__addon-fit0.11.0/LICENSE"
+      ]
+    },
+    {
+      "name": "@xterm/addon-search",
+      "version": "0.16.0",
+      "license": "MIT",
+      "source": "https://github.com/xtermjs/xterm.js/tree/master/addons/addon-search",
+      "integrity": "sha512-9OeuBFu0/uZJPu+9AHKY6g/w0Czyb/Ut0A5t79I4ULoU4IfU5BEpPFVGQxP4zTTMdfZEYkVIRYbHBX1xWwjeSA==",
+      "files": [
+        "licenses/xterm__addon-search0.16.0/LICENSE"
+      ]
+    },
+    {
+      "name": "@xterm/addon-serialize",
+      "version": "0.14.0",
+      "license": "MIT",
+      "source": "https://github.com/xtermjs/xterm.js/tree/master/addons/addon-serialize",
+      "licenseOrigin": "https://github.com/xtermjs/xterm.js/blob/f447274f430fd22513f6adbf9862d19524471c04/LICENSE (same-commit @xterm/xterm archive)",
+      "integrity": "sha512-uteyTU1EkrQa2Ux6P/uFl2fzmXI46jy5uoQMKEOM0fKTyiW7cSn0WrFenHm5vO5uEXX/GpwW/FgILvv3r0WbkA==",
+      "files": [
+        "licenses/xterm__addon-serialize0.14.0/LICENSE"
+      ]
+    },
+    {
+      "name": "@xterm/headless",
+      "version": "6.0.0",
+      "license": "MIT",
+      "source": "https://github.com/xtermjs/xterm.js",
+      "licenseOrigin": "https://github.com/xtermjs/xterm.js/blob/f447274f430fd22513f6adbf9862d19524471c04/LICENSE (same-commit @xterm/xterm archive)",
+      "integrity": "sha512-5Yj1QINYCyzrZtf8OFIHi47iQtI+0qYFPHmouEfG8dHNxbZ9Tb9YGSuLcsEwj9Z+OL75GJqPyJbyoFer80a2Hw==",
+      "files": [
+        "licenses/xterm__headless6.0.0/LICENSE"
+      ]
+    },
+    {
+      "name": "@xterm/xterm",
+      "version": "6.0.0",
+      "license": "MIT",
+      "source": "https://github.com/xtermjs/xterm.js",
+      "integrity": "sha512-TQwDdQGtwwDt+2cgKDLn0IRaSxYu1tSUjgKarSDkUM0ZNiSRXFpjxEsvc/Zgc5kq5omJ+V0a8/kIM2WD3sMOYg==",
+      "files": [
+        "licenses/xterm__xterm6.0.0/LICENSE"
+      ]
+    },
+    {
+      "name": "lucide-react",
+      "version": "1.48.0",
+      "license": "ISC",
+      "source": "https://github.com/lucide-icons/lucide.git",
+      "integrity": "sha512-R0CIKY/fXiC6y9xRBADgsK+VW2p/pcTJOMhLZf1T+uG+vJUvyUR02nGOgmIIC7MPkiNK4Ox8QDnbqF8rJYWPZQ==",
+      "files": [
+        "licenses/lucide-react1.48.0/LICENSE"
+      ]
+    },
+    {
+      "name": "node-addon-api",
+      "version": "7.1.1",
+      "license": "MIT",
+      "source": "git://github.com/nodejs/node-addon-api.git",
+      "integrity": "sha512-5m3bsyrjFWE1xf7nz7YXdN4udnVtXK6/Yfgn5qnahL6bCkf2yKt4k3nuTKAtT4r3IG8JNR2ncsIMdZuAzJjHQQ==",
+      "files": [
+        "licenses/node-addon-api7.1.1/LICENSE.md"
+      ]
+    },
+    {
+      "name": "node-pty",
+      "version": "1.1.0",
+      "license": "MIT",
+      "source": "git://github.com/microsoft/node-pty.git",
+      "integrity": "sha512-20JqtutY6JPXTUnL0ij1uad7Qe1baT46lyolh2sSENDd4sTzKZ4nmAFkeAARDKwmlLjPx6XKRlwRUxwjOy+lUg==",
+      "files": [
+        "licenses/node-pty1.1.0/LICENSE",
+        "licenses/node-pty1.1.0/deps/winpty/LICENSE"
+      ]
+    },
+    {
+      "name": "react",
+      "version": "19.3.0",
+      "license": "MIT",
+      "source": "https://github.com/react/react.git",
+      "integrity": "sha512-E8LUcbtBWt20bbl2YoHfx4ZDBdxVTfOKtCZn9cDSJ4l6/nuoApcpIBcj47t2wZoVX8g2ZHuMHbiShgCR1T5Sog==",
+      "files": [
+        "licenses/react19.3.0/LICENSE"
+      ]
+    },
+    {
+      "name": "react-dom",
+      "version": "19.3.0",
+      "license": "MIT",
+      "source": "https://github.com/react/react.git",
+      "integrity": "sha512-JDk8dgif51OjFoDE70+OT9ICyYr+69HlmihNwp1+Nsfbna3t5sIiCa9ZJktDmQ4/1b/rn26hIAR2uYXDMr5r0Q==",
+      "files": [
+        "licenses/react-dom19.3.0/LICENSE"
+      ]
+    },
+    {
+      "name": "scheduler",
+      "version": "0.28.0",
+      "license": "MIT",
+      "source": "https://github.com/react/react.git",
+      "integrity": "sha512-juorfCmIkIw8tT+p5BXSm6PJjQF/ycEYmKyzURCIt/RaZIhL+PulbQ9Yu2z1HdOJDdqDTlxA1+xKBmHXJsczAw==",
+      "files": [
+        "licenses/scheduler0.28.0/LICENSE"
+      ]
+    },
+    {
+      "name": "ws",
+      "version": "8.22.0",
+      "license": "MIT",
+      "source": "git+https://github.com/websockets/ws.git",
+      "integrity": "sha512-Ydggc987+RO0AnWtZ/7Wq9FtNvcrL1b/RO0ud9mWjUPgDrsAAwQSF51sm2hm1XofbU/4jkpGEsLFsZZxU+1DOg==",
+      "files": [
+        "licenses/ws8.22.0/LICENSE"
+      ]
+    },
+    {
+      "name": "zod",
+      "version": "3.25.76",
+      "license": "MIT",
+      "source": "git+https://github.com/colinhacks/zod.git",
+      "integrity": "sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==",
+      "files": [
+        "licenses/zod3.25.76/LICENSE"
+      ]
+    },
+    {
+      "name": "Electron / Chromium runtime",
+      "version": "44.4.5",
+      "license": "MIT and bundled third-party licenses",
+      "source": "https://github.com/electron/electron",
+      "files": [
+        "licenses/electron-44.4.5/LICENSE",
+        "licenses/electron-44.4.5/LICENSES.chromium.html"
+      ]
+    },
+    {
+      "name": "Node.js independent host runtime",
+      "version": "v24.18.0",
+      "license": "Node.js MIT and bundled third-party licenses",
+      "source": "https://github.com/nodejs/node/tree/v24.18.0",
+      "files": [
+        "licenses/node-v24.18.0/LICENSE"
+      ]
+    },
+    {
+      "name": "Microsoft.Windows.Console.ConPTY / OpenConsole",
+      "version": "1.23.251008001",
+      "license": "MIT plus upstream notices (conservative superset)",
+      "source": "https://github.com/microsoft/terminal/tree/96f13a15deed0f2a0e4fc5e8a66847b51c0e78db",
+      "files": [
+        "licenses/conpty-1.23.251008001/LICENSE",
+        "licenses/conpty-1.23.251008001/NOTICE.md",
+        "licenses/conpty-1.23.251008001/Microsoft.Windows.Console.ConPTY.nuspec"
+      ]
+    }
+  ],
+  "skippedOptionalPackages": [],
+  "errors": [],
+  "conptyProvenance": {
+    "release": "v1.23.12811.0",
+    "commit": "96f13a15deed0f2a0e4fc5e8a66847b51c0e78db",
+    "originalPackage": "https://github.com/microsoft/terminal/releases/download/v1.23.12811.0/Microsoft.Windows.Console.ConPTY.1.23.251008001.nupkg",
+    "packageSha256": "f7e142a99f5dfee573ace98676b3c7c2fcdb870bc90b238086a4d80a36fcf099",
+    "binarySha256": {
+      "conpty.dll": "7c7430632052ff703540b68371ec43821820aa1335d8e11dfbcd9ff00e9daaed",
+      "OpenConsole.exe": "d1fe7faa62f9e955e2ac2371f95d7e5513df4d496255097158f979c94782c5fc"
+    },
+    "noticeSha256": {
+      "conpty-LICENSE": "5d177f23ecfeb0ea8e050b6a5a16355e1ae9a0b286436ca8f83ed08b3795be6b",
+      "conpty-NOTICE.md": "224973ca2057b99324c6bf2ac40320c11938e3a2efd53dabbbce61bb66547281"
+    }
+  }
+}

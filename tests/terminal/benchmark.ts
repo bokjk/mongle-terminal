@@ -1,0 +1,19 @@
+import { performance } from 'node:perf_hooks';
+import { TerminalEngine } from '../../packages/terminal/engine.js';
+
+for (const lines of [100, 1000, 5000]) {
+  const engine = new TerminalEngine({ cols: 100, rows: 30, scrollback: 5000, onResponse() {} });
+  try {
+    await engine.write(Array.from({ length: lines }, (_, i) => `${i}: mongle terminal 한글 sample ${'a'.repeat(50)}\r\n`).join(''));
+    const times: number[] = [];
+    let bytes = 0;
+    for (let i = 0; i < 8; i += 1) {
+      const start = performance.now();
+      const snapshot = await engine.snapshot();
+      times.push(performance.now() - start);
+      bytes = Buffer.byteLength(JSON.stringify(snapshot));
+    }
+    times.sort((a, b) => a - b);
+    console.log(JSON.stringify({ node: process.version, lines, cols: 100, rows: 30, frameBytes: bytes, medianMs: Number(times[4].toFixed(2)), maxMs: Number(times[7].toFixed(2)) }));
+  } finally { await engine.dispose(); }
+}

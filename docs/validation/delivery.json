@@ -1,0 +1,30 @@
+{
+  "deliveredAt": "2026-09-28T18:32:39.1123121Z",
+  "target": "E:\\other_dev\\mongle-terminal",
+  "verifiedFiles": 577,
+  "totalBytes": 942501227,
+  "everyCopiedFileSha256Matched": true,
+  "sourceIncludes": [
+    "apps",
+    "packages",
+    "platform",
+    "scripts",
+    "tests",
+    "docs",
+    "README",
+    "lockfile",
+    "build configuration"
+  ],
+  "runnableArtifacts": [
+    "release/MongleTerminal-Setup-0.1.0-x64.exe",
+    "release/MongleTerminal-0.1.0-x64.zip",
+    "release/win-unpacked/MongleTerminal.exe"
+  ],
+  "excluded": [
+    "development node_modules",
+    "temporary test databases and credentials",
+    "release staging",
+    "unrelated failed-test screenshots",
+    "existing .git changes"
+  ]
+}

@@ -1,0 +1,48 @@
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { access, copyFile, mkdir, stat } from 'node:fs/promises';
+import path from 'node:path';
+import { createReadStream } from 'node:fs';
+import { createHash } from 'node:crypto';
+const execFileAsync = promisify(execFile);
+async function digest(file: string) { const hash = createHash('sha256'); for await (const chunk of createReadStream(file)) hash.update(chunk); return hash.digest('hex'); }
+
+export async function prepareWindowsIcon(root: string) {
+  const source = path.join(root, 'platform/windows/IconBuilder.cs');
+  const builder = path.join(root, 'platform/windows/IconBuilder.exe');
+  const master = path.join(root, 'apps/web/public/mongle-terminal-icon.png');
+  const icon = path.join(root, 'platform/windows/icon.ico');
+  await access(master);
+  let compile = true; try { compile = (await stat(source)).mtimeMs > (await stat(builder)).mtimeMs; } catch {}
+  if (compile) {
+    const compiler = path.join(process.env.SystemRoot || 'C:\\Windows', 'Microsoft.NET/Framework64/v4.0.30319/csc.exe');
+    await execFileAsync(compiler, ['/nologo', '/target:exe', '/optimize+', '/reference:System.Drawing.dll', '/out:' + builder, source], { windowsHide: true });
+  }
+  // Always render from the current master; copied assets can preserve mtimes.
+  await execFileAsync(builder, [master, icon, path.dirname(master)], { windowsHide: true });
+  return icon;
+}
+
+export async function prepareRuntime(root: string, nodeExecutable = process.execPath) {
+  if (process.platform !== 'win32' || process.arch !== 'x64') throw new Error('현재 배포는 Windows x64에서 빌드해야 합니다.');
+  const runtime = path.join(root, 'runtime'); await mkdir(runtime, { recursive: true });
+  const targetNode = path.join(runtime, 'node.exe');
+  let identical = false;
+  try { identical = await digest(nodeExecutable) === await digest(targetNode); } catch {}
+  if (!identical) await copyFile(nodeExecutable, targetNode);
+  const source = path.join(root, 'platform/windows/HostLauncher.cs'); const output = path.join(root, 'platform/windows/HostLauncher.exe');
+  let compile = true; try { compile = (await stat(source)).mtimeMs > (await stat(output)).mtimeMs; } catch {}
+  if (compile) {
+    const compiler = path.join(process.env.SystemRoot || 'C:\\Windows', 'Microsoft.NET/Framework64/v4.0.30319/csc.exe');
+    await execFileAsync(compiler, ['/nologo', '/target:exe', '/optimize+', '/reference:System.Management.dll', '/out:' + output, source], { windowsHide: true });
+  }
+  await prepareWindowsIcon(root);
+  return { node: path.join(runtime, 'node.exe'), launcher: output };
+}
+
+export async function launchHost(root: string, dataDir: string): Promise<number> {
+  const node = path.join(root, 'runtime/node.exe'), launcher = path.join(root, 'platform/windows/HostLauncher.exe'), entry = path.join(root, 'dist/host/main.cjs');
+  await Promise.all([node, launcher, entry].map(file => access(file)));
+  const { stdout } = await execFileAsync(launcher, [node, entry, dataDir], { cwd: root, windowsHide: true, timeout: 20_000, maxBuffer: 32_768 });
+  const pid = Number(stdout.trim()); if (!Number.isInteger(pid) || pid < 1) throw new Error('호스트 실행 응답을 확인하지 못했습니다.'); return pid;
+}
