@@ -4,6 +4,7 @@
 
 - 변경 작업은 `CONTRIBUTING.md`의 개발 격리·검증·문서·PR 기준을 따른다. PR에는 `.github/PULL_REQUEST_TEMPLATE.md`의 변경 내용·검증 결과·문서 영향·확인 항목을 작성한다.
 - 필수 양식·문서 영향은 `scripts/check-contribution.ts`가 검사하며 타입·빌드·회귀는 `.github/workflows/ci.yml`에 정의한다. CI 준비·실행·서버 측 병합 제한 적용을 구분한다.
+- 작업은 `dev` 또는 `dev`에서 만든 주제 브랜치(`<종류>/<설명>`, 규칙은 `scripts/pr-target.ts`)에 커밋한다. `main`에는 직접 커밋·push하지 않고 배포 시 `dev` → `main` 배포 PR로만 반영한다. 대상 브랜치 검사는 `.github/workflows/pr-target.yml`, 서버 측 규칙은 `.github/rulesets/`와 `scripts/apply-branch-rules.ts`가 담당한다.
 
 ## 기능과 문서를 함께 유지하기
 
