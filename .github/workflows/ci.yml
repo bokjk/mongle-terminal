@@ -4,7 +4,10 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, edited, ready_for_review]
   push:
-    branches: [main]
+    branches: [main, dev]
+    # Documentation-only pushes skip CI to save Actions minutes. Pull requests always run, so the
+    # required "Windows checks" status is never left waiting on a docs-only PR.
+    paths-ignore: ['docs/**', '**/*.md']
   workflow_dispatch:
 
 permissions:

@@ -13,7 +13,7 @@ import { attachTerminalTap } from './terminal-tap';
 
 export interface PaneActions { key(data:string):void; paste(text:string):void; focus():void; search():void; }
 export interface PaneProps {
-  client: AppClient; state: HostState; info: TerminalInfo; connected: boolean; owner:boolean; selected:boolean; maximized:boolean; fontSize:number; theme:'dark'|'light'; ctrl:boolean; alt:boolean;
+  client: AppClient; state: HostState; info: TerminalInfo; connected: boolean; owner:boolean; connectionId?:string; selected:boolean; maximized:boolean; fontSize:number; theme:'dark'|'light'; ctrl:boolean; alt:boolean;
   onSelect():void; onSplit(axis:'horizontal'|'vertical'):void; onMaximize():void; onClose():void; onRename():void; onRestart():void; onMove():void; onClearHistory():void; onTerminate():void;
   dragEnabled?:boolean;dropPreview?:PaneDropPreview;onPaneDragStart?(event:DragEvent<HTMLElement>):void;onPaneDragEnd?():void;onPaneDragOver?(event:DragEvent<HTMLElement>):void;onPaneDrop?(event:DragEvent<HTMLElement>):void;onPanePointerStart?():void;dragClickAllowed?():boolean;
   onError(message:string):void; confirmPaste(text:string):Promise<boolean>; register(id:string, actions:PaneActions|null):void;
@@ -70,6 +70,10 @@ export function TerminalPane(props:PaneProps) {
     if (!mount.current) return;
     let disposed = false;
     let observedInfo=info;
+    // The desktop bridge can deliver a control.acquire reply before the state
+    // events the host broadcast ahead of it. Keep that grant until the ordered
+    // state stream reports it or a newer lease; earlier snapshots predate it.
+    let grant:{epoch:number;connectionId:string}|undefined;
     let acquireFailed=false;
     let pendingAcquisition:Promise<number|undefined>|undefined;
     const terminal = new Terminal({cols:info.cols,rows:info.rows,fontSize:props.fontSize,fontFamily:'Cascadia Mono, Cascadia Code, Consolas, Menlo, monospace',lineHeight:1.15,scrollback:5000,cursorBlink:true,theme:themes[props.theme],allowProposedApi:true,convertEol:false});
@@ -80,7 +84,10 @@ export function TerminalPane(props:PaneProps) {
     // Terminal-generated clipboard writes are never applied to the system clipboard.
     const osc52 = terminal.parser.registerOscHandler(52,() => true);
     const inputBytes=(data:string,encoding:'utf8'|'binary')=>encoding==='binary'?data.length:new TextEncoder().encode(data).length;
-    const ownsLease=(lease:number)=>!disposed&&epoch.current===lease&&current.current.connected&&observedInfo.status==='running'&&observedInfo.controller?.epoch===lease&&observedInfo.controller.connectionId===connectionId.current;
+    const ownsLease=(lease:number)=>!disposed&&epoch.current===lease&&current.current.connected&&observedInfo.status==='running'&&(grant?grant.epoch===lease&&grant.connectionId===connectionId.current:observedInfo.controller?.epoch===lease&&observedInfo.controller.connectionId===connectionId.current);
+    // Only another connection's lease makes background attachment wait. The host
+    // already lets this same connection replace its own leftover lease.
+    const otherController=()=>observedInfo.controller&&observedInfo.controller.connectionId!==current.current.connectionId?observedInfo.controller:undefined;
     const leaseActive=(lease:number)=>!uncertain.current.blocked&&ownsLease(lease);
     const sendInput=(data:string,encoding:'utf8'|'binary',lease:number)=>client.request('terminal.input',{...targetRef.current(),epoch:lease,inputId:crypto.randomUUID(),clientInputSeq:++inputSeq.current,data,encoding});
     const failInput=(error:unknown)=>{resizeInput.current=undefined;uncertain.current.blocked=true;ready.current=false;if(!disposed){adapter.setInputEnabled(false);setInputUncertain(true);current.current.onError(error instanceof Error?error.message:'입력 전달을 확인하지 못했습니다.');}};
@@ -149,22 +156,32 @@ export function TerminalPane(props:PaneProps) {
       pendingFrame={event:newest,lease:lease??pendingFrame?.lease,waiters};void drain();return promise;
     };
     const acquireControl = async(focus=false,mode:AcquireMode='recover'):Promise<number|undefined> => {
-      if (!current.current.connected || observedInfo.status !== 'running') return;
+      if (disposed || !current.current.connected || observedInfo.status !== 'running') return;
       if(epoch.current!==undefined&&leaseActive(epoch.current)&&(ready.current||resizeInput.current?.epoch===epoch.current)){if(focus)terminal.focus();return epoch.current;}
       if(mode!=='recover'&&(uncertain.current.blocked||acquireFailed))return;
-      if(mode==='background'&&(!current.current.state.capabilities?.includes('control.acquire-if-free')||observedInfo.controller))return;
+      if(mode==='background'&&(!current.current.state.capabilities?.includes('control.acquire-if-free')||otherController()))return;
       if(synchronizing)return;
-      synchronizing=true;setBusy(true);ready.current=false;epoch.current=undefined;connectionId.current=undefined;
+      synchronizing=true;setBusy(true);ready.current=false;epoch.current=undefined;connectionId.current=undefined;grant=undefined;
       // Mobile browsers must see an editable focus inside this click, before
       // the lease request yields. The adapter still blocks all outgoing input.
       adapter.setInputEnabled(false,{preserveKeyboard:focus});
       if(focus)terminal.focus();
       try {
         const result=await client.request('control.acquire',{...targetRef.current(),...dimensions(),...(mode==='background'?{takeover:false}:{})});if(disposed)return;
-        if(observedInfo.controller?.epoch!==result.epoch||observedInfo.controller?.connectionId!==result.connectionId){adapter.setInputEnabled(false);return;}
+        // Lease epochs only grow. A newer lease already replaced this grant, so show
+        // its frame as a viewer: the host holds later frames until this one is ACKed.
+        const observed=observedInfo.controller;
+        if(observed&&(observed.epoch>result.epoch||(observed.epoch===result.epoch&&observed.connectionId!==result.connectionId))){adapter.setInputEnabled(false);void applyFrame.current(result.frame);return;}
+        if(observed?.epoch!==result.epoch)grant={epoch:result.epoch,connectionId:result.connectionId};
         epoch.current=result.epoch;acknowledgedEpoch.current=undefined;connectionId.current=result.connectionId;
         const applied=await applyFrame.current(result.frame,result.epoch,true);
-        if(!applied||!ownsLease(result.epoch)||acknowledgedEpoch.current!==result.epoch){if(!disposed)adapter.setInputEnabled(false);return;}
+        if(!applied||!ownsLease(result.epoch)||acknowledgedEpoch.current!==result.epoch){
+          // Give up this grant completely. Releasing a lease the host still holds for
+          // it leaves no orphan; later ACKs no longer carry its epoch.
+          grant=undefined;epoch.current=undefined;connectionId.current=undefined;
+          if(!disposed){adapter.setInputEnabled(false);void client.request('control.release',{id:info.id,epoch:result.epoch}).catch(()=>{});}
+          return;
+        }
         uncertain.current.blocked=false;setInputUncertain(false);acquireFailed=false;setControlError(false);setControlled(true);ready.current=true;adapter.setInputEnabled(true);
         adapter.setFocused(document.activeElement===terminal.textarea);
         return result.epoch as number;
@@ -201,12 +218,19 @@ export function TerminalPane(props:PaneProps) {
       if(event.type === 'snapshot' && event.terminalId === info.id)void applyFrame.current(event);
       if(event.type==='state'&&event.state.hostId===state.hostId&&event.state.bootId===state.bootId){
         const latest=event.state.terminals.find(item=>item.id===info.id&&item.generation===info.generation);
-        if(latest){observedInfo=latest;setControlOwner(latest.controller);}
-        if(!latest||(epoch.current!==undefined&&!ownsLease(epoch.current))){resizeInput.current=undefined;epoch.current=undefined;ready.current=false;setControlled(false);adapter.setInputEnabled(false);}
+        if(latest){
+          // State events stay in host order. The first one reporting this grant or a
+          // newer lease ends the wait; every earlier one predates the grant.
+          if(grant&&latest.controller&&latest.controller.epoch>=grant.epoch)grant=undefined;
+          observedInfo=latest;setControlOwner(latest.controller);
+        }
+        if(!latest||(epoch.current!==undefined&&!ownsLease(epoch.current))){grant=undefined;resizeInput.current=undefined;epoch.current=undefined;ready.current=false;setControlled(false);adapter.setInputEnabled(false);}
       }
     });
+    // A pane unmounted while its first frame was applied has already sent its
+    // detach. Acquiring after that would leave this connection an orphan lease.
     const attach = () => {
-      void client.request<SnapshotEvent>('terminals.attach',targetRef.current()).then(async frame => { if (disposed) return; await applyFrame.current(frame,undefined,true); if (!uncertain.current.blocked && current.current.owner && !observedInfo.controller && observedInfo.status === 'running' && !matchMedia('(max-width: 700px)').matches) await acquireRef.current(false,'background'); }).catch(error => {if(!disposed)setFrameError(error.message);});
+      void client.request<SnapshotEvent>('terminals.attach',targetRef.current()).then(async frame => { if (disposed) return; await applyFrame.current(frame,undefined,true); if (!disposed && !uncertain.current.blocked && current.current.owner && !otherController() && observedInfo.status === 'running' && !matchMedia('(max-width: 700px)').matches) await acquireRef.current(false,'background'); }).catch(error => {if(!disposed)setFrameError(error.message);});
     };
     if(props.connected) attach();
     resizeRef.current=async()=>{
@@ -218,7 +242,8 @@ export function TerminalPane(props:PaneProps) {
       const pending={epoch:lease,inputs:[] as Array<{data:string;encoding:'utf8'|'binary'}>,bytes:0};resizeInput.current=pending;
       try{
         const result=await client.request('terminal.resize',{...targetRef.current(),epoch:lease,...dims});
-        if(!leaseActive(lease)||resizeInput.current!==pending)return;
+        // Without the lease the frame is still shown: the host holds later frames until it is ACKed.
+        if(!leaseActive(lease)||resizeInput.current!==pending){void applyFrame.current(result.frame);return;}
         const applied=await applyFrame.current(result.frame,lease,true);
         if(!applied||!leaseActive(lease)||resizeInput.current!==pending)return;
         while(pending.inputs.length&&leaseActive(lease)&&resizeInput.current===pending){
@@ -242,10 +267,11 @@ export function TerminalPane(props:PaneProps) {
 
   useEffect(()=>{if(termRef.current){termRef.current.options.fontSize=props.fontSize;termRef.current.options.theme=themes[props.theme];}const frame=requestAnimationFrame(()=>void resizeRef.current());return()=>cancelAnimationFrame(frame);},[props.fontSize,props.theme]);
   useEffect(()=>{setControlOwner(info.controller);},[info.controller]);
+  // Lease changes come from the pane's ordered state stream above. App state can
+  // also come from a state.get reply that is older than those events.
   useEffect(()=>{
-    if(epoch.current !== undefined && (!info.controller || info.controller.epoch!==epoch.current || (connectionId.current && info.controller.connectionId!==connectionId.current))){resizeInput.current=undefined;epoch.current=undefined;ready.current=false;setControlled(false);adapterRef.current?.setInputEnabled(false);}
     if(!props.connected || info.status!=='running'){resizeInput.current=undefined;ready.current=false;adapterRef.current?.setInputEnabled(false);}
-  },[info.controller,info.status,props.connected]);
+  },[info.status,props.connected]);
   useEffect(()=>{adapterRef.current?.setFocused(props.selected);},[props.selected]);
   useEffect(()=>{if(!copied)return;const timer=setTimeout(()=>setCopied(false),2000);return()=>clearTimeout(timer);},[copied]);
   useEffect(()=>{
@@ -260,6 +286,8 @@ export function TerminalPane(props:PaneProps) {
   async function paste(){const input=pasteInputRef.current;setClipboardMenu(null);try{const text=window.mongle?.readClipboard?await window.mongle.readClipboard():await navigator.clipboard.readText();if(await current.current.confirmPaste(text)&&input===pasteInputRef.current&&await input(text))termRef.current?.focus();}catch{current.current.onError('클립보드를 읽을 수 없습니다. 터미널을 선택한 뒤 Ctrl+V를 사용해 주세요.');}}
   function doSearch(backward=false){if(!query){searchRef.current?.clearDecorations();setSearchMatch(true);return;}setSearchMatch(Boolean(backward ? searchRef.current?.findPrevious(query) : searchRef.current?.findNext(query)));}
   function focusTitle(){if(props.dragClickAllowed?.()===false)return;props.onSelect();startInputRef.current();}
+  // A leftover lease of this same window is not another device; a tap re-acquires it.
+  const otherOwner=controlOwner&&controlOwner.connectionId!==props.connectionId?controlOwner:undefined;
   return <section className={`pane ${props.selected?'active':''} ${props.maximized?'maximized':''}`} data-terminal-id={info.id} aria-label={`${info.title} 패널`} onPointerDown={event=>{contextPointer.current=event.pointerType;const target=event.target as Element;if(props.dragEnabled&&target.closest('.pane-header')&&!target.closest('.pane-toolbar'))return;props.onSelect();}} onDragOverCapture={event=>{event.preventDefault();event.stopPropagation();props.onPaneDragOver?.(event);}} onDropCapture={event=>{event.preventDefault();event.stopPropagation();props.onPaneDrop?.(event);}}>
     <header className="pane-header" draggable={Boolean(props.dragEnabled)} onPointerDown={event=>{toolbarDrag.current=Boolean((event.target as Element).closest('.pane-toolbar'));props.onPanePointerStart?.();}} onDragStart={event=>{if(!props.dragEnabled||toolbarDrag.current||(event.target as Element).closest('.pane-toolbar')){event.preventDefault();return;}props.onPaneDragStart?.(event);}} onDragEnd={props.onPaneDragEnd}>
       {props.dragEnabled?<><span className="pane-drag-handle" title="끌어서 패널 배치" aria-label="패널 끌어서 배치"><GripVertical size={15}/></span><span className="pane-title" onDoubleClick={props.onRename} onClick={focusTitle} title={`${info.cwd} · 끌어서 패널 배치`}>{info.title}</span></>:<><SquareTerminal size={14}/><button className="pane-title" onPointerDown={event=>event.preventDefault()} onDoubleClick={props.onRename} onClick={focusTitle} title={info.cwd}>{info.title}</button></>}
@@ -301,7 +329,7 @@ export function TerminalPane(props:PaneProps) {
     <footer className="pane-footer"><span title={info.cwd}>{info.cwd}</span>{info.status==='running'?
       busy?<span className="control-chip" role="status">연결 중…</span>:
       controlled&&!inputUncertain&&!frameError?<span className="control-chip controlled"><Keyboard size={12}/>여기서 제어 중</span>:
-      controlOwner||inputUncertain||controlError||frameError?<button className="control-chip" disabled={!props.connected} onPointerDown={e=>e.preventDefault()} onClick={()=>void acquireRef.current(true)}><Eye size={12}/>{inputUncertain?'입력 확인 후 다시 제어':controlError||frameError?'제어 다시 시도':controlOwner?`${controlOwner.deviceName}에서 제어 · 가져오기`:'여기서 제어'}</button>:
+      otherOwner||inputUncertain||controlError||frameError?<button className="control-chip" disabled={!props.connected} onPointerDown={e=>e.preventDefault()} onClick={()=>void acquireRef.current(true)}><Eye size={12}/>{inputUncertain?'입력 확인 후 다시 제어':controlError||frameError?'제어 다시 시도':otherOwner?`${otherOwner.deviceName}에서 제어 · 가져오기`:'여기서 제어'}</button>:
       <span className="control-chip">{props.connected?'화면을 눌러 입력':'연결 대기 중'}</span>
       :<button className="button subtle" onClick={props.onRestart}>새 셸 열기 {info.exitCode!==undefined?`· 종료 ${info.exitCode}`:''}</button>}</footer>
   </section>;

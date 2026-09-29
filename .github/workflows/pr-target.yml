@@ -1,0 +1,45 @@
+name: PR target policy
+
+# Contributions must go from a topic branch to dev; main only takes the maintainer release PR from
+# this repository's dev. The rule lives in scripts/pr-target.ts.
+#
+# pull_request_target runs this workflow and the script from the trusted default branch with a write
+# token. It never checks out, installs or runs pull request code: contribution code is only built and
+# tested by the read-only pull_request workflow in ci.yml.
+on:
+  pull_request_target:
+    types: [opened, reopened, edited, synchronize, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+  statuses: write
+
+# Runs for one PR are queued and never cancelled halfway, so a retarget is always followed by its
+# comment and commit status.
+concurrency:
+  group: pr-target-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  pr-target:
+    # This job's check run is attached to the default branch commit. The required check is the
+    # "PR target branch" commit status that the script sets on the PR head commit.
+    name: PR target policy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check out only the trusted policy script
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/pr-target.ts
+          sparse-checkout-cone-mode: false
+      - name: Install Node.js 24
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+      - name: Move the PR to dev when needed and report the PR target branch status
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/pr-target.ts

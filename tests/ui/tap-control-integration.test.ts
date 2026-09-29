@@ -85,8 +85,9 @@ test('real desktop/mobile UI and PowerShell: deliberate input transfers control 
         await acquisitionAckGate;
       }
       const result = await host.handle(method, params, context);
-      // The real transport delivers state events before their request response.
-      // Preserve that ordering across this browser-to-real-host test bridge.
+      // Like the browser WebSocket client, this bridge delivers state events before
+      // their response. The Electron desktop bridge can deliver the response first;
+      // tests/ui/restore-control.test.ts covers that order.
       await delivery;
       call.completed = true;
       return result;

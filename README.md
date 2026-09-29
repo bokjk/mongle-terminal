@@ -21,7 +21,7 @@
 <p align="center"><sub>실제 앱의 공통 화면을 격리된 데모 환경에서 촬영했습니다. 화면의 프로젝트와 출력은 설명용 예시입니다.</sub></p>
 
 > [!NOTE]
-> **0.2.0 Windows 미리보기 · 공개 배포 준비 중.** 현재 저장소는 비공개이고 공개 다운로드와 프로젝트 라이선스는 아직 준비되지 않았습니다. 공개 범위와 실제 검증 결과는 [구현 현황](docs/IMPLEMENTATION-STATUS.md)에서 확인할 수 있습니다.
+> **0.3.0 Windows 미리보기 · 비공개 테스트 중.** 저장소는 비공개이며 테스트용 설치 파일은 직접 전달합니다. 공개 다운로드와 프로젝트 라이선스는 아직 준비되지 않았습니다. 공개 범위와 실제 검증 결과는 [구현 현황](docs/IMPLEMENTATION-STATUS.md)에서 확인할 수 있습니다.
 
 ## 터미널 여러 개, 하나의 작업 공간
 
@@ -112,9 +112,9 @@ npm.cmd start
 
 네이티브 준비 명령은 의존성 설치 스크립트가 차단된 환경에서도 고정된 패키지의 공식 설치 절차를 실행합니다. UI 테스트용 Chrome이 없으면 `npx.cmd playwright install chrome`으로 준비하세요. `npm.cmd test`는 **빌드 후** 실행해야 UI 검사가 생략되지 않습니다.
 
-개발 변경·검증·PR 순서는 **[CONTRIBUTING.md](CONTRIBUTING.md)**를 따라 주세요. 버그 제보, 사용 안내 개선, 접근성·모바일 수정, 코드 기여 모두 같은 기준으로 검토합니다. 기능 변경에는 사용자 문서와 변경 이력, 실제로 실행한 검사 결과를 함께 제출합니다.
+개발 변경·검증·PR 순서는 **[CONTRIBUTING.md](CONTRIBUTING.md)**를 따라 주세요. **PR은 `dev`에서 만든 `<종류>/<설명>` 브랜치(예: `fix/tray-restore`)에서 `dev` 브랜치로 보냅니다.** `main`은 배포 브랜치라 유지보수자의 `dev` → `main` 배포 PR만 받습니다. 버그 제보, 사용 안내 개선, 접근성·모바일 수정, 코드 기여 모두 같은 기준으로 검토합니다. 기능 변경에는 사용자 문서와 변경 이력, 실제로 실행한 검사 결과를 함께 제출합니다.
 
-PR 양식과 자동 검사 구성을 제공합니다. 검사 통과를 병합 조건으로 강제하려면 GitHub의 브랜치 보호 설정도 필요하며, 현재 비공개 저장소 요금제에서는 이 설정이 지원되지 않습니다. 공개 준비 시 적용할 기준과 절차는 기여 안내에 구분해 두었습니다.
+PR 양식과 자동 검사를 제공합니다. `main` 등 다른 브랜치로 연 PR은 자동으로 `dev`로 옮겨지고, `main`·`dev` 브랜치나 이름 규칙에 맞지 않는 브랜치에서 연 PR은 **PR target branch** 검사가 실패합니다. 검사 통과와 승인을 서버에서 병합 조건으로 강제하는 GitHub ruleset은 [.github/rulesets](.github/rulesets/)에 정의했으며 저장소 공개 후 `scripts/apply-branch-rules.ts`로 적용합니다. 현재 비공개 저장소의 무료 요금제에서는 이 기능이 지원되지 않으므로 지금은 자동 검사·대상 이동과 유지보수자 리뷰가 강제 수단이고, 실패한 PR의 병합을 서버가 막지는 않습니다.
 
 <details>
 <summary><strong>개발 명령과 폴더 구조</strong></summary>
@@ -127,7 +127,7 @@ PR 양식과 자동 검사 구성을 제공합니다. 검사 통과를 병합 �
 | `npm.cmd test` | 자동 검사; 조건부 생략 항목은 별도 확인 |
 | `node --import tsx scripts/package.ts --output release-candidate` | 실사용 `release/`와 분리한 패키징 |
 
-패키징은 `MongleTerminal-Setup-0.2.0-x64.exe`와 `MongleTerminal-0.2.0-x64.zip`을 생성합니다. `npm.cmd run package`의 기본 출력은 `release/`이므로 그 폴더에서 앱이 실행 중일 때 사용하지 마세요. `npm.cmd run host`는 개발용이며 배포본 실행 검증을 대신하지 않습니다.
+패키징은 `MongleTerminal-Setup-0.3.0-x64.exe`와 `MongleTerminal-0.3.0-x64.zip`을 생성합니다. 테스터에게는 설치 파일 하나만 전달하면 됩니다([비공개 테스트 배포](docs/RELEASING.md#비공개-테스트-배포)). `npm.cmd run package`의 기본 출력은 `release/`이므로 그 폴더에서 앱이 실행 중일 때 사용하지 마세요. `npm.cmd run host`는 개발용이며 배포본 실행 검증을 대신하지 않습니다.
 
 | 경로 | 역할 |
 |---|---|

@@ -4,6 +4,41 @@
 
 현재 저장소는 비공개이며 프로젝트 자체의 공개 라이선스는 아직 정하지 않았습니다. 이 가이드는 협업 준비 문서이며 공개 사용·재배포 허가를 추가하지 않습니다. 접근 권한이 있는 기여자는 아래 절차를 따릅니다. 공개 전환 후에는 같은 절차를 fork 기반으로 사용할 수 있습니다.
 
+## 브랜치와 PR 대상
+
+**기여 PR은 `dev`에서 만든 주제 브랜치에서 `dev`로 보냅니다.** `dev`는 기본 브랜치이자 통합 브랜치입니다. `main`은 배포 브랜치이며, 배포할 때 유지보수자가 이 저장소의 `dev`에서 여는 `dev` → `main` PR로만 바뀝니다.
+
+1. 원본 저장소의 `dev`에서 주제 브랜치를 만듭니다. 쓰기 권한이 없으면 먼저 fork합니다.
+2. 브랜치를 push합니다. fork를 쓰면 자신의 fork에 push합니다.
+3. 대상(base)을 `dev`로 선택해 PR을 엽니다.
+
+브랜치 이름은 `<종류>/<설명>` 형식입니다(예: `fix/tray-restore`, `fix/v0.3.0-installer`). 설명은 영문 소문자·숫자로 된 단어를 `-`, `.`, `_` 중 하나로 이어 1–60자로 씁니다. 대문자·한글·공백, 추가 `/`, 연속되거나 앞뒤에 오는 구분 기호는 쓸 수 없습니다. 이 규칙은 [scripts/pr-target.ts](scripts/pr-target.ts) 한 곳에 정의되어 있습니다.
+
+| 종류 | 용도 |
+|---|---|
+| `feat` | 새 기능 |
+| `fix` | 버그 수정 |
+| `docs` | 문서·이미지 |
+| `refactor` | 동작을 바꾸지 않는 구조 정리 |
+| `perf` | 성능 개선 |
+| `test` | 테스트 추가·수정 |
+| `build` | 빌드·패키징·의존성 |
+| `ci` | GitHub Actions·자동 검사 |
+| `chore` | 그 밖의 유지 작업 |
+| `codex` | 자동화 도구로 만든 작업 |
+
+PR 양식의 변경 분류는 브랜치 종류와 별개로 실제 영향에 맞게 고릅니다.
+
+[PR target policy](.github/workflows/pr-target.yml)는 PR을 열거나 다시 열 때, 수정하거나 새 커밋을 push할 때마다 대상과 브랜치 이름을 확인하고 PR 최신 커밋에 **PR target branch** 상태를 남깁니다.
+
+- `main`이나 다른 브랜치를 대상으로 연 PR은 자동으로 `dev`로 옮겨지고, 같은 검사에서 곧바로 `dev` 기준으로 판정됩니다. `main`에서 브랜치를 만들었다면 **Files changed**에 의도하지 않은 커밋이 없는지 확인하세요.
+- `main`·`dev` 브랜치에서 연 PR과 이름 규칙에 맞지 않는 브랜치의 PR은 실패합니다. 열린 PR의 원본 브랜치는 바꿀 수 없으므로 규칙에 맞는 새 브랜치를 push하고 `dev` 대상 새 PR을 연 뒤 기존 PR은 닫습니다.
+- 안내 코멘트는 PR마다 하나만 남기고, 결과가 바뀌면 그 코멘트를 고칩니다.
+- `dev` → `main` 배포 PR과 배포 뒤 `main` → `dev` 역병합 PR은 유지보수자만 이 저장소의 브랜치에서 엽니다.
+- 상태는 PR이 아니라 커밋에 붙습니다. 같은 head 커밋을 공유하는 PR들은 마지막 판정을 함께 표시합니다.
+
+서버 측 병합 차단의 적용 상태는 아래 [자동 검사와 병합 제한의 현재 상태](#자동-검사와-병합-제한의-현재-상태)에 정리했습니다.
+
 ## 1. 문제와 범위를 먼저 정하기
 
 버그는 [버그 보고 양식](.github/ISSUE_TEMPLATE/bug_report.yml)에 재현 순서, 기대한 결과, 실제 결과와 환경을 적어 주세요. 기능 제안은 [기능 제안 양식](.github/ISSUE_TEMPLATE/feature_request.yml)에 해결하려는 불편과 원하는 사용 흐름을 적습니다. 큰 UI 변경, 저장 데이터 형식, 인증·원격 연결, 새 의존성, 배포 방식 변경은 구현 전에 이슈에서 범위를 맞춰 주세요. 오탈자나 작은 재현 가능한 수정은 바로 PR을 열어도 됩니다.
@@ -17,7 +52,7 @@
 ```powershell
 git clone https://github.com/bokjk/mongle-terminal.git
 Set-Location mongle-terminal
-git switch -c fix/short-description
+git switch -c fix/short-description origin/dev
 
 # 앱을 실행하기 전에 실사용 프로필과 분리합니다.
 $env:MONGLE_DATA_DIR = Join-Path (Get-Location) '.test-data\dev-profile'
@@ -32,9 +67,11 @@ npx.cmd playwright install chrome
 npm.cmd run dev
 ```
 
-브랜치는 `fix/`, `feat/`, `docs/`처럼 목적이 드러나는 이름을 사용합니다. 자동화 작업은 `codex/` 접두사도 사용합니다. fork를 사용한다면 clone 주소를 자신의 fork로 바꾸고 원본 저장소를 `upstream`으로 등록합니다.
+브랜치 이름은 [브랜치와 PR 대상](#브랜치와-pr-대상)의 `<종류>/<설명>` 규칙을 따릅니다. fork를 사용한다면 clone 주소를 자신의 fork로 바꾸고 원본 저장소를 `upstream`으로 등록한 뒤, `git fetch upstream dev`와 `git switch -c fix/short-description upstream/dev`로 원본의 `dev`에서 시작합니다.
 
 설치 스크립트는 잠금 파일에 고정된 의존성의 네이티브 바이너리를 준비합니다. 최초 다운로드에는 인터넷이 필요합니다. `npm run dev`는 빌드 후 앱을 엽니다. 개발 셸에서 설정한 `MONGLE_DATA_DIR`는 그 셸과 자식 프로세스에만 적용됩니다. 다른 셸에서 실행할 때도 다시 지정하세요.
+
+개발 앱이 `권한이 없는 작업을 수행하려고 했습니다`라는 실행부 시작 오류로 연결되지 않으면, 데이터 폴더에 현재 사용자의 소유자 변경 권한이 없는 경우입니다. 실행부는 인증 파일을 보호하려고 데이터 폴더를 현재 사용자 전용 권한으로 다시 설정합니다. 이때는 `$env:MONGLE_DATA_DIR = Join-Path $env:TEMP 'mongle-dev-profile'`처럼 사용자 프로필 아래 폴더를 지정하세요.
 
 **실사용 호스트·셸을 테스트 때문에 종료하거나 인증 파일을 초기화하지 않습니다.** 시험 프로필로 실제 Tailscale Serve 설정을 바꾸지 않습니다. Windows MSIX 앱에서 실행한 도구는 같은 AppData 문자열도 다른 위치로 연결될 수 있습니다. 인증 키·DB·세션을 서로 복사하지 말고 [프로필 분리 기록](docs/validation/msix-profile-recovery.md)을 확인하세요.
 
@@ -94,8 +131,24 @@ AI 도구로 작성한 코드도 제출자가 설명하고 검증할 책임이 �
 
 ### 자동 검사와 병합 제한의 현재 상태
 
-[Contribution checks](.github/workflows/ci.yml)는 일반 `pull_request`와 `main` push에서 **Windows checks** 작업을 실행하도록 구성되어 있습니다. PR 본문 수정도 재검사합니다. 필수 섹션·검증 설명·확인 체크리스트와 선택한 변경 분류에 따른 문서 동반 여부를 검사하고 타입·빌드·기본 회귀·배포 문서 검사를 수행합니다. 내부 변경은 README/CHANGELOG 수정을 일괄 강제하지 않고 문서 영향 설명을 요구합니다. 자동 검사는 설명의 진실성이나 변경 분류의 정확성까지 판단할 수 없으므로 리뷰가 필요합니다.
+[Contribution checks](.github/workflows/ci.yml)는 모든 `pull_request`와 `main`·`dev` push에서 **Windows checks** 작업을 실행하도록 구성되어 있습니다. push는 `docs/**`와 `.md` 문서만 바뀌면 건너뛰지만 PR은 문서만 바뀌어도 검사하며, PR 본문 수정도 재검사합니다. 필수 섹션·검증 설명·확인 체크리스트와 선택한 변경 분류에 따른 문서 동반 여부를 검사하고 타입·빌드·기본 회귀·배포 문서 검사를 수행합니다. 내부 변경은 README/CHANGELOG 수정을 일괄 강제하지 않고 문서 영향 설명을 요구합니다. 자동 검사는 설명의 진실성이나 변경 분류의 정확성까지 판단할 수 없으므로 리뷰가 필요합니다.
 
-CI 설정 추가와 실제 GitHub Actions 실행 완료는 별개입니다. **현재 비공개 저장소의 GitHub 요금제에서는 main 브랜치 보호 API가 403을 반환하므로 필수 검사·승인에 의한 서버 측 병합 차단을 활성화하지 못했습니다.** 저장소 공개 여부나 요금제는 이 문서만으로 바꾸지 않습니다. 적용 가능한 시점에 유지보수자가 `main`의 PR 필수, 리뷰 승인 1명, [CODEOWNERS](.github/CODEOWNERS)의 소유자 승인 필수, 새 커밋 시 기존 승인 무효화, **Windows checks** 필수 및 강제 push·삭제 제한을 설정하고 실제 우회 차단을 확인해야 합니다. 그전까지는 리뷰 절차로 이 기준을 지킵니다. 소유자 본인이 작성한 PR은 스스로 승인할 수 없으므로 공개 협업 시 승인 가능한 유지보수자와 필요한 우회 정책도 함께 정합니다.
+[PR target policy](.github/workflows/pr-target.yml)는 PR 대상 변경·안내 코멘트·**PR target branch** 상태 기록에 쓰기 권한이 필요해 `pull_request_target`으로 실행됩니다. 권한은 저장소 읽기와 PR·커밋 상태 쓰기로 제한합니다. 기본 브랜치의 정책 스크립트 하나만 체크아웃해 실행하고 PR의 코드를 받거나 실행하지 않으므로, PR에서 정책 파일을 바꿔도 병합 전에는 적용되지 않습니다. 기여 코드는 읽기 권한만 있는 `pull_request`의 **Windows checks**에서만 실행됩니다.
 
-PR CI는 읽기 권한만 사용하고 저장소 자격 증명을 체크아웃에 남기지 않습니다. 외부 fork의 코드를 비밀 키나 쓰기 토큰과 함께 실행하지 않으며 `pull_request_target`을 사용하지 않습니다. 태그 기반 Release 초안 생성은 별도 [배포 절차](docs/RELEASING.md)를 따릅니다.
+CI 설정 추가와 실제 GitHub Actions 실행 완료는 별개입니다. 서버 측 병합 차단은 [.github/rulesets](.github/rulesets/)의 GitHub ruleset으로 정의합니다.
+
+| 브랜치 | 서버 측 규칙 |
+|---|---|
+| `dev` | PR 필수, 승인 1명, 새 커밋 시 기존 승인 무효화, **Windows checks**·**PR target branch** 통과, 삭제·강제 push 금지 |
+| `main` | PR 필수, 저장소 관리자만 갱신(배포 PR 병합), **Windows checks**·**PR target branch** 통과, 삭제·강제 push 금지 |
+
+저장소 관리자 역할은 두 규칙을 우회할 수 있습니다. **GitHub 무료 요금제의 비공개 저장소는 ruleset과 브랜치 보호를 지원하지 않아(브랜치 보호 API 403 확인) 서버 측 병합 차단이 아직 적용되지 않았습니다.** 그동안은 `main` 대상 PR의 자동 `dev` 이동, **PR target branch**·**Windows checks** 실패 표시와 유지보수자 리뷰가 규칙을 지키는 수단이며, 실패한 PR의 병합을 서버가 막지는 않습니다. 저장소 공개 여부나 요금제는 이 문서만으로 바꾸지 않습니다. 소유자 본인이 작성한 PR은 스스로 승인할 수 없으므로 공개 협업 시 승인 가능한 유지보수자와 우회 사용 기준도 함께 정합니다.
+
+유지보수자는 공개 전환 후 다음 순서로 적용하고 확인합니다. GitHub Actions의 `integration_id`(15368), 저장소 관리자 역할의 `actor_id`(5)와 `pull_request` 규칙 값은 아직 실제 GitHub 응답으로 확인하지 않았습니다.
+
+1. 저장소 Administration 쓰기 권한이 있는 소유자 계정으로 `gh auth login`합니다.
+2. `node scripts/apply-branch-rules.ts --dry-run`으로 생성·갱신 계획을 확인한 뒤 `node scripts/apply-branch-rules.ts`로 적용합니다.
+3. 적용 응답과 저장소 **Settings → Rules**에서 규칙, 우회 대상, `pull_request` 값이 의도대로인지 확인합니다.
+4. 첫 PR에서 **PR target branch** 상태가 필수 검사로 인정되는지 확인합니다. 상태가 기록됐는데도 대기(Expected)로 남으면 `.github/rulesets/*.json`의 해당 항목에서 `integration_id`를 지우고 다시 적용합니다.
+
+기여 코드를 실행하는 PR CI는 읽기 권한만 사용하고 저장소 자격 증명을 체크아웃에 남기지 않습니다. 외부 fork의 코드를 비밀 키나 쓰기 토큰과 함께 실행하지 않습니다. 태그 기반 Release 초안 생성은 별도 [배포 절차](docs/RELEASING.md)를 따릅니다.

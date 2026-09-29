@@ -1,2 +1,2 @@
-# Enable "Require review from Code Owners" with main branch protection when available.
+# PR 리뷰 요청 대상입니다. 병합 조건(필수 검사·승인)은 .github/rulesets/와 CONTRIBUTING.md의 "자동 검사와 병합 제한의 현재 상태"를 따릅니다.
 * @bokjk

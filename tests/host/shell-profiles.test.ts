@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -59,7 +59,9 @@ test('installed system shell starts in the explicitly chosen directory', async (
     const { stdout } = await execFileAsync(launch.executable, [...launch.args, ...command], {
       cwd: launch.cwd, env: safeShellEnvironment(), windowsHide: true, timeout: 15_000,
     });
-    assert.equal(stdout.trim(), directory);
+    // CI runners can expose TEMP as an 8.3 short path (C:\Users\RUNNER~1) while the
+    // shell reports the long form; compare the canonical locations instead.
+    assert.equal(await realpath(stdout.trim()), await realpath(directory));
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
