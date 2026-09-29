@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type DragEvent } from 'react';
+import { createPortal } from 'react-dom';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { SearchAddon } from '@xterm/addon-search';
@@ -48,6 +49,8 @@ export function TerminalPane(props:PaneProps) {
   const [searchMatch,setSearchMatch] = useState(true);
   const [frameError,setFrameError] = useState('');
   const [historyTruncated,setHistoryTruncated] = useState(false);
+  const [clipboardMenu,setClipboardMenu] = useState<{x:number;y:number}|null>(null);
+  const [copied,setCopied] = useState(false);
   const connectionId = useRef<string | undefined>(undefined);
   const target = () => ({id:info.id,hostId:state.hostId,bootId:state.bootId,generation:info.generation});
   const targetRef = useRef(target); targetRef.current = target;
@@ -84,12 +87,24 @@ export function TerminalPane(props:PaneProps) {
       void sendInput(transformed,encoding,epoch.current).catch(failInput);
     });
     adapterRef.current = adapter;
+    // Match the Windows console workflow: finish a mouse selection to copy it.
+    // Copy on release, never on every selection event (snapshots restore the
+    // same selection repeatedly while output is streaming).
+    let selecting = false;
+    const beginSelection=(event:MouseEvent)=>{if(event.button===0)selecting=true;};
+    const finishSelection=(event:MouseEvent)=>{if(event.button!==0||!selecting)return;selecting=false;if(terminal.hasSelection())void copy();};
+    mount.current.addEventListener('mousedown',beginSelection);
+    window.addEventListener('mouseup',finishSelection);
     const handlePaste=(event:ClipboardEvent)=>{const text=event.clipboardData?.getData('text/plain');if(text===undefined)return;event.preventDefault();event.stopImmediatePropagation();void current.current.confirmPaste(text).then(approved=>{if(approved&&!disposed)adapter.paste(text);});};
     mount.current.addEventListener('paste',handlePaste,true);
     terminal.attachCustomKeyEventHandler(event => {
       if (event.type !== 'keydown') return true;
-      if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'c') { void copy(); return false; }
-      if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'v') { void paste(); return false; }
+      if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 'c' && (event.shiftKey || terminal.hasSelection())) { event.preventDefault(); void copy(); return false; }
+      if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 'v') {
+        // Plain Ctrl+V uses the native paste event, including browser permission
+        // fallback. Ctrl+Shift+V is the explicit terminal paste shortcut.
+        if(event.shiftKey){event.preventDefault();void paste();} return false;
+      }
       if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'f') {setSearchOpen(true);return false;}
       return true;
     });
@@ -174,7 +189,7 @@ export function TerminalPane(props:PaneProps) {
     const keyMap:Record<string,'ArrowUp'|'ArrowDown'|'ArrowLeft'|'ArrowRight'>={'\x1b[A':'ArrowUp','\x1b[B':'ArrowDown','\x1b[C':'ArrowRight','\x1b[D':'ArrowLeft'};
     current.current.register(info.id,{key:data=>keyMap[data]?adapter.sendKey(keyMap[data]):adapter.sendInput(data),paste:text=>adapter.paste(text),focus:()=>terminal.focus(),search:()=>setSearchOpen(true)});
     const pasteTarget=mount.current;
-    return()=>{disposed=true;resizeInput.current=undefined;ready.current=false;epoch.current=undefined;connectionId.current=undefined;pendingFrame?.waiters.forEach(resolve=>resolve(false));pendingFrame=undefined;unsubscribe();observer.disconnect();clearTimeout(resizeTimer);pasteTarget?.removeEventListener('paste',handlePaste,true);osc52.dispose();adapter.dispose();terminal.dispose();current.current.register(info.id,null);void client.request('terminals.detach',{id:info.id}).catch(()=>{});};
+    return()=>{disposed=true;resizeInput.current=undefined;ready.current=false;epoch.current=undefined;connectionId.current=undefined;pendingFrame?.waiters.forEach(resolve=>resolve(false));pendingFrame=undefined;unsubscribe();observer.disconnect();clearTimeout(resizeTimer);pasteTarget?.removeEventListener('paste',handlePaste,true);pasteTarget?.removeEventListener('mousedown',beginSelection);window.removeEventListener('mouseup',finishSelection);osc52.dispose();adapter.dispose();terminal.dispose();current.current.register(info.id,null);void client.request('terminals.detach',{id:info.id}).catch(()=>{});};
   },[client,info.id,info.generation,state.bootId,props.connected]);
 
   useEffect(()=>{if(termRef.current){termRef.current.options.fontSize=props.fontSize;termRef.current.options.theme=themes[props.theme];}const frame=requestAnimationFrame(()=>void resizeRef.current());return()=>cancelAnimationFrame(frame);},[props.fontSize,props.theme]);
@@ -183,8 +198,17 @@ export function TerminalPane(props:PaneProps) {
     if(!props.connected || info.status!=='running'){resizeInput.current=undefined;ready.current=false;adapterRef.current?.setInputEnabled(false);}
   },[info.controller,info.status,props.connected]);
   useEffect(()=>{adapterRef.current?.setFocused(props.selected);},[props.selected]);
-  async function copy(){const text=termRef.current?.getSelection();if(!text){props.onError('복사할 내용을 먼저 선택해 주세요.');return;}try{await navigator.clipboard.writeText(text);}catch{props.onError('클립보드에 접근할 수 없습니다. 브라우저의 복사 메뉴를 사용해 주세요.');}}
-  async function paste(){try{const text=await navigator.clipboard.readText();if(await props.confirmPaste(text))adapterRef.current?.paste(text);}catch{props.onError('클립보드를 읽을 수 없습니다. 터미널을 선택한 뒤 붙여넣기를 사용해 주세요.');}}
+  useEffect(()=>{if(!copied)return;const timer=setTimeout(()=>setCopied(false),2000);return()=>clearTimeout(timer);},[copied]);
+  useEffect(()=>{
+    if(!clipboardMenu)return;
+    const dismiss=(event:PointerEvent)=>{if(!(event.target as Element).closest('.terminal-clipboard-menu'))setClipboardMenu(null);};
+    const escape=(event:KeyboardEvent)=>{if(event.key==='Escape'){event.preventDefault();event.stopPropagation();setClipboardMenu(null);termRef.current?.focus();}};
+    const close=()=>setClipboardMenu(null);
+    document.addEventListener('pointerdown',dismiss);document.addEventListener('keydown',escape,true);window.addEventListener('blur',close);window.addEventListener('resize',close);
+    return()=>{document.removeEventListener('pointerdown',dismiss);document.removeEventListener('keydown',escape,true);window.removeEventListener('blur',close);window.removeEventListener('resize',close);};
+  },[clipboardMenu]);
+  async function copy(){const text=termRef.current?.getSelection();setClipboardMenu(null);if(!text){current.current.onError('복사할 내용을 먼저 드래그로 선택해 주세요.');return;}try{if(window.mongle?.writeClipboard)await window.mongle.writeClipboard(text);else await navigator.clipboard.writeText(text);setCopied(true);}catch{current.current.onError('복사하지 못했습니다. 내용을 선택한 뒤 Ctrl+C를 사용해 주세요.');}}
+  async function paste(){const adapter=adapterRef.current;setClipboardMenu(null);try{const text=window.mongle?.readClipboard?await window.mongle.readClipboard():await navigator.clipboard.readText();if(await current.current.confirmPaste(text)&&adapter===adapterRef.current){adapter?.paste(text);termRef.current?.focus();}}catch{current.current.onError('클립보드를 읽을 수 없습니다. 터미널을 선택한 뒤 Ctrl+V를 사용해 주세요.');}}
   function doSearch(backward=false){if(!query){searchRef.current?.clearDecorations();setSearchMatch(true);return;}setSearchMatch(Boolean(backward ? searchRef.current?.findPrevious(query) : searchRef.current?.findNext(query)));}
   function focusTitle(){if(props.dragClickAllowed?.()===false)return;props.onSelect();termRef.current?.focus();}
   return <section className={`pane ${props.selected?'active':''} ${props.maximized?'maximized':''}`} data-terminal-id={info.id} aria-label={`${info.title} 패널`} onPointerDown={event=>{const target=event.target as Element;if(props.dragEnabled&&target.closest('.pane-header')&&!target.closest('.pane-toolbar'))return;props.onSelect();}} onDragOverCapture={event=>{event.preventDefault();event.stopPropagation();props.onPaneDragOver?.(event);}} onDropCapture={event=>{event.preventDefault();event.stopPropagation();props.onPaneDrop?.(event);}}>
@@ -198,8 +222,8 @@ export function TerminalPane(props:PaneProps) {
         <details className="command-menu"><summary className="icon-button" aria-label="터미널 메뉴">···</summary><div>
           <button className="menu-item" onClick={props.onRename}><Pencil size={14}/>이름 변경</button>
           <button className="menu-item" onClick={props.onMove}>다른 그룹으로 이동</button>
-          <button className="menu-item" onClick={()=>void copy()}><Copy size={14}/>선택 내용 복사</button>
-          <button className="menu-item" disabled={!controlled} onClick={()=>void paste()}><ClipboardPaste size={14}/>붙여넣기</button>
+          <button className="menu-item" title="드래그로 선택한 뒤 Ctrl+C · Ctrl+Shift+C" onClick={()=>void copy()}><Copy size={14}/>선택 내용 복사 <kbd className="shortcut-key">Ctrl+C</kbd></button>
+          <button className="menu-item" title="Ctrl+V · Ctrl+Shift+V" disabled={!controlled} onClick={()=>void paste()}><ClipboardPaste size={14}/>붙여넣기 <kbd className="shortcut-key">Ctrl+V</kbd></button>
           <button className="menu-item" onClick={props.onRestart}><RotateCcw size={14}/>새 셸로 다시 열기</button>
           <button className="menu-item" onClick={props.onClearHistory}>저장된 출력 지우기</button>
           {info.status==='running'&&<button className="menu-item danger" onClick={props.onTerminate}>작업 종료 · 기록 유지</button>}
@@ -209,7 +233,17 @@ export function TerminalPane(props:PaneProps) {
       </div>
     </header>
     {searchOpen&&<form className="searchbar" onSubmit={e=>{e.preventDefault();doSearch();}}><Search size={14}/><input autoFocus className="input" placeholder="출력에서 찾기" aria-label="출력 검색" value={query} onChange={e=>setQuery(e.target.value)} onKeyDown={e=>{if(e.key==='Escape'){setSearchOpen(false);termRef.current?.focus();}if(e.key==='Enter'&&e.shiftKey){e.preventDefault();doSearch(true);}}}/><span>{!searchMatch?'결과 없음':''}</span><button className="button subtle" type="button" onClick={()=>doSearch(true)}>이전</button><button className="button subtle">다음</button><button className="icon-button" type="button" aria-label="검색 닫기" onClick={()=>setSearchOpen(false)}><X size={14}/></button></form>}
-    <div className="pane-body"><div className="terminal-canvas" ref={mount}/></div>
+    <div className="pane-body"><div className="terminal-canvas" ref={mount} onContextMenuCapture={event=>{
+      if(termRef.current?.modes.mouseTrackingMode!=='none'&&!event.shiftKey)return;
+      event.preventDefault();event.stopPropagation();props.onSelect();
+      if(!event.shiftKey){if(controlled&&props.connected&&info.status==='running')void paste();return;}
+      setClipboardMenu({x:Math.max(8,Math.min(event.clientX,window.innerWidth-244)),y:Math.max(8,Math.min(event.clientY,window.innerHeight-104))});
+    }}/></div>
+    {clipboardMenu&&createPortal(<div className="terminal-clipboard-menu" role="dialog" aria-label="터미널 복사와 붙여넣기" style={{left:clipboardMenu.x,top:clipboardMenu.y}}>
+      <button autoFocus className="menu-item" disabled={!termRef.current?.hasSelection()} onClick={()=>void copy()}><Copy size={14}/>복사 <kbd className="shortcut-key">Ctrl+C</kbd></button>
+      <button className="menu-item" disabled={!controlled||!props.connected||info.status!=='running'} onClick={()=>void paste()}><ClipboardPaste size={14}/>붙여넣기 <kbd className="shortcut-key">Ctrl+V</kbd></button>
+    </div>,document.body)}
+    {copied&&<div className="clipboard-feedback" role="status">선택한 내용을 복사했습니다.</div>}
     {props.dropPreview&&<div className="pane-drop-preview" data-drop-position={props.dropPreview.position} aria-live="polite"><span>{props.dropPreview.label}</span></div>}
     {(frameError||inputUncertain)&&<div className="connection-banner warning">{inputUncertain?'마지막 입력의 전달 여부를 확인해 주세요. 확인 후 제어권을 다시 가져올 수 있습니다.':frameError}</div>}
     {info.restoreError&&<div className="connection-banner warning">{info.restoreError}{info.historyAvailable?' 이전 기록은 그대로 남아 있습니다.':''}</div>}

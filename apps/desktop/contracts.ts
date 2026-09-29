@@ -8,6 +8,8 @@ export interface DesktopBridge extends Transport {
   removeHost(id: string): Promise<void>;
   selectHost(id: string): Promise<ConnectionInfo>;
   selectDirectory(currentPath?: string): Promise<string | null>;
+  readClipboard(): Promise<string>;
+  writeClipboard(text: string): Promise<void>;
   onConnection(listener: (info: ConnectionInfo) => void): () => void;
 }
 export type EventSubscriber = (message: HostEvent) => void;

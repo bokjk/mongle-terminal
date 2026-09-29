@@ -18,6 +18,8 @@ const bridge: DesktopBridge = {
   removeHost: (id) => ipcRenderer.invoke('mongle:remove-host', id),
   selectHost: (id) => ipcRenderer.invoke('mongle:select-host', id),
   selectDirectory: (currentPath) => ipcRenderer.invoke('mongle:select-directory', currentPath),
+  readClipboard: () => ipcRenderer.invoke('mongle:clipboard-read'),
+  writeClipboard: (text) => ipcRenderer.invoke('mongle:clipboard-write', text),
   onConnection: (listener) => {
     const callback = (_event: unknown, info: Parameters<typeof listener>[0]) => listener(info);
     ipcRenderer.on('mongle:connection', callback);

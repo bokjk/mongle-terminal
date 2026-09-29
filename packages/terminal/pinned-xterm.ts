@@ -12,7 +12,15 @@ interface CoreService {
   decPrivateModes: Record<string, unknown>;
 }
 
+interface PresentationRenderer {
+  clear(): void;
+  renderRows(start: number, end: number): void;
+  handleResize(cols: number, rows: number): void;
+  handleSelectionChanged(start: [number, number] | undefined, end: [number, number] | undefined, column: boolean): void;
+}
+
 interface PinnedCore {
+  _renderService?: { _renderer: { value: PresentationRenderer | undefined } };
   coreService: CoreService;
   coreMouseService: { activeEncoding: string; activeProtocol: string };
   _bufferService: { buffers: { normal: {
@@ -55,12 +63,62 @@ export function presentationExtras(terminal: unknown): Pick<TerminalModes, 'curs
   };
 }
 
-/** Hold the previous picture while a complete serialized frame is parsed.
- * xterm 6 checks this flag again inside its queued animation-frame callback,
- * so a refresh scheduled by reset() cannot paint the empty buffer.
+/** Gate xterm's scheduled refreshes while a complete frame is parsed.
+ * Direct renderer calls need beginPresentation() as well.
  */
 export function setPresentationPending(terminal: unknown, pending: boolean): void {
   coreOf(terminal).coreService.decPrivateModes.synchronizedOutput = pending;
+}
+
+/** xterm 6's DEC 2026 gate does not cover renderer.clear() on buffer activation
+ * or direct paints from selection/focus. Fence those entry points BEFORE reset
+ * so the existing DOM remains visible until the full frame can be committed.
+ * No cloned screenshot/overlay is used: text selection and the editor stay live.
+ */
+export function beginPresentation(terminal: unknown): (commit: boolean, rows: number, position?: {start:{x:number;y:number};end:{x:number;y:number}}) => void {
+  const renderer = coreOf(terminal)._renderService?._renderer.value;
+  // Browser terminals used without open() have a parser but no renderer.
+  if (!renderer) {
+    if ((terminal as { element?: unknown }).element) throw new Error('Unsupported xterm renderer internals.');
+    return () => {};
+  }
+  for (const name of ['clear', 'renderRows', 'handleResize', 'handleSelectionChanged'] as const) {
+    if (typeof renderer[name] !== 'function') throw new Error('Unsupported xterm renderer internals.');
+  }
+  const clear = renderer.clear;
+  const renderRows = renderer.renderRows;
+  const resize = renderer.handleResize;
+  const selection = renderer.handleSelectionChanged;
+  let clearPending = false;
+  let size: Parameters<PresentationRenderer['handleResize']> | undefined;
+  renderer.clear = () => { clearPending = true; };
+  renderer.renderRows = () => {};
+  renderer.handleResize = (...args) => { size = args; };
+  renderer.handleSelectionChanged = () => {};
+  let finished = false;
+  return (commit, rows, position) => {
+    if (finished) return;
+    finished = true;
+    try {
+      if (commit) {
+        // All DOM changes below run in one JS turn, before the browser paints.
+        // Keep renderRows fenced through resize/selection to avoid extra paints.
+        if (clearPending) clear.call(renderer);
+        if (size) resize.call(renderer, ...size);
+        // SelectionService refreshes asynchronously. Its last renderer call may
+        // still describe reset's empty selection; commit the restored public
+        // selection now instead of flashing an empty highlight for one RAF.
+        selection.call(renderer, position ? [position.start.x, position.start.y] : undefined,
+          position ? [position.end.x, position.end.y] : undefined, false);
+      }
+    } finally {
+      renderer.clear = clear;
+      renderer.renderRows = renderRows;
+      renderer.handleResize = resize;
+      renderer.handleSelectionChanged = selection;
+    }
+    if (commit) renderRows.call(renderer, 0, rows - 1);
+  };
 }
 
 export function isPresentationPending(terminal: unknown): boolean {

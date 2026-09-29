@@ -291,6 +291,8 @@ button.pane-title { background: transparent; border: 0; text-align: left; paddin
 .menu-item:hover, .menu-item.active, .menu-item[aria-selected='true'] { color: var(--text); background: var(--surface-hover); }
 .menu-item.danger { color: var(--danger); }
 .menu-item .shortcut-key { margin-left: auto; }
+.terminal-clipboard-menu { position: fixed; z-index: 1000; width: 236px; padding: 6px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-raised); box-shadow: var(--shadow); }
+.clipboard-feedback { position: absolute; right: 12px; bottom: 35px; z-index: 10; padding: 6px 10px; border-radius: 6px; background: var(--surface-raised); color: var(--text); font-size: 12px; pointer-events: none; }
 .host-menu { position: absolute; z-index: 35; top: calc(100% + 6px); left: 0; width: max(100%, 220px); padding: 5px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); box-shadow: 0 8px 28px #0005; }
 .host-menu .menu-item { font-size: 11px; }
 .host-menu hr { border: 0; border-top: 1px solid var(--border); margin: 5px; }

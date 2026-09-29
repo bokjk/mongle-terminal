@@ -8,6 +8,8 @@ Windows 11 x64에서 실제 PowerShell/ConPTY, Electron 앱과 Chrome 브라우�
 
 | 대상 | 결과 | 증거와 범위 |
 |---|---|---|
+| 연속 답변 깜박임 후속 수정 | **DOM 프레임 재현·수정·현재 앱 적용** | 앞선 onRender 검사에서 놓친 reset 직후 DOM 지우기와 선택 갱신 차단. RAF로 일반/대체 화면 연속 출력 검증, 터미널 32개 및 실제 앱 클립보드 E2E 통과. 호스트·셸 유지. 실제 Claude 답변 생성 검증은 별도. [후속 검증](validation/streaming-flicker.md) |
+| 콘솔 방식 복사·붙여넣기 | **구현·현재 앱 적용·실제 클립보드 검증 통과** | 블록 선택 자동 복사, 우클릭 붙여넣기, 선택 유무에 따른 Ctrl+C, Ctrl+V, 여러 줄 확인. [복사 검증](validation/clipboard.md) |
 | GJC 화면 깜박임 | **수정·회귀 및 실제 출력 재생 통과** | DEC 2026 완료 후 호스트 화면 전송, 클라이언트 reset/write 중간 화면 표시 방지. 터미널 30/30·호스트 34/34·GJC 출력 Chrome 재생 통과. 실행 중 호스트에는 재시작 후 적용. [깜박임 검증](validation/gjc-flicker.md) |
 | 시작 폴더 찾아보기 | **구현·배포·격리 앱 E2E 통과, 실사용 연결은 기존 인증 오류로 차단** | 새 터미널·분할·그룹 설정에 Windows 폴더 선택창 추가. 선택한 실제 cwd·취소·분할 상속·잘못된 경로·원격 UI 구분 검증. GUI 교체 후 기존 호스트 유지. [시작 폴더 검증](validation/start-folder.md) |
 | 전체 타입 검사·빌드 | 통과 | `npm run typecheck`, `npm run build`. 웹 번들 크기 안내 1건, 빌드 오류 없음 |

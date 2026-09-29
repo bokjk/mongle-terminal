@@ -45,6 +45,74 @@ test('real Chrome: a slow full-frame write never paints the reset or partial scr
     assert.ok(result.final.includes('new complete screen'));
   }));
 
+for (const buffer of ['normal history', 'alternate buffer'] as const) {
+  test(`real Chrome: animation frames retain complete pictures during ${buffer} streaming`,
+    browserOptions, async () => withTerminalBrowser(async (page, engine) => {
+      await engine.write(Array.from({ length: 24 }, (_, index) => `history row ${index}\r\n`).join(''));
+      if (buffer === 'alternate buffer') await engine.write('\x1b[?1049h\x1b[H');
+      await engine.write('streamed answer 0');
+      const frames = [await engine.snapshot()];
+      for (let index = 1; index <= 3; index++) {
+        await engine.write(`\r\x1b[2Kstreamed answer ${index}: ${'complete '.repeat(index)}`);
+        frames.push(await engine.snapshot());
+      }
+      // Reset also activates the normal buffer, and serialized alternate frames
+      // activate the alternate buffer again. Both paths clear DOM rows directly
+      // without an onRender notification, so observe the actual DOM every RAF.
+      await page.evaluate('window.__name = (value) => value');
+      const result = await page.evaluate(async ({ frames, buffer }) => {
+        const { terminal, adapter } = (window as any).mongleTerminalTest;
+        const tick = () => new Promise(resolve => requestAnimationFrame(resolve));
+        const picture = () => terminal.element.querySelector('.xterm-rows').textContent as string;
+        const expected: string[] = [];
+        for (const frame of frames) {
+          await adapter.applySnapshot(frame);
+          await tick(); await tick();
+          expected.push(picture());
+        }
+        await adapter.applySnapshot(frames[0]);
+        await tick(); await tick();
+        // Preserve a real selection, exercising its independently scheduled DOM
+        // redraw while a replacement presentation is still being parsed.
+        terminal.select(0, terminal.buffer.active.viewportY + (buffer === 'normal history' ? 3 : 0), 3);
+        await tick(); await tick();
+        const original = terminal.write.bind(terminal);
+        terminal.write = (data: string, done: () => void) => {
+          setTimeout(() => original(data.slice(0, 3), () => {
+            setTimeout(() => original(data.slice(3), done), 50);
+          }), 50);
+        };
+        const invalid: Array<{ frame: number; text: string }> = [];
+        const selectionMissing: number[] = [];
+        let samples = 0;
+        try {
+          for (let index = 1; index < frames.length; index++) {
+            let sampling = true;
+            let handle = 0;
+            const sample = () => {
+              if (!sampling) return;
+              const text = picture();
+              samples++;
+              if (text !== expected[index - 1] && text !== expected[index]) invalid.push({ frame: index, text });
+              handle = requestAnimationFrame(sample);
+            };
+            handle = requestAnimationFrame(sample);
+            await adapter.applySnapshot(frames[index]);
+            if (!terminal.element.querySelector('.xterm-selection')?.children.length) selectionMissing.push(index);
+            await tick(); await tick();
+            sampling = false;
+            cancelAnimationFrame(handle);
+          }
+        } finally { terminal.write = original; }
+        return { samples, invalid, selectionMissing, final: picture(), expected: expected.at(-1) };
+      }, { frames, buffer });
+      assert.ok(result.samples >= frames.length - 1, 'sample each streamed presentation independently of xterm render events');
+      assert.deepEqual(result.invalid, [], 'the DOM must keep the old picture until the complete next picture is ready');
+      assert.deepEqual(result.selectionMissing, [], 'a completed frame retains the selection without waiting for another repaint');
+      assert.equal(result.final, result.expected);
+    }));
+}
+
 test('real Chrome: replay captured GJC output through host frames without blank paints',
   { ...browserOptions, skip: !process.env.MONGLE_GJC_CAPTURE || !chrome }, async () => withTerminalBrowser(async (page, engine) => {
     const chunks: Array<{ ms: number; data: string }> = JSON.parse(readFileSync(process.env.MONGLE_GJC_CAPTURE!, 'utf8'));

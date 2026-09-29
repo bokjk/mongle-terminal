@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, session, Tray, type IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, session, Tray, type IpcMainInvokeEvent } from 'electron';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { z } from 'zod';
@@ -123,6 +123,8 @@ function handlers() {
   const allowConnectionChanges = () => { if (fullExitCommitted) throw new AppError('SHUTTING_DOWN', '현재 컴퓨터의 완전 종료가 진행 중입니다.'); };
   ipcMain.handle('mongle:connection-info', event => { trusted(event); return connection; });
   ipcMain.handle('mongle:hosts', event => { trusted(event); return registry.list(); });
+  ipcMain.handle('mongle:clipboard-read', async event => { trusted(event); return z.string().max(16 * 1024 * 1024).parse(await clipboard.readText()); });
+  ipcMain.handle('mongle:clipboard-write', async (event, text) => { trusted(event); await clipboard.writeText(z.string().max(16 * 1024 * 1024).parse(text)); });
   ipcMain.handle('mongle:select-directory', async (event, currentPath) => {
     trusted(event); allowConnectionChanges();
     const canChoose = () => !quitting && !fullExitCommitted && connection.status === 'connected' && connection.owner && registry.get(registry.selectedId).local;
@@ -272,7 +274,7 @@ if (singleInstance) void app.whenReady().then(async () => {
   session.defaultSession.setPermissionRequestHandler((_wc, _p, callback) => callback(false));
   session.defaultSession.setPermissionCheckHandler(() => false);
   session.defaultSession.webRequest.onBeforeRequest({ urls: ['http://*/*', 'https://*/*', 'ws://*/*', 'wss://*/*'] }, (_details, callback) => callback({ cancel: true }));
-  Menu.setApplicationMenu(Menu.buildFromTemplate([{ label: '몽글터미널', submenu: [{ label: process.platform === 'win32' ? '창 닫기 · 트레이로 숨기기' : '창 닫기 · 터미널 유지', role: 'close' }, { type: 'separator' }, { label: '앱 종료 · 터미널 유지', role: 'quit' }, { label: '완전 종료…', click: requestFullExit }] }, { label: '편집', submenu: [{ role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }] }, { label: '보기', submenu: [{ role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { role: 'togglefullscreen' }] }]));
+  Menu.setApplicationMenu(Menu.buildFromTemplate([{ label: '몽글터미널', submenu: [{ label: process.platform === 'win32' ? '창 닫기 · 트레이로 숨기기' : '창 닫기 · 터미널 유지', role: 'close' }, { type: 'separator' }, { label: '앱 종료 · 터미널 유지', role: 'quit' }, { label: '완전 종료…', click: requestFullExit }] }, { label: '편집', submenu: [{ role: 'copy', accelerator: 'CommandOrControl+Shift+C' }, { role: 'paste' }, { role: 'selectAll', accelerator: 'CommandOrControl+Shift+A' }] }, { label: '보기', submenu: [{ role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { role: 'togglefullscreen' }] }]));
   await registry.load(); handlers(); createTray(); desktopReady = true; await showWindow(); await connectSelected();
   const monitor = setInterval(() => {
     if (connection.status !== 'connected' || !transport || connecting || quitting || fullExitCommitted) return;

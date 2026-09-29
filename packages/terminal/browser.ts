@@ -1,5 +1,5 @@
 import type { Terminal } from '@xterm/xterm';
-import { applyPresentationModes, setPresentationPending, suppressRendererResponses } from './pinned-xterm.js';
+import { applyPresentationModes, beginPresentation, setPresentationPending, suppressRendererResponses } from './pinned-xterm.js';
 import { assertGeometry, PRESENTATION_VERSION } from './types.js';
 import { attachTouchScrollback } from './touch-scrollback.js';
 import type { TerminalInputEncoding, TerminalModes } from './types.js';
@@ -141,9 +141,11 @@ export class BrowserPresentationAdapter {
       ? Array.from({ length: frame.rows }, (_, row) => old.getLine(oldViewportY + row)?.translateToString()) : undefined;
     const selection = sameGeometry ? this.terminal.getSelectionPosition?.() : undefined;
     const selectedText = selection ? this.terminal.getSelection() : '';
-    this.terminal.reset();
-    setPresentationPending(this.terminal, true);
+    const finishPresentation = beginPresentation(this.terminal);
+    let complete = false;
     try {
+      this.terminal.reset();
+      setPresentationPending(this.terminal, true);
       this.terminal.resize(frame.cols, frame.rows);
       this.modes = modes;
       // Restore input modes synchronously before yielding to another key event.
@@ -166,8 +168,10 @@ export class BrowserPresentationAdapter {
         // coordinates. Never retain a selection that silently selects new text.
         if (this.terminal.getSelection() !== selectedText) this.terminal.clearSelection();
       }
+      complete = true;
     } finally {
       setPresentationPending(this.terminal, false);
+      finishPresentation(complete && !this.disposed, frame.rows, this.terminal.getSelectionPosition?.());
       if (!this.disposed) this.terminal.refresh?.(0, frame.rows - 1);
     }
   }
