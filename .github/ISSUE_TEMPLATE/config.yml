@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 사용 방법
+    url: https://github.com/bokjk/mongle-terminal/blob/main/docs/USER-GUIDE.md
+    about: 설치·조작·원격 연결·종료와 복원을 먼저 확인하세요.
+  - name: 보안 제보 안내
+    url: https://github.com/bokjk/mongle-terminal/blob/main/SECURITY.md
+    about: 취약점과 민감한 정보는 공개 이슈에 올리지 마세요.

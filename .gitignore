@@ -4,6 +4,7 @@ release/
 release-*/
 release-stage/
 .test-data/
+.backups/
 test-results/
 *.log
 .env

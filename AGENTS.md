@@ -1,5 +1,10 @@
 # 몽글터미널 작업 규칙
 
+## 기여 절차
+
+- 변경 작업은 `CONTRIBUTING.md`의 개발 격리·검증·문서·PR 기준을 따른다. PR에는 `.github/PULL_REQUEST_TEMPLATE.md`의 변경 내용·검증 결과·문서 영향·확인 항목을 작성한다.
+- 필수 양식·문서 영향은 `scripts/check-contribution.ts`가 검사하며 타입·빌드·회귀는 `.github/workflows/ci.yml`에 정의한다. CI 준비·실행·서버 측 병합 제한 적용을 구분한다.
+
 ## 기능과 문서를 함께 유지하기
 
 - 사용자에게 보이는 기능 추가·변경·수정은 같은 작업에서 `README.md`와 `CHANGELOG.md`에 반영한다. README는 현재 제공 기능·설치/실행·사용 흐름을 설명하고, CHANGELOG의 **미배포 변경**에는 사용자에게 미치는 변화를 기록한다. 내부 구현만 바뀌면 README 내용이 여전히 정확한지 확인하고 불필요한 설명을 늘리지 않는다.

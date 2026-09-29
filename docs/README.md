@@ -1,4 +1,8 @@
-# 몽글터미널 설계 문서
+# 몽글터미널 문서
+
+사용자는 [사용자 안내](USER-GUIDE.md), 기여자는 [기여 절차](../CONTRIBUTING.md)에서 시작하세요. [보안 제보](../SECURITY.md), [생성 폴더 정리 기준](WORKSPACE-HYGIENE.md), [README 이미지 출처](assets/README.md)도 함께 관리합니다.
+
+## 초기 설계와 조사
 
 **Windows에서 그룹별 분할 터미널을 사용하고, 앱 창을 닫아도 작업을 유지하며, 다른 PC·휴대폰에서 Tailscale로 같은 세션에 접속하는 앱을 설계했다.**
 

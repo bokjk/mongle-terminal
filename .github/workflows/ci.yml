@@ -1,0 +1,64 @@
+name: Contribution checks
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited, ready_for_review]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: contribution-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-checks:
+    name: Windows checks
+    runs-on: windows-2022
+    timeout-minutes: 30
+    env:
+      MONGLE_DATA_DIR: ${{ github.workspace }}\.test-data\ci-profile
+    steps:
+      - name: Check out proposed changes
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install Node.js 24
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Prepare isolated profile and locked dependencies
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path $env:MONGLE_DATA_DIR | Out-Null
+          npm.cmd ci
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Validate PR description and documentation
+        if: github.event_name == 'pull_request'
+        run: node --import tsx scripts/check-contribution.ts
+      - name: Prepare native runtimes and browser
+        shell: pwsh
+        run: |
+          node node_modules/node-pty/scripts/prebuild.js
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          node node_modules/node-pty/scripts/post-install.js
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          node node_modules/esbuild/install.js
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          node node_modules/electron/install.js
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          npx.cmd playwright install chrome
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Typecheck
+        run: npm.cmd run typecheck
+      - name: Build web and Windows runtime
+        run: npm.cmd run build
+      - name: Run regression tests sequentially
+        run: npx.cmd tsx --test --test-concurrency=1 tests/**/*.test.ts
+      - name: Validate release documentation
+        run: node --import tsx scripts/release-check.ts
