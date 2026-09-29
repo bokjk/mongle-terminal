@@ -7,6 +7,7 @@ export interface DesktopBridge extends Transport {
   addHost(host: { name: string; url: string }): Promise<SavedHost>;
   removeHost(id: string): Promise<void>;
   selectHost(id: string): Promise<ConnectionInfo>;
+  selectDirectory(currentPath?: string): Promise<string | null>;
   onConnection(listener: (info: ConnectionInfo) => void): () => void;
 }
 export type EventSubscriber = (message: HostEvent) => void;

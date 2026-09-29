@@ -35,6 +35,7 @@ let quitting = false;
 let connecting = false;
 let hostStoppedByUser = false;
 let fullExitCommitted = false;
+let choosingDirectory = false;
 const connectionAttempts = new Set<Promise<ConnectionInfo>>();
 const pendingHostStarts = new Set<number>();
 
@@ -122,6 +123,21 @@ function handlers() {
   const allowConnectionChanges = () => { if (fullExitCommitted) throw new AppError('SHUTTING_DOWN', '현재 컴퓨터의 완전 종료가 진행 중입니다.'); };
   ipcMain.handle('mongle:connection-info', event => { trusted(event); return connection; });
   ipcMain.handle('mongle:hosts', event => { trusted(event); return registry.list(); });
+  ipcMain.handle('mongle:select-directory', async (event, currentPath) => {
+    trusted(event); allowConnectionChanges();
+    const canChoose = () => !quitting && !fullExitCommitted && connection.status === 'connected' && connection.owner && registry.get(registry.selectedId).local;
+    if (!canChoose()) throw new Error('폴더 찾아보기는 이 PC에 연결했을 때 사용할 수 있습니다. 원격 컴퓨터의 폴더는 경로를 입력하세요.');
+    const value = z.string().max(4096).refine(value => !value.includes('\0')).optional().parse(currentPath)?.trim();
+    if (value && !path.isAbsolute(value)) throw new Error('시작 폴더는 전체 경로로 입력하세요.');
+    if (choosingDirectory || !window || window.isDestroyed()) throw new Error('폴더 선택창을 이미 열었거나 앱 창을 사용할 수 없습니다.');
+    const generation = selectionGeneration;
+    choosingDirectory = true;
+    try {
+      const result = await dialog.showOpenDialog(window, { title: '터미널 시작 폴더 선택', buttonLabel: '폴더 선택', properties: ['openDirectory'], ...(value ? { defaultPath: value } : {}) });
+      if (generation !== selectionGeneration || !canChoose()) throw new Error('연결이 바뀌었습니다. 시작 폴더를 다시 선택하세요.');
+      return result.canceled ? null : result.filePaths[0] ?? null;
+    } finally { choosingDirectory = false; }
+  });
   ipcMain.handle('mongle:add-host', (event, host) => { trusted(event); return registry.add(host); });
   ipcMain.handle('mongle:remove-host', async (event, id) => {
     trusted(event); allowConnectionChanges(); z.string().uuid().parse(id);

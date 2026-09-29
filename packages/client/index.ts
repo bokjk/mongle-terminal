@@ -9,6 +9,7 @@ export interface DesktopBridge {
   addHost(host: {name: string; url: string}): Promise<SavedHost>;
   removeHost(id: string): Promise<void>;
   selectHost(id: string): Promise<ConnectionInfo>;
+  selectDirectory?(currentPath?: string): Promise<string | null>;
   onConnection(listener: (info: ConnectionInfo) => void): () => void;
 }
 declare global { interface Window { mongle?: DesktopBridge } }
