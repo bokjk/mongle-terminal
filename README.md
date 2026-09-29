@@ -21,7 +21,7 @@
 <p align="center"><sub>실제 앱의 공통 화면을 격리된 데모 환경에서 촬영했습니다. 화면의 프로젝트와 출력은 설명용 예시입니다.</sub></p>
 
 > [!NOTE]
-> **0.2.0 Windows 미리보기 · 공개 배포 준비 중.** 현재 저장소는 비공개이고 공개 다운로드와 프로젝트 라이선스는 아직 준비되지 않았습니다. 공개 범위와 실제 검증 결과는 [구현 현황](docs/IMPLEMENTATION-STATUS.md)에서 확인할 수 있습니다.
+> **0.3.0 Windows 미리보기 · 비공개 테스트 중.** 저장소는 비공개이며 테스트용 설치 파일은 직접 전달합니다. 공개 다운로드와 프로젝트 라이선스는 아직 준비되지 않았습니다. 공개 범위와 실제 검증 결과는 [구현 현황](docs/IMPLEMENTATION-STATUS.md)에서 확인할 수 있습니다.
 
 ## 터미널 여러 개, 하나의 작업 공간
 
@@ -127,7 +127,7 @@ PR 양식과 자동 검사 구성을 제공합니다. 검사 통과를 병합 �
 | `npm.cmd test` | 자동 검사; 조건부 생략 항목은 별도 확인 |
 | `node --import tsx scripts/package.ts --output release-candidate` | 실사용 `release/`와 분리한 패키징 |
 
-패키징은 `MongleTerminal-Setup-0.2.0-x64.exe`와 `MongleTerminal-0.2.0-x64.zip`을 생성합니다. `npm.cmd run package`의 기본 출력은 `release/`이므로 그 폴더에서 앱이 실행 중일 때 사용하지 마세요. `npm.cmd run host`는 개발용이며 배포본 실행 검증을 대신하지 않습니다.
+패키징은 `MongleTerminal-Setup-0.3.0-x64.exe`와 `MongleTerminal-0.3.0-x64.zip`을 생성합니다. 테스터에게는 설치 파일 하나만 전달하면 됩니다([비공개 테스트 배포](docs/RELEASING.md#비공개-테스트-배포)). `npm.cmd run package`의 기본 출력은 `release/`이므로 그 폴더에서 앱이 실행 중일 때 사용하지 마세요. `npm.cmd run host`는 개발용이며 배포본 실행 검증을 대신하지 않습니다.
 
 | 경로 | 역할 |
 |---|---|
