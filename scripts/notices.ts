@@ -82,8 +82,34 @@ export async function generateNotices(root = process.cwd(), options: { strict?: 
         licenseOrigin = `https://github.com/xtermjs/xterm.js/blob/${pkg.commit}/LICENSE (same-commit @xterm/xterm archive)`;
       }
     }
+    if (!files.length && key === 'lazy-val@1.0.5') {
+      // This exact upstream archive/commit declares MIT but ships no LICENSE.
+      // Preserve that declaration verbatim and label the standard MIT terms
+      // separately; never pretend a different package's license is its original.
+      const metadata = path.join(directory, 'package.json');
+      const notice = path.join(docs, 'license-sources/lazy-val-1.0.5-NOTICE.txt');
+      const noticeHash = createHash('sha256').update((await readFile(notice, 'utf8')).replaceAll('\r\n', '\n')).digest('hex');
+      if (await sha256(metadata) !== 'a5096f95098452cf6fe5c8ac9be8f13f59ab7c9f605ba5ef92c91b2c505744f0' ||
+          noticeHash !== '1f6add4101c1116c4f3b3cec1c9eb6ee794379c6b6c268a4c3bd084ce6f4e2d6') {
+        errors.push('Pinned lazy-val license declaration or notice changed. Review upstream metadata.');
+      } else {
+        copiedFiles.push(await copy(metadata, path.join(label, 'package.json')));
+        copiedFiles.push(await copy(notice, path.join(label, 'NOTICE.txt')));
+        licenseOrigin = 'https://github.com/develar/lazy-val/blob/b69ad4119f1b19bdab13c61ee2fcc88d46b89071/package.json (MIT declaration; no upstream LICENSE file; standard terms labeled separately)';
+      }
+    }
+    if (pkg.name === 'qrcode.react') {
+      // npm ships the wrapper license but omits the bundled engine's file.
+      const source = path.join(docs, 'license-sources/qrcode-react-4.2.0-qrcodegen-LICENSE');
+      const hash = createHash('sha256').update((await readFile(source, 'utf8')).replaceAll('\r\n', '\n')).digest('hex');
+      if (pkg.version !== '4.2.0' || hash !== 'ba5a977288ff7463c51ea0cc5bf5a34372707985655c1ccc054f2a0caa3d9bff') errors.push('QR generator version or original license changed. Review its bundled engine notice.');
+      else {
+        copiedFiles.push(await copy(source, path.join(label, 'qrcodegen-LICENSE')));
+        licenseOrigin = 'https://github.com/zpao/qrcode.react/blob/f91d2bdcc39def6c5c77178743a44f935a740992/src/third-party/qrcodegen/LICENSE (same release bundled engine)';
+      }
+    }
     if (!copiedFiles.length) errors.push(`Missing original license text: ${key}`);
-    const license = typeof pkg.license === 'string' ? pkg.license : pkg.license?.type ?? pkg.licenses?.map(l => l.type).join(' OR ') ?? 'UNKNOWN';
+    const license = pkg.name === 'qrcode.react' ? 'ISC AND MIT (bundled qrcodegen)' : typeof pkg.license === 'string' ? pkg.license : pkg.license?.type ?? pkg.licenses?.map(l => l.type).join(' OR ') ?? 'UNKNOWN';
     if (license === 'UNKNOWN') errors.push(`Missing license metadata: ${key}`);
     const repository = typeof pkg.repository === 'string' ? pkg.repository : pkg.repository?.url;
     notices.push({ name: pkg.name, version: pkg.version, license, source: repository || pkg.homepage || entry.resolved || '', licenseOrigin, integrity: entry.integrity,
@@ -132,7 +158,8 @@ export async function generateNotices(root = process.cwd(), options: { strict?: 
   await writeFile(path.join(out, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
   const rows = notices.map(n => `| ${cell(n.name)} | ${cell(n.version)} | ${cell(n.license)} | ${n.files.map(f => `[${cell(path.basename(f))}](${f})`).join(' · ')} |`).join('\n');
   const markdown = `# 제3자 소프트웨어 고지\n\n이 문서는 \`scripts/notices.ts\`가 lockfile과 실제 설치된 production 의존성 메타데이터에서 생성합니다. 의존성 고지 원문은 연결된 파일에 수정 없이 보존합니다. 몽글터미널 자체의 공개 라이선스는 아직 결정하지 않았으며 \`private\`/\`UNLICENSED\`입니다. 아래 라이선스를 앱 자체의 라이선스로 해석하지 않습니다.\n\n## 포함 구성요소\n\n| 구성요소 | 버전 | 라이선스 메타데이터 | 고지 원문 |\n|---|---|---|---|\n${rows}\n\nProduction 직접·전이 의존성 ${seen.size}개와 별도 런타임 고지를 수집했습니다. 번들링 과정에서 제거된 코드에 대한 고지가 포함될 수 있습니다. 빌드 도구 자체는 배포하지 않는 범위에서 제외하며, Electron/Chromium은 개발 의존성에 선언되어도 실제 앱에 들어가므로 별도로 포함합니다. \`node-addon-api\`와 node-pty의 winpty 고지 역시 실제 설치 패키지에서 보존합니다.\n\n## 바이너리와 출처\n\nElectron의 \`LICENSES.chromium.html\`과 Node 설치본의 \`LICENSE\`는 각각 런타임에 포함된 여러 구성요소의 고지를 담고 있습니다. 런타임 버전이나 빌드 원본이 바뀌면 해당 배포물의 원문으로 다시 생성해야 합니다.\n\nConPTY와 OpenConsole은 [Microsoft 공식 릴리스 v1.23.12811.0](https://github.com/microsoft/terminal/releases/tag/v1.23.12811.0)의 \`${conptyVersion}\` 패키지를 사용합니다. npm node-pty x64 바이너리와 원본 nupkg 파일의 SHA-256을 대조했습니다. nupkg는 MIT 메타데이터만 포함하므로 [고정 소스 커밋](${notices[notices.length - 1].source})의 LICENSE와 NOTICE를 보존합니다. NOTICE는 상위 Windows Terminal 프로젝트의 넓은 고지 목록입니다. 목록의 모든 구성요소가 이 ConPTY 바이너리에 포함되었다고 단정하지 않습니다.\n\nxterm 어댑터는 xterm.js 6.0.0 내부 구조에 의존하는 몽글 코드입니다. xterm 원본 고지를 유지하며 업스트림 패키지 버전 변경 시 관련 검증이 필요합니다.\n\n[생성 명세와 무결성 값](licenses/manifest.json)에 각 패키지 출처, npm 무결성 값, 고정된 ConPTY 출처와 누락 사항을 기록합니다. 전체 \`docs/licenses\`와 이 문서를 배포물에 함께 포함해야 합니다.\n\n## 생성 검증\n\n${errors.length ? '**고지 생성 오류가 남아 있습니다. 배포 전에 해결해야 합니다.**\n\n' + errors.map(e => '- ' + e).join('\n') : '필수 원문 누락·lockfile 버전 불일치·고정 바이너리 불일치를 발견하지 않았습니다. 이는 자동 수집 검사 결과이며 별도 법률 검토를 뜻하지 않습니다.'}\n${skipped.length ? '\n이 플랫폼에 설치되지 않은 optional 패키지:\n\n' + skipped.map(s => '- ' + s).join('\n') + '\n' : ''}`;
-  await writeFile(path.join(docs, 'THIRD-PARTY-NOTICES.md'), markdown);
+  const originalFileException = '\n## 별도 원문 파일이 없는 의존성\n\nlazy-val 1.0.5는 npm 원본과 고정 소스 커밋에 별도 LICENSE 파일이 없습니다. 원래 package.json의 MIT·저자 선언을 그대로 보존하고, 해당 선언이 가리키는 표준 MIT 조건을 별도로 표시해 동봉했습니다. 이를 업스트림 LICENSE 원문을 확보한 것으로 표현하지 않습니다. 원문 메타데이터와 안내의 해시를 고정해 버전·내용 변경 시 재검토하도록 검사합니다.\n';
+  await writeFile(path.join(docs, 'THIRD-PARTY-NOTICES.md'), markdown.replace('필수 원문 누락·lockfile 버전 불일치·고정 바이너리 불일치를 발견하지 않았습니다.', '고정한 수집 기준에서 누락·버전·바이너리 불일치를 발견하지 않았습니다.') + originalFileException);
   if (options.strict && errors.length) throw new Error(`Third-party notice verification failed:\n${errors.join('\n')}`);
   return { productionPackages: seen.size, notices: notices.length, errors, output: path.join(docs, 'THIRD-PARTY-NOTICES.md') };
 }

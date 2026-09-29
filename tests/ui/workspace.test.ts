@@ -6,7 +6,7 @@ import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createServer } from 'node:http';
-import { chromium } from '@playwright/test';
+import { chromium, expect } from '@playwright/test';
 import { HostCore } from '../../packages/host/core.js';
 import type { ConnectionContext } from '../../packages/protocol/index.js';
 
@@ -48,10 +48,16 @@ test('real UI and host: typing, uncertain-input latch, split, resize, reload PID
     const ackDeadline=Date.now()+5000;while(!acknowledged.includes(frame.seq)&&Date.now()<ackDeadline)await new Promise(resolve=>setTimeout(resolve,20));assert.ok(acknowledged.includes(frame.seq),'fresh stream frame was rendered and ACKed');
     await page.locator('.xterm-helper-textarea').focus();await page.keyboard.type('DO_NOT_SEND');assert.equal(inputs.length,countAfterFailure,'output ACK must not unlock uncertain input');
     await page.getByRole('button',{name:'최대화',exact:true}).click();await page.getByText('마지막 입력의 전달 여부를 확인해 주세요. 확인 후 제어권을 다시 가져올 수 있습니다.',{exact:true}).waitFor();await page.locator('.xterm-helper-textarea').focus();await page.keyboard.type('STILL_BLOCKED');assert.equal(inputs.length,countAfterFailure,'pane remount must preserve the latch');
-    await page.locator('.control-chip').click();await page.getByText('여기서 제어 중',{exact:true}).waitFor();await page.keyboard.press('Control+c');assert.equal(inputs.slice(countAfterFailure).filter(input=>input.data==='\x03').length,1,'explicit acquire and screen ACK restore input (focus reports may also be sent)');assert.equal(inputs.filter(input=>input.data==='x').length,1,'uncertain input is never replayed');
+    await page.locator('.control-chip').click();await page.getByText('여기서 제어 중',{exact:true}).waitFor();await page.keyboard.press('Control+c');
+    // The browser input queue delivers asynchronously and may combine focus
+    // reports with Ctrl+C. Preserve all other bytes so replay/loss still fails.
+    const recoveredInput=()=>inputs.slice(countAfterFailure).map(input=>input.data).join('').replace(/\x1b\[[IO]/g,'');
+    await expect.poll(recoveredInput,{message:'explicit acquire and screen ACK restore input exactly once'}).toBe('\x03');
+    assert.equal(inputs.filter(input=>input.data==='x').length,1,'uncertain input is never replayed');
     await page.getByRole('button',{name:'분할로 돌아가기',exact:true}).click();
     await page.getByRole('button',{name:'좌우 분할',exact:true}).click();await page.getByRole('button',{name:'터미널 열기',exact:true}).click();
     await page.locator('.pane').nth(1).waitFor();await page.locator('.pane').nth(1).getByText('여기서 제어 중',{exact:true}).waitFor();
+    assert.equal(recoveredInput(),'\x03','Ctrl+C is not duplicated and uncertain input is not replayed after the host settles');
     assert.equal(host.getState().terminals.length,2);
     const separator=page.getByRole('separator',{name:'좌우 분할 크기'});await separator.focus();await page.keyboard.press('ArrowLeft');
     await page.waitForFunction(()=>document.querySelector('.split-divider')?.getAttribute('aria-valuenow')==='45');

@@ -260,6 +260,10 @@ button.pane-title { background: transparent; border: 0; text-align: left; paddin
 .settings-section + .settings-section { margin-top: 28px; padding-top: 23px; border-top: 1px solid var(--border-subtle); }
 .settings-title { margin: 0 0 5px; font-size: 13px; font-weight: 550; }
 .settings-description { margin: 0 0 20px; font-size: 11px; line-height: 1.75; color: var(--text-secondary); }
+.remote-access-qr { display: flex; align-items: center; flex-wrap: wrap; gap: 18px; margin: 16px 0 20px; }
+.remote-access-qr > svg { display: block; flex: 0 0 auto; width: 232px; height: 232px; max-width: 100%; background: #fff; }
+.remote-access-qr > figcaption { flex: 1 1 170px; min-width: 0; }
+.remote-access-qr .hint { line-height: 1.8; }
 .setting-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; min-height: 50px; padding: 12px 0; border-bottom: 1px solid var(--border-subtle); }
 .setting-row:last-child { border: 0; }
 .setting-label { color: var(--text-secondary); font-size: 12px; }

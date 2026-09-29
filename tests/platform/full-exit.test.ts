@@ -221,3 +221,73 @@ test('legacy resume manifest stores only authenticated running identities and at
     assert.deepEqual(await readdir(directory), ['workspace-resume.json']);
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
+
+test('update action overrides confirmation and completion while retaining the local shutdown barrier', async () => {
+  const f = fixture({ writeResumeManifest: async () => { f.calls.push('manifest'); } });
+  const run = f.controller.run({
+    confirm: async summary => { assert.equal(summary.runningTerminals, 2); f.calls.push('update.confirm'); return true; },
+    quitDesktop: () => { f.calls.push('update.install'); },
+  });
+  await flush();
+  assert.ok(f.calls.includes('host.shutdown'));
+  assert.ok(!f.calls.includes('update.install'));
+  f.closePipe(); f.setReadiness(undefined);
+  await flush();
+  assert.ok(!f.calls.includes('update.install'), 'host PID must exit before installing');
+  f.setAlive(false); await run;
+  assert.ok(f.calls.indexOf('manifest') < f.calls.indexOf('update.install'));
+  assert.equal(f.calls.filter(value => value === 'update.install').length, 1);
+  assert.ok(!f.calls.includes('confirm'));
+  assert.ok(!f.calls.includes('quit'));
+  assert.deepEqual(f.errors, []);
+});
+
+for (const updateFirst of [true, false]) {
+  test(`concurrent normal exit and update share one transaction with ${updateFirst ? 'update' : 'normal exit'} first`, async () => {
+    const decision = deferred<boolean>();
+    const f = fixture({ confirm: () => decision.promise });
+    const update = { confirm: () => decision.promise, quitDesktop: () => { f.calls.push('update.install'); } };
+    const first = updateFirst ? f.controller.run(update) : f.controller.run();
+    const second = updateFirst ? f.controller.run() : f.controller.run(update);
+    assert.equal(first, second);
+    await flush();
+    assert.equal(f.calls.filter(value => value === 'connect.local').length, 1);
+    decision.resolve(true); await flush();
+    f.closePipe(); f.setAlive(false); f.setReadiness(undefined);
+    await first;
+    assert.equal(f.calls.filter(value => value === 'host.shutdown').length, 1);
+    assert.equal(f.calls.filter(value => value === 'update.install').length, updateFirst ? 1 : 0);
+    assert.equal(f.calls.filter(value => value === 'quit').length, updateFirst ? 0 : 1);
+  });
+}
+
+test('update cancellation does not shut down and does not retain action overrides for the next exit', async () => {
+  const f = fixture();
+  await f.controller.run({ confirm: async () => false, quitDesktop: () => { f.calls.push('update.install'); } });
+  assert.ok(!f.calls.includes('host.shutdown'));
+  const run = f.controller.run(); await flush();
+  f.closePipe(); f.setAlive(false); f.setReadiness(undefined); await run;
+  assert.ok(f.calls.includes('confirm'));
+  assert.ok(f.calls.includes('quit'));
+  assert.ok(!f.calls.includes('update.install'));
+});
+
+for (const failure of ['authentication', 'storage', 'manifest'] as const) {
+  test(`update ${failure} failure invokes the override error handler and never installs or quits`, async () => {
+    const updateErrors: string[] = [];
+    const f = fixture();
+    if (failure === 'authentication') f.d.connectLocal = async () => { throw new AppError('AUTH_FAILED', 'authentication failure'); };
+    if (failure === 'storage') f.owner.request = async <T>(method: string) => {
+      if (method === 'host.shutdown') throw new AppError('STORAGE_ERROR', 'storage failure');
+      return f.state as T;
+    };
+    if (failure === 'manifest') f.d.writeResumeManifest = async () => { throw new Error('manifest failure'); };
+    const run = f.controller.run({ quitDesktop: () => { f.calls.push('update.install'); }, showError: message => updateErrors.push(message) });
+    if (failure === 'manifest') { await flush(); f.closePipe(); f.setAlive(false); f.setReadiness(undefined); }
+    await run;
+    assert.equal(updateErrors.length, 1);
+    assert.deepEqual(f.errors, []);
+    assert.ok(!f.calls.includes('update.install'));
+    assert.ok(!f.calls.includes('quit'));
+  });
+}

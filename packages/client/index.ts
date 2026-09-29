@@ -1,4 +1,6 @@
 import type { HostEvent, Transport } from '../protocol/index';
+import type { UpdateState } from '../../apps/desktop/contracts';
+export type { UpdateState } from '../../apps/desktop/contracts';
 
 export type ConnectionInfo = { status: 'connecting' | 'connected' | 'pairing' | 'offline'; hostId?: string; connectionId?: string; owner: boolean; error?: string };
 export type SavedHost = { id: string; name: string; url?: string; local: boolean; selected: boolean };
@@ -12,6 +14,10 @@ export interface DesktopBridge {
   selectDirectory?(currentPath?: string): Promise<string | null>;
   readClipboard?(): Promise<string>;
   writeClipboard?(text: string): Promise<void>;
+  getUpdateState?(): Promise<UpdateState>;
+  checkForUpdates?(): Promise<UpdateState>;
+  installUpdate?(): Promise<void>;
+  onUpdate?(listener: (state: UpdateState) => void): () => void;
   onConnection(listener: (info: ConnectionInfo) => void): () => void;
 }
 declare global { interface Window { mongle?: DesktopBridge } }

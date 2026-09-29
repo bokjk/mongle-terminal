@@ -1,4 +1,5 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, session, Tray, type IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, Notification, session, Tray, type IpcMainInvokeEvent } from 'electron';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { z } from 'zod';
@@ -10,6 +11,8 @@ import { RemoteTransport } from './remote-transport';
 import type { ConnectionInfo } from './contracts';
 import { FullExitController, isProcessAlive, readHostReadiness } from './full-exit';
 import { writeResumeManifest } from './resume-manifest';
+import { UpdateController } from './updater';
+import { GuardedNsisUpdater } from './updater-driver';
 
 app.setName('몽글터미널');
 // Match installer and shortcut identity for Windows taskbar grouping.
@@ -36,6 +39,7 @@ let connecting = false;
 let hostStoppedByUser = false;
 let fullExitCommitted = false;
 let choosingDirectory = false;
+let updater: UpdateController | undefined;
 const connectionAttempts = new Set<Promise<ConnectionInfo>>();
 const pendingHostStarts = new Set<number>();
 
@@ -123,6 +127,9 @@ function handlers() {
   const allowConnectionChanges = () => { if (fullExitCommitted) throw new AppError('SHUTTING_DOWN', '현재 컴퓨터의 완전 종료가 진행 중입니다.'); };
   ipcMain.handle('mongle:connection-info', event => { trusted(event); return connection; });
   ipcMain.handle('mongle:hosts', event => { trusted(event); return registry.list(); });
+  ipcMain.handle('mongle:update-state', event => { trusted(event); return updater!.getState(); });
+  ipcMain.handle('mongle:update-check', event => { trusted(event); return updater!.check(); });
+  ipcMain.handle('mongle:update-install', event => { trusted(event); return updater!.install(); });
   ipcMain.handle('mongle:clipboard-read', async event => { trusted(event); return z.string().max(16 * 1024 * 1024).parse(await clipboard.readText()); });
   ipcMain.handle('mongle:clipboard-write', async (event, text) => { trusted(event); await clipboard.writeText(z.string().max(16 * 1024 * 1024).parse(text)); });
   ipcMain.handle('mongle:select-directory', async (event, currentPath) => {
@@ -206,6 +213,11 @@ async function showWindow() {
 function openWindow() {
   void showWindow().catch(error => { dialog.showErrorBox('몽글터미널을 열지 못했습니다', error instanceof Error ? error.message : String(error)); });
 }
+function recoverDesktopAfterShutdown(error: string) {
+  fullExitCommitted = false; connecting = false;
+  transport?.close(); transport = undefined;
+  setConnection({ status: 'offline', owner: registry.get(registry.selectedId).local, error });
+}
 const fullExit = new FullExitController({
   connectLocal: onClose => connectOwnerPipe({ dataDir, onClose }),
   readReadiness: () => readHostReadiness(dataDir),
@@ -234,29 +246,84 @@ const fullExit = new FullExitController({
     }
   },
   keepDesktop() {
-    fullExitCommitted = false; connecting = false;
-    transport?.close(); transport = undefined;
-    setConnection({ status: 'offline', owner: registry.get(registry.selectedId).local, error: '완전 종료를 완료하지 못했습니다. 상태를 확인한 뒤 다시 연결하세요.' });
+    recoverDesktopAfterShutdown('완전 종료를 완료하지 못했습니다. 상태를 확인한 뒤 다시 연결하세요.');
   },
   writeResumeManifest: state => writeResumeManifest(dataDir, state),
   quitDesktop: () => { fullExitCommitted = false; app.quit(); },
   showError: message => dialog.showErrorBox('완전 종료를 완료하지 못했습니다', message),
 });
 function requestFullExit() { void fullExit.run(); }
-function createTray() {
-  if (process.platform !== 'win32') return;
-  tray = new Tray(path.join(root, 'platform/windows/icon.ico'));
-  tray.setToolTip('몽글터미널');
+
+function setupUpdater() {
+  const installed = process.platform === 'win32' && app.isPackaged && existsSync(path.join(process.resourcesPath, 'mongle-installed.json')) && existsSync(path.join(process.resourcesPath, 'app-update.yml'));
+  const driver = new GuardedNsisUpdater(() => updater?.getState().status === 'installing');
+  let lastStatus = '';
+  updater = new UpdateController({
+    currentVersion: app.getVersion(), driver,
+    unsupportedReason: installed ? undefined : '자동 업데이트는 Windows 설치 프로그램으로 설치한 앱에서 사용할 수 있습니다. ZIP 실행본과 개발 모드는 수동으로 교체하세요.',
+    publish(state) {
+      if (window && !window.isDestroyed()) window.webContents.send('mongle:update', state);
+      if (state.status !== lastStatus) {
+        configureApplicationMenu(); updateTrayMenu();
+        if (state.status === 'ready' && Notification.isSupported()) {
+          const notification = new Notification({ title: '몽글터미널 업데이트 준비 완료', body: `${state.availableVersion} 버전을 설치할 수 있습니다. 작업을 저장한 뒤 설정의 앱 업데이트에서 설치해 주세요.` });
+          notification.on('click', openWindow); notification.show();
+        }
+        lastStatus = state.status;
+      }
+    },
+    async prepareInstall() {
+      let prepared = false;
+      await fullExit.run({
+        async confirm({ runningTerminals, recordHistory }) {
+          const options = { type: 'warning' as const, title: '몽글터미널 업데이트',
+            message: '작업을 저장하고 업데이트를 설치할까요?',
+            detail: `현재 컴퓨터의 터미널 ${runningTerminals}개와 원격 접속을 종료하고 새 버전으로 다시 시작합니다. 다른 컴퓨터의 터미널은 종료하지 않습니다.\n\n그룹과 분할 배치${recordHistory ? ', 보관 중인 출력 기록' : ''}는 저장되며 새 셸로 복원됩니다. 실행 중인 Claude 등의 프로그램과 저장하지 않은 작업은 이어서 실행되지 않습니다.`,
+            buttons: ['취소', '설치 후 다시 시작'], defaultId: 0, cancelId: 0, noLink: true };
+          const result = window && !window.isDestroyed() ? await dialog.showMessageBox(window, options) : await dialog.showMessageBox(options);
+          return result.response === 1;
+        },
+        quitDesktop: () => { prepared = true; },
+        showError: message => dialog.showErrorBox('업데이트를 설치하지 못했습니다', message),
+      });
+      return prepared;
+    },
+    allowInstallerQuit() { fullExitCommitted = false; },
+    installFailed() { recoverDesktopAfterShutdown('업데이트 설치를 완료하지 못했습니다. 다시 연결하면 작업 공간을 열 수 있습니다.'); },
+  });
+}
+async function checkUpdatesFromMenu() {
+  const state = await updater?.check();
+  if (!state || quitting) return;
+  const message = state.message || (state.status === 'downloading' ? '새 버전을 다운로드하고 있습니다. 완료되면 알려드립니다.' : '업데이트를 확인하고 있습니다.');
+  const options = { type: 'info' as const, title: '몽글터미널 업데이트', message, buttons: ['확인'] };
+  if (window && !window.isDestroyed()) await dialog.showMessageBox(window, options); else await dialog.showMessageBox(options);
+}
+function installUpdateFromMenu() { void updater?.install().catch(error => dialog.showErrorBox('업데이트', error.message)); }
+function updateMenuItems() {
+  return [{ label: '업데이트 확인', click: () => { void checkUpdatesFromMenu(); } },
+    { label: '업데이트 설치 후 다시 시작…', enabled: updater?.getState().status === 'ready', click: installUpdateFromMenu }];
+}
+function updateTrayMenu() {
+  if (!tray || tray.isDestroyed()) return;
+  tray.setToolTip(updater?.getState().status === 'ready' ? '몽글터미널 · 업데이트 준비 완료' : '몽글터미널');
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: '몽글터미널 열기', click: openWindow },
+    ...updateMenuItems(),
     { type: 'separator' },
     { label: '앱 종료 · 터미널 유지', click: () => app.quit() },
     { label: '완전 종료…', click: requestFullExit },
   ]));
+}
+function createTray() {
+  if (process.platform !== 'win32') return;
+  tray = new Tray(path.join(root, 'platform/windows/icon.ico'));
+  updateTrayMenu();
   tray.on('click', openWindow);
   tray.on('double-click', openWindow);
 }
 function releaseDesktopResources() {
+  updater?.dispose();
   quitting = true; desktopReady = false; selectionGeneration++;
   if (retryTimer) clearTimeout(retryTimer); retryTimer = undefined;
   transport?.close(); transport = undefined;
@@ -270,12 +337,15 @@ app.on('before-quit', event => {
   releaseDesktopResources();
 });
 app.on('window-all-closed', () => { if (quitting || !tray || tray.isDestroyed()) app.quit(); });
+function configureApplicationMenu() {
+  Menu.setApplicationMenu(Menu.buildFromTemplate([{ label: '몽글터미널', submenu: [{ label: process.platform === 'win32' ? '창 닫기 · 트레이로 숨기기' : '창 닫기 · 터미널 유지', role: 'close' }, { type: 'separator' }, { label: '앱 종료 · 터미널 유지', role: 'quit' }, { label: '완전 종료…', click: requestFullExit }, { type: 'separator' }, ...updateMenuItems()] }, { label: '편집', submenu: [{ role: 'copy', accelerator: 'CommandOrControl+Shift+C' }, { role: 'paste' }, { role: 'selectAll', accelerator: 'CommandOrControl+Shift+A' }] }, { label: '보기', submenu: [{ role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { role: 'togglefullscreen' }] }]));
+}
 if (singleInstance) void app.whenReady().then(async () => {
   session.defaultSession.setPermissionRequestHandler((_wc, _p, callback) => callback(false));
   session.defaultSession.setPermissionCheckHandler(() => false);
   session.defaultSession.webRequest.onBeforeRequest({ urls: ['http://*/*', 'https://*/*', 'ws://*/*', 'wss://*/*'] }, (_details, callback) => callback({ cancel: true }));
-  Menu.setApplicationMenu(Menu.buildFromTemplate([{ label: '몽글터미널', submenu: [{ label: process.platform === 'win32' ? '창 닫기 · 트레이로 숨기기' : '창 닫기 · 터미널 유지', role: 'close' }, { type: 'separator' }, { label: '앱 종료 · 터미널 유지', role: 'quit' }, { label: '완전 종료…', click: requestFullExit }] }, { label: '편집', submenu: [{ role: 'copy', accelerator: 'CommandOrControl+Shift+C' }, { role: 'paste' }, { role: 'selectAll', accelerator: 'CommandOrControl+Shift+A' }] }, { label: '보기', submenu: [{ role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { role: 'togglefullscreen' }] }]));
-  await registry.load(); handlers(); createTray(); desktopReady = true; await showWindow(); await connectSelected();
+  setupUpdater(); configureApplicationMenu();
+  await registry.load(); handlers(); createTray(); desktopReady = true; await showWindow(); await connectSelected(); updater?.start();
   const monitor = setInterval(() => {
     if (connection.status !== 'connected' || !transport || connecting || quitting || fullExitCommitted) return;
     const current = transport;

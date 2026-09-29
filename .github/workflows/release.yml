@@ -1,0 +1,139 @@
+name: Windows release draft
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing stable tag matching package.json (for example v0.2.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      tag: ${{ steps.release.outputs.tag }}
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install Node.js 24
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Install locked dependencies and native runtimes
+        shell: pwsh
+        run: |
+          npm.cmd ci
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          node node_modules/node-pty/scripts/prebuild.js
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          node node_modules/node-pty/scripts/post-install.js
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          node node_modules/esbuild/install.js
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          node node_modules/electron/install.js
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          npx.cmd playwright install chrome
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Validate version, tag, README and changelog
+        id: release
+        shell: pwsh
+        run: node --import tsx scripts/release-check.ts "$env:RELEASE_TAG"
+      - name: Typecheck
+        run: npm.cmd run typecheck
+      - name: Build runtime and web UI for integration tests
+        run: npm.cmd run build
+      - name: Test
+        env:
+          MONGLE_E2E_UPDATES: '1'
+        run: npm.cmd test
+      - name: Build and package without publishing
+        run: npm.cmd run package
+      - name: Recheck release documents after packaging
+        shell: pwsh
+        run: node --import tsx scripts/release-check.ts "$env:RELEASE_TAG"
+      - name: Preserve verified release files
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows-release
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            release/MongleTerminal-Setup-${{ steps.release.outputs.version }}-x64.exe
+            release/MongleTerminal-Setup-${{ steps.release.outputs.version }}-x64.exe.blockmap
+            release/MongleTerminal-${{ steps.release.outputs.version }}-x64.zip
+            release/latest.yml
+            release/SHA256SUMS.txt
+            release/RELEASE-NOTES.md
+
+  draft:
+    needs: build
+    runs-on: windows-2022
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Download verified release files
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: windows-release
+          path: release
+      - name: Create or update a draft release only
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.build.outputs.tag }}
+          RELEASE_VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:RELEASE_TAG -ne "v$env:RELEASE_VERSION" -or $env:RELEASE_VERSION -notmatch '^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$') { throw 'Invalid release version.' }
+          $assets = @(
+            "release/MongleTerminal-Setup-$env:RELEASE_VERSION-x64.exe",
+            "release/MongleTerminal-Setup-$env:RELEASE_VERSION-x64.exe.blockmap",
+            "release/MongleTerminal-$env:RELEASE_VERSION-x64.zip",
+            'release/latest.yml',
+            'release/SHA256SUMS.txt'
+          )
+          foreach ($asset in $assets) { if (!(Test-Path -LiteralPath $asset -PathType Leaf)) { throw "Missing release asset: $asset" } }
+          $checksumLines = Get-Content -LiteralPath 'release/SHA256SUMS.txt'
+          if ($checksumLines.Count -ne 4) { throw 'Unexpected checksum count.' }
+          $expectedNames = @($assets[0..3] | ForEach-Object { Split-Path -Leaf $_ })
+          foreach ($line in $checksumLines) {
+            if ($line -notmatch '^([0-9a-f]{64})  ([A-Za-z0-9.-]+)$') { throw 'Invalid checksum record.' }
+            $expected = $Matches[1]
+            $name = $Matches[2]
+            if ($name -notin $expectedNames) { throw 'Unexpected checksum filename.' }
+            $expectedNames = @($expectedNames | Where-Object { $_ -ne $name })
+            if ((Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path 'release' $name)).Hash.ToLowerInvariant() -ne $expected) { throw "Checksum mismatch: $name" }
+          }
+          if ($expectedNames.Count -ne 0) { throw 'Missing checksum record.' }
+          $draft = gh release view "$env:RELEASE_TAG" --json isDraft --jq .isDraft 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            if ($draft -ne 'true') { throw 'This version is already published; published releases are immutable. Bump the version.' }
+            gh release upload "$env:RELEASE_TAG" @assets --clobber
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+            gh release edit "$env:RELEASE_TAG" --draft --notes-file release/RELEASE-NOTES.md
+          } else {
+            gh release create "$env:RELEASE_TAG" @assets --verify-tag --draft --latest=false --title "Mongle Terminal $env:RELEASE_VERSION" --notes-file release/RELEASE-NOTES.md
+          }
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Write-Output 'Draft prepared. Review the release and publish it manually when ready.'

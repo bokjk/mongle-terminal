@@ -2,8 +2,10 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { Check, Copy, Download, HelpCircle, LoaderCircle, Monitor, Moon, Palette, RefreshCw, Shield, Sun, Trash2, Upload, X } from 'lucide-react';
 import type { AppClient } from '../../../packages/client/index';
 import type { HostState } from '../../../packages/protocol/index';
+import { UpdateSettings } from './UpdateSettings';
+import { RemoteAccessQr } from './RemoteAccessQr';
 
-type Tab = 'appearance' | 'host' | 'remote' | 'help';
+type Tab = 'appearance' | 'host' | 'remote' | 'updates' | 'help';
 type RemoteStatus = { origin?: string | null; enabled: boolean; loopbackUrl?: string };
 type Diagnosis = { installed: boolean; connected: boolean; dnsName?: string; origin?: string; serveEnabled?: boolean; message?: string };
 type PairingRequest = { requestId: string; name: string; status: string; createdAt: string | number; expiresAt: string | number };
@@ -39,6 +41,7 @@ const tabs = [
   { id: 'appearance' as const, label: '화면', Icon: Palette },
   { id: 'host' as const, label: '컴퓨터', Icon: Monitor },
   { id: 'remote' as const, label: '원격 연결', Icon: Shield },
+  { id: 'updates' as const, label: '앱 업데이트', Icon: Download },
   { id: 'help' as const, label: '도움말', Icon: HelpCircle },
 ];
 function dateLabel(value?: string | number) {
@@ -196,10 +199,11 @@ export function Settings({ client, state, owner, theme, fontSize, onTheme, onFon
           </div>}
           {tab === 'remote' && (!owner ? <div className="settings-section"><h3 className="settings-title">원격 연결 관리</h3><p className="settings-description">원격 연결 설정과 기기 승인은 접속 대상 컴퓨터의 몽글터미널 앱에서 관리합니다.</p><p className="hint">현재 이 컴퓨터의 터미널에 원격으로 접속해 있습니다.</p>{logoutConfirm ? <div><p className="hint">이 기기의 접속 권한을 해제할까요? 다시 접속하려면 대상 컴퓨터에서 승인이 필요합니다. 터미널 작업은 계속됩니다.</p><div className="form-row"><button type="button" className="button danger" disabled={!!busy} onClick={() => void run('logout', async () => { await client.request('auth.logout', {}); if (mounted.current) onClose(); })}>접속 권한 해제</button><button type="button" className="button subtle" disabled={!!busy} onClick={() => setLogoutConfirm(false)}>취소</button></div></div> : <button type="button" className="button subtle" disabled={!!busy} onClick={() => setLogoutConfirm(true)}>이 기기 연결 해제</button>}</div> : <>
             <div className="settings-section"><h3 className="settings-title">다른 기기에서 이어 하기</h3><p className="settings-description">이 컴퓨터와 접속할 기기에 Tailscale을 설치하고 같은 네트워크에 연결해 주세요. 모바일에서는 Tailscale 앱과 웹 브라우저를 사용합니다.</p>
-              <ol className="hint"><li>두 기기에 Tailscale을 설치하고 같은 계정으로 로그인합니다.</li><li>아래에서 연결을 확인하고 원격 접속을 켭니다.</li><li>다른 기기에서 접속 주소를 열고 연결 코드를 입력합니다.</li><li>이 화면에서 기기 이름을 확인한 뒤 승인합니다.</li></ol>
+              <ol className="hint"><li>두 기기에 Tailscale을 설치하고 같은 계정으로 로그인합니다.</li><li>아래에서 연결을 확인하고 원격 접속을 켭니다.</li><li>휴대폰으로 QR 코드를 스캔하거나 접속 주소를 열고 연결 코드를 입력합니다.</li><li>이 화면에서 기기 이름을 확인한 뒤 승인합니다.</li></ol>
               <div className="form-row"><button type="button" className="button subtle" disabled={!!busy} onClick={() => void run('diagnose', async () => { const value = await client.request<Diagnosis>('remote.diagnose'); if (mounted.current) setDiagnosis(value); await refreshRemote(); })}><RefreshCw size={16} className={busy === 'diagnose' ? 'spin' : ''} />연결 확인</button><button type="button" className="button primary" disabled={!!busy || !!remote?.enabled} onClick={() => void run('enable', async () => { const value = await client.request<{ origin: string }>('remote.enable'); if (mounted.current) { setOrigin(value.origin); setNotice('원격 접속을 켰습니다. 다른 기기에서 아래 주소를 열어 주세요.'); } await refreshRemote(); })}>{busy === 'enable' && <LoaderCircle size={16} className="spin" />}원격 접속 켜기</button>{remote?.enabled && <button type="button" className="button subtle" disabled={!!busy} onClick={() => void run('disable', async () => { await client.request('remote.disable'); await refreshRemote(); if (mounted.current) setNotice('원격 접속을 껐습니다.'); })}>원격 접속 끄기</button>}</div>
               {diagnosis && <p className="hint" role="status">{diagnosis.message || (!diagnosis.installed ? 'Tailscale을 설치한 뒤 다시 확인해 주세요.' : !diagnosis.connected ? 'Tailscale에 로그인하고 연결해 주세요.' : `Tailscale 연결됨${diagnosis.dnsName ? ` · ${diagnosis.dnsName}` : ''}`)}</p>}
               <p className="hint">상태: {remote ? remote.enabled ? '원격 접속 켜짐' : '원격 접속 꺼짐' : '확인 중'}</p>
+              {remote?.enabled && remote.origin && <RemoteAccessQr origin={remote.origin} />}
               {remote?.origin && <div className="form-row"><code className="code-box" style={{ overflowWrap: 'anywhere', flex: 1 }}>{remote.origin}</code><button type="button" className="icon-button" aria-label="접속 주소 복사" disabled={!!busy} onClick={() => void run('copy-origin', () => copy(remote.origin!))}><Copy size={16} /></button></div>}
               <button type="button" className="button subtle" aria-expanded={manualOpen} onClick={() => setManualOpen(value => !value)}>접속 주소 직접 설정</button>
               {manualOpen && <form onSubmit={event => { event.preventDefault(); void run('configure', async () => {
@@ -214,6 +218,7 @@ export function Settings({ client, state, owner, theme, fontSize, onTheme, onFon
             </div>
             <div className="settings-section"><div className="form-row"><h3 className="settings-title">연결한 기기</h3><button type="button" className="icon-button" aria-label="연결한 기기 새로 고침" disabled={!!busy} onClick={() => void run('devices', refreshDevices)}><RefreshCw size={16} /></button></div>{activeDevices.length === 0 ? <p className="hint">아직 연결한 기기가 없습니다.</p> : activeDevices.map(device => <div className="device-row" key={device.deviceId}><div className="device-info"><strong>{device.name}</strong><p className="hint">연결: {dateLabel(device.createdAt)}</p>{device.origin && <p className="hint" style={{ overflowWrap: 'anywhere' }}>{device.origin}</p>}{revokeId === device.deviceId && <p className="hint">이 기기의 접속 권한을 해제합니다. 다시 접속하려면 승인이 필요합니다.</p>}</div>{revokeId === device.deviceId ? <div className="form-row"><button type="button" className="button danger" disabled={!!busy} onClick={() => void run(`revoke-${device.deviceId}`, async () => { await client.request('devices.revoke', { deviceId: device.deviceId }); if (mounted.current) { setRevokeId(null); setNotice('기기의 접속 권한을 해제했습니다.'); } await refreshDevices(); })}>연결 해제</button><button type="button" className="button subtle" disabled={!!busy} onClick={() => setRevokeId(null)}>취소</button></div> : <button type="button" className="icon-button" disabled={!!busy} aria-label={`${device.name} 접속 권한 해제`} onClick={() => setRevokeId(device.deviceId)}><Trash2 size={16} /></button>}</div>)}</div>
           </>)}
+          {tab === 'updates' && <UpdateSettings />}
           {tab === 'help' && <>
             <div className="settings-section"><h3 className="settings-title">작업은 이 컴퓨터에서 계속됩니다</h3><p className="settings-description">앱 창을 닫아도 몽글터미널의 백그라운드 실행부가 유지되는 동안 터미널 작업이 계속됩니다. 다시 열거나 다른 기기에서 접속하면 실행 중인 세션에 이어서 연결합니다.</p><p className="hint">컴퓨터 종료·재부팅·로그아웃 또는 백그라운드 실행부 종료 시 실행 중인 프로세스는 유지되지 않습니다. 다시 열면 저장된 구성과 보관된 출력을 확인할 수 있으며, 이전 명령을 자동 실행하지 않습니다.</p></div>
             <div className="settings-section"><h3 className="settings-title">원격에서 사용하기</h3><p className="settings-description">대상 컴퓨터가 켜져 있고 Tailscale에 연결되어 있어야 합니다. 모바일 브라우저에서 접속 주소를 열고 홈 화면에 추가하면 앱처럼 사용할 수 있습니다.</p><p className="hint">한 터미널에는 한 기기만 입력할 수 있습니다. 다른 기기에서 제어권을 가져오면 기존 기기는 화면을 보는 상태로 바뀝니다.</p></div>

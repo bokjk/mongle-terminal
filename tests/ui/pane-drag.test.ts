@@ -15,7 +15,10 @@ type Position = 'left' | 'right' | 'top' | 'bottom' | 'center';
 type Box = { x: number; y: number; width: number; height: number };
 const diagnostic = process.env.MONGLE_DRAG_COLLECT === '1';
 const output = path.resolve('test-results/ui/pane-drag', ...(diagnostic ? ['diagnostic'] : []));
-const shellInput = (call: {method: string; params?: {data?: string}}) => call.method === 'terminal.input' && !['\x1b[I','\x1b[O'].includes(call.params?.data || '');
+// Focus reports share the input queue and may be coalesced with typed bytes.
+// Remove only complete focus-in/out reports, retaining every other byte.
+const withoutFocusReports = (data: string) => data.replace(/\x1b\[[IO]/g, '');
+const shellInput = (call: {method: string; params?: {data?: string}}) => call.method === 'terminal.input' && withoutFocusReports(call.params?.data || '') !== '';
 const mutation = (method: string) => /^(groups\.(layout|create|update|delete|reorder)|terminals\.(create|remove|restart|terminate|move))$/.test(method);
 async function until<T>(read: () => T | Promise<T>, check: (value: T) => boolean, label: string, timeout = 10000): Promise<T> {
   const deadline = Date.now() + timeout; let error: unknown;
@@ -94,11 +97,20 @@ test('native pane drag: dock, swap, create once, cancel, lease/input continuity 
     const inputStart = calls.length;
     const command = `${assign ? `$dragProof='${marker}'; ` : ''}Write-Output ('${prefix}:'+$dragProof)`;
     await page.keyboard.type(command, { delay: 2 }); await page.keyboard.press('Enter');
+    const sentInput = () => withoutFocusReports(calls.slice(inputStart).filter(item => item.method === 'terminal.input' && item.params.id === id).map(item => item.params.data).join(''));
+    try {
+      await expect.poll(sentInput, { message: 'Every typed byte reaches the host exactly once after the asynchronous input queue drains' }).toBe(command+'\r');
+    } catch (error) {
+      if (!diagnostic) throw error;
+      inputFailures.push({ id, prefix, expected: command+'\r', actual: sentInput() }); await page.keyboard.press('Control+c'); return;
+    }
     await settle();
-    const sent = calls.slice(inputStart).filter(item => item.method === 'terminal.input' && item.params.id === id && !['\x1b[I','\x1b[O'].includes(item.params.data)).map(item => item.params.data).join('');
+    const sent = sentInput();
     if (diagnostic && sent !== command+'\r') { inputFailures.push({ id, prefix, expected: command+'\r', actual: sent }); await page.keyboard.press('Control+c'); return; }
     assert.equal(sent, command+'\r', 'Every typed byte must reach the host exactly once, including during drag-triggered resize');
     await until(() => frame(id), text => text.includes(`${prefix}:${marker}`), `live variable ${prefix}`);
+    await settle();
+    assert.equal(sentInput(), command+'\r', 'No typed byte may be duplicated after the command has executed');
   };
   const settle = async () => { await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))); await hosts[selected].handle('state.get', undefined, observer); await until(() => calls.every(call => call.outcome !== 'pending'), Boolean, 'bridge requests settled'); };
   const observeMutation = () => calls.filter(item => mutation(item.method));

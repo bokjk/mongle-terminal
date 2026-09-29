@@ -45,15 +45,15 @@ export class FullExitController {
   private pending: Promise<void> | undefined;
   constructor(private readonly dependencies: FullExitDependencies) {}
 
-  run(): Promise<void> {
+  run(action: Partial<Pick<FullExitDependencies, 'confirm' | 'quitDesktop' | 'showError'>> = {}): Promise<void> {
     if (!this.pending) {
-      this.pending = this.perform().finally(() => { this.pending = undefined; });
+      this.pending = this.perform(action).finally(() => { this.pending = undefined; });
     }
     return this.pending;
   }
 
-  private async perform(): Promise<void> {
-    const d = this.dependencies;
+  private async perform(action: Partial<Pick<FullExitDependencies, 'confirm' | 'quitDesktop' | 'showError'>>): Promise<void> {
+    const d = { ...this.dependencies, ...action };
     const budget = Math.min(d.timeoutMs ?? 55_000, 55_000);
     let deadline = Date.now() + budget;
     let owner: Transport | undefined;

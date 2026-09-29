@@ -1,6 +1,6 @@
 # 구현·검증 상태
 
-기준일: 2026-09-29 · 버전: 0.1.0 · **Windows 미리보기 구현, 로컬 통합 검증 완료**
+기준일: 2026-09-29 · 소스 버전: 0.2.0 · **Windows 미리보기 구현, 공개 배포 전**. 개발 PC의 실행본에 원격 연결 복구 수정을 포함한 0.2.0을 수동 적용했으며 아래 각 항목의 실제 적용·검증 범위를 구분한다.
 
 Windows 11 x64에서 실제 PowerShell/ConPTY, Electron 앱과 Chrome 브라우저로 확인했다. 모바일 화면 크기의 브라우저 시험과 실물 휴대폰 시험은 구분한다. 초기 설계·오픈소스 분석은 `01`~`06` 문서에 보존하고, 아래를 현재 구현의 기준으로 삼는다.
 
@@ -8,6 +8,13 @@ Windows 11 x64에서 실제 PowerShell/ConPTY, Electron 앱과 Chrome 브라우�
 
 | 대상 | 결과 | 증거와 범위 |
 |---|---|---|
+| 실제 사용자 프로필 원격 복구 | **원인 확인·복구·실제 HTTPS 통과** | MSIX 검사 환경과 탐색기 앱의 AppData·인증 키 분리 확인. 확인된 이전 몽글 경로 기록만 실제 프로필에 복원 후 정상 owner API로 연결. 실제 호스트·셸 유지, 켜기 반복·HTTPS·QR 자산 일치·미승인 접근 401 확인. [최종 복구](validation/msix-profile-recovery.md) |
+| 원격 접속 QR | **구현·검사·실행본 파일 적용·HTTPS 자산 확인** | 실제 SVG 해독·주소 변경·승인 유지·320px 화면·다크/라이트 및 기존 설정 회귀 2/2 통과. 타입·웹 빌드 통과. 실제 사용자 호스트의 HTTPS에서 최신 QR 번들 제공 확인. 실물 카메라 스캔은 미확인. [QR 검증](validation/remote-qr.md) |
+| 기존 원격 연결 복구 로직 | **수정·회귀 통과, 실제 프로필 후속 복구 완료** | 이전 자기 Serve 경로 복구·저장된 이전 포트만 갱신·같은 DNS 충돌 검사. 45/45 회귀·격리 패키지 실행 통과. 최초 HTTPS·4개 터미널 유지 검사는 Codex 실행 맥락의 결과였으며 실제 사용자 프로필의 최종 검증과 구분. [최초 검사와 정정](validation/remote-recovery.md) |
+| 자동 업데이트 0.2.0 | **구현·단위/UI·실제 다운로드 검증 통과** | NSIS 설치본 확인·다운로드, 사용자 확인 후 로컬 저장·종료·설치, 실패 복구. 수명주기 42개·실제 NSIS 드라이버 6개·UI 2개·다운로드 E2E 1개 통과. 실제 GitHub 공개 다운로드·버전 간 설치는 미검증. 현재 압축 실행본은 수동 교체 대상. [업데이트 검증](validation/auto-update.md) |
+| 0.2.0 배포 산출물 | **NSIS·ZIP 생성·파일 검증 통과** | `release-autoupdate/`의 설치본·ZIP·latest.yml·blockmap·체크섬. SHA-512·파일 크기 일치, ZIP 설치 표식 부재, 패키지 내부 네이티브 로드·아이콘 검사 통과. 실제 설치·공개 배포는 수행하지 않음 |
+| 0.2.0 회귀·패키지 실행 | **회귀 집합 171 통과·3 생략, 패키지 앱 E2E 통과** | 최초 전체 실행의 UI 실패 2건을 비동기 입력 테스트 가정으로 확인·수정하고 관련 2개 재검증 통과. 패키지 앱의 실제 업데이트 IPC·설정·메뉴·설치 거부 시 호스트 유지도 검증. 전체 재실행으로 표현하지 않음. [상세 결과](validation/auto-update.md) |
+| README·배포 문서 관리 | **규칙·검사·초안 워크플로 구현** | AGENTS의 지속 갱신 규칙, CHANGELOG, 배포 안내. 버전·문서·태그·파일 SHA-512/SHA-256 검증, GitHub Release 초안만 생성. Actions 실실행은 미검증 |
 | 연속 답변 깜박임 후속 수정 | **DOM 프레임 재현·수정·현재 앱 적용** | 앞선 onRender 검사에서 놓친 reset 직후 DOM 지우기와 선택 갱신 차단. RAF로 일반/대체 화면 연속 출력 검증, 터미널 32개 및 실제 앱 클립보드 E2E 통과. 호스트·셸 유지. 실제 Claude 답변 생성 검증은 별도. [후속 검증](validation/streaming-flicker.md) |
 | 콘솔 방식 복사·붙여넣기 | **구현·현재 앱 적용·실제 클립보드 검증 통과** | 블록 선택 자동 복사, 우클릭 붙여넣기, 선택 유무에 따른 Ctrl+C, Ctrl+V, 여러 줄 확인. [복사 검증](validation/clipboard.md) |
 | GJC 화면 깜박임 | **수정·회귀 및 실제 출력 재생 통과** | DEC 2026 완료 후 호스트 화면 전송, 클라이언트 reset/write 중간 화면 표시 방지. 터미널 30/30·호스트 34/34·GJC 출력 Chrome 재생 통과. 실행 중 호스트에는 재시작 후 적용. [깜박임 검증](validation/gjc-flicker.md) |
@@ -24,13 +31,13 @@ Windows 11 x64에서 실제 PowerShell/ConPTY, Electron 앱과 Chrome 브라우�
 | 실제 앱 종료·재실행 | 통과 | [데스크톱 E2E](validation/e2e.md). 연결된 화면이 하나도 없는 상태에서도 같은 호스트·셸 PID, 셸 변수, 분할 배치 유지 |
 | 모바일 크기 브라우저 | 통과 | 실제 로컬 게이트웨이에서 승인·쿠키·WebSocket 연결, 제어권 전환, 같은 셸 변수, 패널 전환과 새로 고침. 실물 휴대폰은 아님 |
 | 독립 실행부·로컬 인증 | 통과 | [플랫폼](validation/platform.md), [로컬 IPC](validation/local-ipc.md). 부모 실행기 종료 및 kill-on-close Job 후 Node 유지, helper 예외에도 중복 호스트 차단 |
-| 실사용 로컬 인증 오류 | **재시작으로 복구, 원인 미확정** | `Owner IPC server authentication failed.` 발생 이력. 이후 반복·동시 연결 정상이나 원래 결함 수정의 증거는 아님. [복구와 조사 기록](validation/local-connection-recovery.md) |
+| 실사용 로컬 인증 오류 | **후속 재현 원인 확인·정상 인증 복구** | 도구의 MSIX 설정 폴더와 실제 앱의 인증 키 분리를 확인했고, 실제 프로필 맥락에서 인증 성공. 과거 모든 발생의 원인까지 단정하지 않음. [복구와 조사 기록](validation/local-connection-recovery.md), [확인된 원인](validation/msix-profile-recovery.md) |
 | 기기 승인·원격 인증 | 통과 | [보안](validation/security.md). 승인 필수, 단일 사용 티켓, Origin/CSRF, 영속 폐기, 권한·크기·속도 제한. Electron HTTPS 전송 시험 포함 |
 | 터미널 화면·입력 | 통과 | [터미널 P0](validation/terminal-p0.md). 분할 UTF-8/ANSI·대체 화면·응답 중복·입력 모드, 화면 크기 예산, 느린 연결, 불확실 입력 미재전송 |
 | 독립 코드 검토 | 기존 지적 수정 확인 | 첫 시작·재접속, generation 검증, 전송 대기열, 원격 비활성화, native 잠금, 입력 불확실 상태 유지의 수정 확인 |
 | Tailscale 실제 HTTPS | **HTTPS·WSS 검사 및 사용자 휴대폰 접속 확인** | 사용자 Serve 승인 후 인증·WSS 상태 조회 시험 통과. 이어 상시 호스트와 private Serve를 실행했고 사용자가 휴대폰 접속을 확인했다. 발견된 키보드 닫힘 문제는 수정 배포 후 Android 삼성 인터넷에서 정상 동작 확인. [현재 원격 환경](validation/remote-environment.md) |
 | 배포 실행 파일 | **완전 종료·복원 최신 배포 적용** | 이전 아이콘·모바일·트레이·드래그 기능 유지, 완전 종료·복원 및 구버전 전환 E2E 통과. 현재 EXE·ASAR·호스트 JS·웹·설치·ZIP 갱신과 체크섬 일치 확인. [종료와 복원](validation/full-exit-restore.md), 이전 [드래그 적용](validation/pane-drag.md) |
-| 제3자 고지 | 통과 | 직접·전이 production 패키지 13개와 Electron·Node·ConPTY 총 16개. strict 누락 0. 공식 ConPTY 패키지와 두 x64 바이너리 SHA-256 일치 |
+| 제3자 고지 | 수집 검사 통과 | 직접·전이 production 패키지 30개와 Electron·Node·ConPTY 총 33개. lazy-val의 원래 MIT·저자 선언과 표준 조건을 구분하고, qrcode.react에 포함된 qrcodegen의 원문 MIT를 고정 출처·해시로 동봉. [고지와 예외](THIRD-PARTY-NOTICES.md) |
 
 자동 검사 재실행:
 
@@ -47,7 +54,9 @@ node --import tsx --test --test-concurrency=1 $testFiles
 
 사용자 휴대폰의 Tailscale 접속·승인과 키보드·스크롤 수정 후 Android 삼성 인터넷의 정상 동작은 사용자 응답으로 확인했다. Android/iPhone 전체 호환성, 실제 OS 한글 IME 조합별 동작, 네트워크 전환, 60분 원격 연결 및 8시간 지속 시험, OS 재부팅·로그오프, NSIS 설치·제거 마법사는 아직 검증하지 않았다. 설치된 WSL 배포판이 없어 WSL 실제 실행도 미검증이다. 이 항목을 로컬 자동 검사 성공으로 대체하지 않는다.
 
-산출물은 `release/MongleTerminal-Setup-0.1.0-x64.exe`, `release/MongleTerminal-0.1.0-x64.zip`, `release/win-unpacked/MongleTerminal.exe`다. **코드 서명은 없는 미리보기**이며 로그인 자동 시작과 자동 업데이트는 제공하지 않는다. 압축본은 전체 폴더를 유지해야 한다. 설치·제거 전 작업을 마치고 설정에서 호스트를 종료한다. 설치 프로그램은 사용자 데이터를 자동 삭제하지 않는다.
+현재 실행 경로는 `release/win-unpacked/MongleTerminal.exe`의 0.2.0이며 원격 연결 복구를 포함한 `release-remote-recovery/win-unpacked`의 검증 파일을 적용했다. 기존 0.1.0 파일은 별도 백업했고 사용자 데이터는 초기화하지 않았다. 0.2.0부터 Windows NSIS 설치본의 자동 확인·다운로드·사용자 확인 후 설치 기능을 구현했다. 공개 GitHub Release와 실제 버전 간 설치·재실행은 아직 검증하지 않았다. ZIP 실행본과 개발 모드는 수동 교체한다. **코드 서명은 없는 미리보기**이며 로그인 자동 시작은 제공하지 않는다. 설치·제거 전 작업을 저장하고 **완전 종료…**를 사용하며 사용자 데이터는 자동 삭제하지 않는다. [배포 안내](RELEASING.md)
+
+후속 QR 웹 파일도 현재 실행 폴더에 적용했다. 초기에는 도구의 MSIX 설정 폴더와 실제 앱의 사용자 설정이 달라 원격 주소가 502였으나, 이후 실제 프로필에 정상 인증해 관리 기록을 복원하고 원격 접속을 켰다. GUI·호스트·셸을 유지한 상태에서 실제 HTTPS와 QR 자산까지 검증했다. 실물 카메라 스캔은 아직 미확인이다. [최종 복구](validation/msix-profile-recovery.md)
 
 최종 폴더 이동 검증에서 native 의존성 누락을 발견해 수정했다. 개발 폴더의 상위 `node_modules`에 의존한 실행을 배포 성공으로 판단하지 않는다. 패키징 단계에서 필수 파일 존재, 배포 내부 모듈 해석, 동봉한 Node의 native 모듈 로드와 ZIP 포함 여부를 검사하며, 최종 E 폴더의 실제 실행까지 검증했다.
 

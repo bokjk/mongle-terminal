@@ -9,6 +9,7 @@ import { prepareRuntime } from '../apps/desktop/runtime';
 import { ensureHelper } from '../packages/local-ipc/index';
 import { generateNotices } from './notices';
 import { verifyWindowsIcon } from './verify-windows-icon';
+import { writeReleaseChecksums } from './release-check';
 
 const root = process.cwd();
 const pkg = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
@@ -51,6 +52,12 @@ const requiredNativeFiles = [
   'node-addon-api/package.json',
 ];
 async function verifyPackagedHost(appOutDir: string) {
+  try {
+    await access(path.join(appOutDir, 'resources/mongle-installed.json'));
+    throw new Error('NSIS installation marker must not be included in ZIP or unpacked builds.');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
   const installed = path.join(appOutDir, 'resources/hostbundle');
   const modules = path.join(installed, 'node_modules');
   // electron-builder may omit node_modules from extraResources. Copy explicitly
@@ -89,7 +96,9 @@ async function verifyZip(zipPath: string) {
     console.log(`ZIP native dependency check: ${requiredNativeFiles.length} required files present across ${entries.length} entries.`);
   } finally { await file.close(); }
 }
-const results = await build({ projectDir: root, targets: Platform.WINDOWS.createTarget(makeInstaller ? ['nsis', 'zip'] : ['dir'], Arch.x64), config: {
+// Packaging must never create or modify a GitHub release, even with GH_TOKEN
+// present or on a CI tag. The separate release workflow creates drafts only.
+const results = await build({ projectDir: root, publish: 'never', targets: Platform.WINDOWS.createTarget(makeInstaller ? ['nsis', 'zip'] : ['dir'], Arch.x64), config: {
   appId: 'dev.mongle.terminal', productName: 'Mongle Terminal', executableName: 'MongleTerminal',
   directories: { output: outputName, buildResources: 'platform/windows' },
   electronDist: 'node_modules/electron/dist',
@@ -98,9 +107,12 @@ const results = await build({ projectDir: root, targets: Platform.WINDOWS.create
   afterPack: async context => { await verifyPackagedHost(context.appOutDir); },
   asar: true, npmRebuild: false, nodeGypRebuild: false, buildDependenciesFromSource: false,
   extraMetadata: { main: 'dist/desktop/main.cjs', dependencies: {} },
+  publish: { provider: 'github', owner: 'bokjk', repo: 'mongle-terminal', channel: 'latest', releaseType: 'draft', tagNamePrefix: 'v' },
+  generateUpdatesFilesForAllChannels: false,
   win: { target: ['nsis', 'zip'], icon: 'platform/windows/icon.ico', signAndEditExecutable: true, signExecutable: false, artifactName: 'MongleTerminal-${version}-${arch}.${ext}' },
   nsis: { oneClick: false, perMachine: false, allowElevation: false, allowToChangeInstallationDirectory: true, deleteAppDataOnUninstall: false, include: 'platform/windows/installer.nsh', artifactName: 'MongleTerminal-Setup-${version}-${arch}.${ext}', runAfterFinish: false, createDesktopShortcut: true, createStartMenuShortcut: true, shortcutName: '몽글터미널', installerIcon: 'platform/windows/icon.ico', uninstallerIcon: 'platform/windows/icon.ico' },
 } });
 console.log('Packaged executable icon check: ' + JSON.stringify(await verifyWindowsIcon(path.join(outputDir, 'win-unpacked/MongleTerminal.exe'), path.join(root, 'platform/windows/icon.ico'))));
 for (const artifact of results) if (artifact.endsWith('.zip')) await verifyZip(artifact);
+if (makeInstaller) console.log('Release metadata and checksums: ' + JSON.stringify(await writeReleaseChecksums(outputDir, pkg.version)));
 console.log(JSON.stringify({ artifacts: results, bundledNodeVersion: process.version, hostNativePackages: [...nativePackages], signed: false }, null, 2));

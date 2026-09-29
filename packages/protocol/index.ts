@@ -1,7 +1,8 @@
 import { z } from 'zod';
+import { version } from '../../package.json';
 
 export const PROTOCOL_VERSION = 1;
-export const APP_VERSION = '0.1.0';
+export const APP_VERSION = version;
 export type LayoutNode = { type: 'leaf'; terminalId: string } | { type: 'split'; axis: 'horizontal' | 'vertical'; ratio: number; first: LayoutNode; second: LayoutNode };
 export interface Group { id: string; name: string; cwd: string; profileId: string; revision: number; layout: LayoutNode | null; }
 export interface ShellProfile { id: string; name: string; executable: string; args: string[]; kind: 'powershell' | 'cmd' | 'wsl' | 'bash'; }
