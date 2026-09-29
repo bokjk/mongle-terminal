@@ -89,7 +89,7 @@ test('mobile display controls resize the terminal, persist preferences and prese
       import {App} from './apps/web/src/App';
       const listeners=new Set();const connectionListeners=new Set();let seq=0;let epoch=0;
       let info={id:'terminal',groupId:'group',title:'아주 긴 모바일 터미널 제목과 작업 내용',profileId:'pwsh',cwd:'C:/test',generation:'generation',status:'running',cols:40,rows:20};
-      const state=()=>({hostId:'host',bootId:'boot',name:'테스트 PC',version:'0.1.0',protocolVersion:1,groups:[{id:'group',name:'모바일 그룹',cwd:'C:/test',profileId:'pwsh',revision:1,layout:{type:'leaf',terminalId:'terminal'}}],terminals:[info],profiles:[],settings:{name:'테스트 PC',recordHistory:true,scrollback:5000}});
+      const state=()=>({hostId:'host',bootId:'boot',name:'테스트 PC',version:'0.1.0',protocolVersion:1,capabilities:['control.acquire-if-free'],groups:[{id:'group',name:'모바일 그룹',cwd:'C:/test',profileId:'pwsh',revision:1,layout:{type:'leaf',terminalId:'terminal'}}],terminals:[info],profiles:[],settings:{name:'테스트 PC',recordHistory:true,scrollback:5000}});
       const frame=()=>{const result={type:'snapshot',terminalId:info.id,generation:info.generation,bootId:'boot',seq:++seq,snapshot:{...${JSON.stringify(snapshot)},cols:info.cols,rows:info.rows}};h.latestSeq=seq;return result;};
       const emitState=()=>listeners.forEach(fn=>fn({type:'state',state:state()}));
       const h=window.displayTest={calls:[],pendingResize:null,pendingAck:null,holdResize:false,holdAck:false,latestSeq:0,ackedSeq:0,lastResizeFont:0,readonlyWrites:[],blurCount:0,dimensions:()=>({cols:info.cols,rows:info.rows}),setConnection:status=>connectionListeners.forEach(fn=>fn({status,owner:false}))};
@@ -138,7 +138,7 @@ test('mobile display controls resize the terminal, persist preferences and prese
         const page=await openPage(browser,url,errors);
         try{
           await assertFont(page,14);
-          await page.locator('.control-chip').tap();
+          await page.locator('.terminal-canvas').tap();
           await page.getByText('여기서 제어 중',{exact:true}).waitFor();await settleFrames(page);
           const original=await dimensions(page);
           const textarea=page.locator('.xterm-helper-textarea');
@@ -210,7 +210,7 @@ test('mobile display controls resize the terminal, persist preferences and prese
           const page=await openPage(browser,url,errors,width);
           try{
             await assertNoHorizontalOverflow(page,width);
-            await page.locator('.control-chip').tap();await page.getByText('여기서 제어 중',{exact:true}).waitFor();await settleFrames(page);
+            await page.locator('.terminal-canvas').tap();await page.getByText('여기서 제어 중',{exact:true}).waitFor();await settleFrames(page);
             const normalHeight=(await page.locator('.terminal-canvas').boundingBox())!.height;
             const headerHeight=(await page.locator('.workspace-header').boundingBox())!.height;
             const normal=await dimensions(page);

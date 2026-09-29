@@ -95,7 +95,7 @@ export class HostCore {
     return result;
   }
   getState(): HostState {
-    return structuredClone({ hostId:this.hostId, bootId:this.bootId, name:this.settings.name, version:APP_VERSION, protocolVersion:PROTOCOL_VERSION, groups:this.groups, terminals:this.terminals, profiles:this.profiles, settings:this.settings, ...(this.storageError ? {storageError:this.storageError} : {}) });
+    return structuredClone({ hostId:this.hostId, bootId:this.bootId, name:this.settings.name, version:APP_VERSION, protocolVersion:PROTOCOL_VERSION, capabilities:['control.acquire-if-free'], groups:this.groups, terminals:this.terminals, profiles:this.profiles, settings:this.settings, ...(this.storageError ? {storageError:this.storageError} : {}) });
   }
   connect(ctx: ConnectionContext, send: Send): void {
     if (!this.initialized || this.closing || this.shutdownPrepared) throw new AppError('HOST_UNAVAILABLE','호스트가 준비되지 않았습니다.');
@@ -243,7 +243,10 @@ export class HostCore {
         const runtime=this.runtimes.get(p.id);if(runtime?.lease?.connectionId===client.ctx.id){this.revoke(runtime);this.broadcastState();}return {detached:true};
       }
       case 'control.acquire': {
-        const p=terminalRef.merge(dimensionSchema).strict().parse(params);const info=this.target(p),runtime=this.running(info);
+        const p=terminalRef.merge(dimensionSchema).extend({takeover:z.boolean().default(true)}).strict().parse(params);const info=this.target(p),runtime=this.running(info);
+        // The mutation queue makes the check and lease replacement atomic.
+        // A stale viewer must not resize, revoke or interrupt another controller.
+        if(!p.takeover && runtime.lease && runtime.lease.connectionId!==client.ctx.id && runtime.lease.expires>Date.now())throw new AppError('CONTROL_BUSY','다른 기기에서 제어 중입니다. 가져오기를 눌러 제어권을 가져오세요.');
         this.revoke(runtime);this.broadcastState();
         runtime.epoch++;const lease:Lease={connectionId:client.ctx.id,deviceName:client.ctx.deviceName,epoch:runtime.epoch,expires:Date.now()+LEASE_MS,ready:false,syncSeq:Infinity,inputSeq:-1,dedupe:new Map()};runtime.lease=lease;
         this.updateController(runtime);

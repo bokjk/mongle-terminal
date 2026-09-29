@@ -9,7 +9,7 @@ export interface ShellProfile { id: string; name: string; executable: string; ar
 export interface Controller { connectionId: string; deviceName: string; epoch: number; ready: boolean; }
 export interface TerminalInfo { id: string; groupId: string; title: string; profileId: string; cwd: string; generation: string; status: 'running' | 'exited' | 'interrupted'; cols: number; rows: number; pid?: number; exitCode?: number; controller?: Controller; historyAvailable?: boolean; resumeOnBoot?: boolean; restoreError?: string; }
 export interface HostSettings { name: string; recordHistory: boolean; scrollback: number; }
-export interface HostState { hostId: string; bootId: string; name: string; version: string; protocolVersion: number; groups: Group[]; terminals: TerminalInfo[]; profiles: ShellProfile[]; settings: HostSettings; storageError?: string; }
+export interface HostState { hostId: string; bootId: string; name: string; version: string; protocolVersion: number; capabilities?: string[]; groups: Group[]; terminals: TerminalInfo[]; profiles: ShellProfile[]; settings: HostSettings; storageError?: string; }
 export interface ConnectionContext { id: string; deviceId: string; deviceName: string; owner: boolean; }
 export interface RpcRequest { type: 'request'; id: string; method: string; params: unknown; }
 export type RpcResponse = { type: 'response'; id: string; ok: true; result: any } | { type: 'response'; id: string; ok: false; error: { code: string; message: string } };

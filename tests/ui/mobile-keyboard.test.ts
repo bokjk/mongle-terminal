@@ -19,7 +19,7 @@ test('mobile UI preserves resize input within its acknowledged lease and discard
       import {App} from './apps/web/src/App';
       const listeners=new Set();let seq=0;let epoch=0;
       let info={id:'terminal',groupId:'group',title:'모바일',profileId:'pwsh',cwd:'C:/test',generation:'generation',status:'running',cols:40,rows:20};
-      const state=()=>({hostId:'host',bootId:'boot',name:'테스트 PC',version:'0.1.0',protocolVersion:1,groups:[{id:'group',name:'모바일 그룹',cwd:'C:/test',profileId:'pwsh',revision:1,layout:{type:'leaf',terminalId:'terminal'}}],terminals:[info],profiles:[],settings:{name:'테스트 PC',recordHistory:true,scrollback:5000}});
+      const state=()=>({hostId:'host',bootId:'boot',name:'테스트 PC',version:'0.1.0',protocolVersion:1,capabilities:['control.acquire-if-free'],groups:[{id:'group',name:'모바일 그룹',cwd:'C:/test',profileId:'pwsh',revision:1,layout:{type:'leaf',terminalId:'terminal'}}],terminals:[info],profiles:[],settings:{name:'테스트 PC',recordHistory:true,scrollback:5000}});
       const frame=()=>{const result={type:'snapshot',terminalId:info.id,generation:info.generation,bootId:'boot',seq:++seq,snapshot:{...${JSON.stringify(snapshot)},cols:info.cols,rows:info.rows}};h.latestSeq=seq;return result;};
       const emitState=()=>listeners.forEach(fn=>fn({type:'state',state:state()}));
       const h=window.mobileTest={calls:[],pendingAcquire:null,pendingResize:null,pendingAck:null,pendingInput:null,holdAck:false,holdInput:false,latestSeq:0,ackedSeq:0,readonlyWrites:[],focusEvents:[],blurCount:0,
@@ -70,7 +70,7 @@ test('mobile UI preserves resize input within its acknowledged lease and discard
       await page.waitForFunction(()=>(window as any).mobileTest.calls.some((call:any)=>call.method==='terminal.ack'));
       assert.equal(await textarea.evaluate((element:HTMLTextAreaElement)=>element.readOnly),true,'view-only remains read-only');
       await page.evaluate(()=>(window as any).mobileTest.readonlyWrites=[]);
-      await page.locator('.control-chip').tap();
+      await page.locator('.terminal-canvas').tap();
       await page.waitForFunction(()=>Boolean((window as any).mobileTest.pendingAcquire));
       assert.equal(await textarea.evaluate(element=>document.activeElement===element),true);
       assert.deepEqual(await page.evaluate(()=>(window as any).mobileTest.focusEvents.at(-1)),{inClick:true,readonly:false},'editable focus is synchronous in the trusted control click');
@@ -84,7 +84,7 @@ test('mobile UI preserves resize input within its acknowledged lease and discard
       await page.getByText('여기서 제어 중',{exact:true}).waitFor();
       await page.keyboard.type('a');
       assert.equal(await page.evaluate(()=>(window as any).mobileTest.calls.filter((call:any)=>call.method==='terminal.input').map((call:any)=>call.params.data).join('')),'a');
-      await page.locator('.control-chip').tap();
+      await page.getByRole('button',{name:'키보드 열기',exact:true}).tap();
       assert.equal(await page.evaluate(()=>(window as any).mobileTest.calls.filter((call:any)=>call.method==='control.acquire').length),1,'controlled keyboard button focuses without replacing the lease');
 
       await page.evaluate(()=>(window as any).mobileTest.setHeight(500));
@@ -127,7 +127,7 @@ test('mobile UI preserves resize input within its acknowledged lease and discard
       await page.evaluate(()=>{const h=(window as any).mobileTest;h.pendingResize();h.output();});await waitForAck();
       await page.keyboard.type('UNCERTAIN');
       assert.equal(await inputText(),delivered+'x','failed input discards resize-buffered text and stream frames do not release the uncertain-input latch');
-      await page.locator('.control-chip').tap();await page.waitForFunction(()=>Boolean((window as any).mobileTest.pendingAcquire));
+      await page.locator('button.control-chip').tap();await page.waitForFunction(()=>Boolean((window as any).mobileTest.pendingAcquire));
       await page.evaluate(()=>{const h=(window as any).mobileTest;h.holdAck=true;h.pendingAcquire();});
       await page.waitForFunction(()=>Boolean((window as any).mobileTest.pendingAck));await page.keyboard.type('UNCERTAIN_PRE_ACK');
       assert.equal(await inputText(),delivered+'x','explicit recovery still waits for the new screen ACK');
@@ -152,7 +152,7 @@ test('mobile UI preserves resize input within its acknowledged lease and discard
       await page.keyboard.type('REVOKED');
       assert.equal(await textarea.evaluate((element:HTMLTextAreaElement)=>element.readOnly),true,'late resize response cannot restore a revoked lease');
       assert.equal(await inputText(),delivered+'xc','lease revocation discards the resize queue before the late resize response');
-      await page.locator('.control-chip').tap();await page.waitForFunction(()=>Boolean((window as any).mobileTest.pendingAcquire));
+      await page.locator('button.control-chip').tap();await page.waitForFunction(()=>Boolean((window as any).mobileTest.pendingAcquire));
       await page.keyboard.type('NEW_ACQUIRE_BLOCKED');
       await page.evaluate(()=>{const h=(window as any).mobileTest;h.holdAck=true;h.pendingAcquire();});
       await page.waitForFunction(()=>Boolean((window as any).mobileTest.pendingAck));

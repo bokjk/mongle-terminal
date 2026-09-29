@@ -111,6 +111,66 @@ test('controller transfer fences screen, revokes old input, and rejects stale ho
   core.disconnect(observer.id);assert.equal(core.getState().terminals[0].controller,undefined);assert.equal((await core.handle('connection.info',{},ctx)).id,ctx.id);
 });
 
+test('conditional acquire advertises support, takes a free terminal and permits the same connection',async t=>{
+  const {core,ctx,request}=await harness(t);
+  assert.ok(core.getState().capabilities?.includes('control.acquire-if-free'));
+  const info:TerminalInfo=await request('terminals.create',{groupId:core.getState().groups[0].id,profileId:core.getState().profiles.find(p=>p.id==='cmd')?.id});const r=ref(core,info);
+  const first=await request('control.acquire',{...r,cols:100,rows:30,takeover:false});
+  assert.equal(first.connectionId,ctx.id);assert.equal(first.frame.snapshot.cols,100);
+  await assert.rejects(request('terminal.input',{...r,epoch:first.epoch,inputId:'early-conditional',clientInputSeq:0,data:'x'}),{code:'CONTROL_SYNCING'});
+  await request('terminal.ack',{...r,seq:first.frame.seq,epoch:first.epoch});
+  const second=await request('control.acquire',{...r,cols:90,rows:25,takeover:false});
+  assert.ok(second.epoch>first.epoch);assert.equal(second.connectionId,ctx.id);assert.equal(second.frame.snapshot.cols,90);
+  assert.equal(Object.hasOwn(((core as any).store as HostStore).load()!,'capabilities'),false,'Connection capabilities are not persisted workspace data');
+});
+
+test('conditional acquire rejects another live controller without revocation, resize, broadcast or input reset',async t=>{
+  const {core,ctx,request}=await harness(t),observer=owner();observer.owner=false;observer.deviceName='휴대폰';
+  let observerStates=0;core.connect(observer,event=>{if(event.type==='state')observerStates++;});
+  const info:TerminalInfo=await request('terminals.create',{groupId:core.getState().groups[0].id,profileId:core.getState().profiles.find(p=>p.id==='cmd')?.id});const r=ref(core,info);
+  const first=await request('control.acquire',{...r,cols:100,rows:30,takeover:false});await request('terminal.ack',{...r,seq:first.frame.seq,epoch:first.epoch});
+  const input={...r,epoch:first.epoch,inputId:'before-busy',clientInputSeq:0,data:'echo CONDITIONAL_CONTROL\r'};
+  await request('terminal.input',input);
+  const runtime=(core as any).runtimes.get(info.id),lease=runtime.lease,epoch=runtime.epoch,expires=lease.expires,controller=core.getState().terminals[0].controller,states=observerStates;
+  let resizes=0;const resize=runtime.pty.resize;runtime.pty.resize=(...args:unknown[])=>{resizes++;return resize.apply(runtime.pty,args);};
+  await assert.rejects(core.handle('control.acquire',{...r,cols:40,rows:10,takeover:false},observer),{code:'CONTROL_BUSY'});
+  assert.equal(runtime.lease,lease);assert.equal(runtime.epoch,epoch);assert.equal(lease.expires,expires);assert.equal(lease.inputSeq,0);assert.equal(lease.dedupe.size,1);
+  assert.equal(resizes,0);assert.equal(observerStates,states);assert.deepEqual(core.getState().terminals[0].controller,controller);
+  assert.equal(core.getState().terminals[0].cols,100);assert.equal(core.getState().terminals[0].rows,30);
+  assert.equal((await request('terminal.input',input)).duplicate,true,'Busy acquisition preserves the current input dedupe window');
+  assert.equal((await request('terminal.input',{...input,inputId:'after-busy',clientInputSeq:1,data:'echo STILL_CONTROLLED\r'})).accepted,true);
+  assert.equal(core.getState().terminals[0].controller?.connectionId,ctx.id);
+  const takeover=await core.handle('control.acquire',{...r,cols:40,rows:10,takeover:true},observer);
+  assert.ok(takeover.epoch>epoch);assert.equal(takeover.connectionId,observer.id);assert.equal(resizes,1);assert.equal(core.getState().terminals[0].cols,40);
+  await assert.rejects(request('terminal.input',{...input,inputId:'revoked',clientInputSeq:2}),{code:'NOT_CONTROLLER'});
+});
+
+test('simultaneous conditional acquisitions have one winner and the loser cannot revoke its lease',async t=>{
+  const {core,ctx,request}=await harness(t),observer=owner();observer.owner=false;core.connect(observer,()=>{});
+  const info:TerminalInfo=await request('terminals.create',{groupId:core.getState().groups[0].id,profileId:core.getState().profiles.find(p=>p.id==='cmd')?.id});const r=ref(core,info);
+  const results=await Promise.allSettled([
+    request('control.acquire',{...r,cols:100,rows:30,takeover:false}),
+    core.handle('control.acquire',{...r,cols:40,rows:10,takeover:false},observer),
+  ]);
+  assert.equal(results[0].status,'fulfilled');assert.equal(results[1].status,'rejected');
+  if(results[0].status!=='fulfilled' || results[1].status!=='rejected')throw new Error('Expected exactly one successful acquisition');
+  assert.equal(results[1].reason.code,'CONTROL_BUSY');const winner=results[0].value;
+  assert.equal(core.getState().terminals[0].controller?.connectionId,ctx.id);assert.equal(core.getState().terminals[0].controller?.epoch,winner.epoch);
+  assert.equal(core.getState().terminals[0].cols,100);assert.equal(core.getState().terminals[0].rows,30);
+  await request('terminal.ack',{...r,seq:winner.frame.seq,epoch:winner.epoch});
+  assert.equal((await request('terminal.input',{...r,epoch:winner.epoch,inputId:'race-winner',clientInputSeq:0,data:'echo RACE_WINNER\r'})).accepted,true);
+});
+
+test('conditional acquisition can replace an expired lease without requiring a lease timer tick',async t=>{
+  const {core,request}=await harness(t),observer=owner();observer.owner=false;core.connect(observer,()=>{});
+  const info:TerminalInfo=await request('terminals.create',{groupId:core.getState().groups[0].id,profileId:core.getState().profiles.find(p=>p.id==='cmd')?.id});const r=ref(core,info);
+  const old=await request('control.acquire',{...r,cols:100,rows:30});
+  (core as any).runtimes.get(info.id).lease.expires=Date.now()-1;
+  const current=await core.handle('control.acquire',{...r,cols:40,rows:10,takeover:false},observer);
+  assert.ok(current.epoch>old.epoch);assert.equal(current.connectionId,observer.id);assert.equal(core.getState().terminals[0].controller?.connectionId,observer.id);
+  await assert.rejects(request('terminal.input',{...r,epoch:old.epoch,inputId:'expired',clientInputSeq:0,data:'x'}),{code:'NOT_CONTROLLER'});
+});
+
 test('persisted running sessions reopen as fresh shells after a new host boot',async t=>{
   const dataDir=await mkdtemp(join(tmpdir(),'mongle-restore-test-'));let core:HostCore|undefined;
   t.after(async()=>{await core?.close();await rm(dataDir,{recursive:true,force:true});});
