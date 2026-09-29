@@ -55,6 +55,18 @@ export function presentationExtras(terminal: unknown): Pick<TerminalModes, 'curs
   };
 }
 
+/** Hold the previous picture while a complete serialized frame is parsed.
+ * xterm 6 checks this flag again inside its queued animation-frame callback,
+ * so a refresh scheduled by reset() cannot paint the empty buffer.
+ */
+export function setPresentationPending(terminal: unknown, pending: boolean): void {
+  coreOf(terminal).coreService.decPrivateModes.synchronizedOutput = pending;
+}
+
+export function isPresentationPending(terminal: unknown): boolean {
+  return coreOf(terminal).coreService.decPrivateModes.synchronizedOutput === true;
+}
+
 /** Restore only state used by input encoding and cursor drawing, never parser state. */
 export function applyPresentationModes(terminal: unknown, modes: TerminalModes): void {
   const core = coreOf(terminal);

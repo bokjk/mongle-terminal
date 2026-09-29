@@ -11,6 +11,84 @@ const chrome = process.platform === 'win32' && existsSync('C:/Program Files/Goog
 
 const browserOptions = { skip: chrome ? false : 'Requires installed Windows Chrome for the real DOM check.', timeout: 30000 };
 
+test('real Chrome: a slow full-frame write never paints the reset or partial screen',
+  browserOptions, async () => withTerminalBrowser(async (page, engine) => {
+    await engine.write('old complete screen');
+    const before = await engine.snapshot();
+    await engine.write('\r\x1b[2Knew complete screen');
+    const after = await engine.snapshot();
+    await page.evaluate('window.__name = (value) => value');
+    const result = await page.evaluate(async ({ before, after }) => {
+      const { terminal, adapter } = (window as any).mongleTerminalTest;
+      const tick = () => new Promise(resolve => requestAnimationFrame(resolve));
+      await adapter.applySnapshot(before);
+      await tick(); await tick();
+      const original = terminal.write.bind(terminal);
+      // Exercise a parser yield across multiple display refreshes, as happens
+      // with large history/full-screen updates on slower devices.
+      terminal.write = (data: string, done: () => void) => {
+        setTimeout(() => original(data.slice(0, 3), () => {
+          setTimeout(() => original(data.slice(3), done), 80);
+        }), 80);
+      };
+      const paints: string[] = [];
+      const sub = terminal.onRender(() => {
+        paints.push(terminal.element.querySelector('.xterm-rows').textContent);
+      });
+      await adapter.applySnapshot(after);
+      await tick(); await tick();
+      sub.dispose(); terminal.write = original;
+      return { paints, final: terminal.element.querySelector('.xterm-rows').textContent };
+    }, { before, after });
+    assert.ok(result.paints.length > 0);
+    assert.ok(result.paints.every(text => text.includes('new complete screen')), JSON.stringify(result.paints));
+    assert.ok(result.final.includes('new complete screen'));
+  }));
+
+test('real Chrome: replay captured GJC output through host frames without blank paints',
+  { ...browserOptions, skip: !process.env.MONGLE_GJC_CAPTURE || !chrome }, async () => withTerminalBrowser(async (page, engine) => {
+    const chunks: Array<{ ms: number; data: string }> = JSON.parse(readFileSync(process.env.MONGLE_GJC_CAPTURE!, 'utf8'));
+    await engine.resize(100, 30);
+    await page.evaluate(() => {
+      const h = (window as any).mongleTerminalTest;
+      h.paints = 0; h.blankPaints = 0; h.seenContent = false;
+      h.terminal.onRender(() => {
+        const text = h.terminal.element.querySelector('.xterm-rows').textContent.trim();
+        if (text) h.seenContent = true;
+        if (h.seenContent && !text) h.blankPaints++;
+        h.paints++;
+      });
+    });
+    let inFlight = false;
+    const tasks: Promise<void>[] = [];
+    const timer = setInterval(() => {
+      if (inFlight) return;
+      inFlight = true;
+      tasks.push(engine.snapshot().then(frame => page.evaluate(async snapshot => {
+        await (window as any).mongleTerminalTest.adapter.applySnapshot(snapshot);
+      }, frame)).finally(() => { inFlight = false; }));
+    }, 60);
+    try {
+      const start = Date.now();
+      for (const chunk of chunks) {
+        await new Promise(resolve => setTimeout(resolve, Math.max(0, chunk.ms - (Date.now() - start))));
+        await engine.write(chunk.data);
+      }
+    } finally { clearInterval(timer); await Promise.all(tasks); }
+    await page.evaluate(async snapshot => {
+      await (window as any).mongleTerminalTest.adapter.applySnapshot(snapshot);
+      await new Promise(resolve => requestAnimationFrame(resolve));
+      await new Promise(resolve => requestAnimationFrame(resolve));
+    }, await engine.snapshot());
+    const result = await page.evaluate(() => {
+      const h = (window as any).mongleTerminalTest;
+      return { paints: h.paints, blankPaints: h.blankPaints, text: h.terminal.element.querySelector('.xterm-rows').textContent };
+    });
+    assert.ok(result.paints > 10);
+    assert.equal(result.blankPaints, 0);
+    assert.ok(result.text.includes('flicker-check'));
+  }));
+
 async function withTerminalBrowser(check: (page: Page, engine: TerminalEngine) => Promise<void>, mobile = false) {
     const bundle = await build({ entryPoints: [fileURLToPath(new URL('./browser-harness.ts', import.meta.url))], bundle: true, write: false, format: 'iife', platform: 'browser' });
     const css = readFileSync(new URL('../../node_modules/@xterm/xterm/css/xterm.css', import.meta.url));

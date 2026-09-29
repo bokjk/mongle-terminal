@@ -8,6 +8,7 @@ Windows 11 x64에서 실제 PowerShell/ConPTY, Electron 앱과 Chrome 브라우�
 
 | 대상 | 결과 | 증거와 범위 |
 |---|---|---|
+| GJC 화면 깜박임 | **수정·회귀 및 실제 출력 재생 통과** | DEC 2026 완료 후 호스트 화면 전송, 클라이언트 reset/write 중간 화면 표시 방지. 터미널 30/30·호스트 34/34·GJC 출력 Chrome 재생 통과. 실행 중 호스트에는 재시작 후 적용. [깜박임 검증](validation/gjc-flicker.md) |
 | 시작 폴더 찾아보기 | **구현·배포·격리 앱 E2E 통과, 실사용 연결은 기존 인증 오류로 차단** | 새 터미널·분할·그룹 설정에 Windows 폴더 선택창 추가. 선택한 실제 cwd·취소·분할 상속·잘못된 경로·원격 UI 구분 검증. GUI 교체 후 기존 호스트 유지. [시작 폴더 검증](validation/start-folder.md) |
 | 전체 타입 검사·빌드 | 통과 | `npm run typecheck`, `npm run build`. 웹 번들 크기 안내 1건, 빌드 오류 없음 |
 | 기본 통합 자동 검사 | **74/74 통과, 실패·생략 0** | 키보드 수정 전 기준 `test-results/full-suite.log`, 45.9초. 호스트 21, 보안 19, 터미널 17, Windows 플랫폼 11, UI 6. 이후 변경 관련 검사는 아래 별도 기록 |

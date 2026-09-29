@@ -8,6 +8,26 @@ import { BrowserPresentationAdapter } from '../../packages/terminal/browser.js';
 import { PRESENTATION_VERSION } from '../../packages/terminal/types.js';
 
 const geometry = { cols: 40, rows: 8 };
+
+test('synchronized output waits across PTY chunks without blocking the parser', async () => {
+  const engine = new TerminalEngine({ ...geometry, onResponse() {} });
+  try {
+    await engine.write('old screen');
+    await engine.write('\x1b[?2026h\x1b[2J\x1b[Hpartial');
+    let resolved = false;
+    const pending = engine.snapshot().then(frame => { resolved = true; return frame; });
+    await new Promise(resolve => setTimeout(resolve, 40));
+    assert.equal(resolved, false, 'an incomplete synchronized update must not be published');
+    await engine.write('\r\x1b[2Kcomplete screen\x1b[?2026l');
+    const frame = await pending;
+    assert.ok(frame.data.includes('complete screen'));
+    assert.ok(!frame.data.includes('partial'));
+    await engine.write('\x1b[?2026h');
+    const started = Date.now();
+    await engine.snapshot();
+    assert.ok(Date.now() - started < 2000, 'a missing end marker cannot freeze snapshots forever');
+  } finally { await engine.dispose(); }
+});
 const write = (terminal: HeadlessTerminal, data: string | Uint8Array) =>
   new Promise<void>(resolve => terminal.write(data, resolve));
 

@@ -1,5 +1,5 @@
 import type { Terminal } from '@xterm/xterm';
-import { applyPresentationModes, suppressRendererResponses } from './pinned-xterm.js';
+import { applyPresentationModes, setPresentationPending, suppressRendererResponses } from './pinned-xterm.js';
 import { assertGeometry, PRESENTATION_VERSION } from './types.js';
 import { attachTouchScrollback } from './touch-scrollback.js';
 import type { TerminalInputEncoding, TerminalModes } from './types.js';
@@ -142,29 +142,34 @@ export class BrowserPresentationAdapter {
     const selection = sameGeometry ? this.terminal.getSelectionPosition?.() : undefined;
     const selectedText = selection ? this.terminal.getSelection() : '';
     this.terminal.reset();
-    this.terminal.resize(frame.cols, frame.rows);
-    this.modes = modes;
-    // Restore input modes synchronously before yielding to another key event.
-    applyPresentationModes(this.terminal, modes);
-    await new Promise<void>(resolve => this.terminal.write(frame.data, resolve));
-    if (this.disposed) throw new Error('Terminal renderer is disposed.');
-    applyPresentationModes(this.terminal, modes);
-    if (atBottom) this.terminal.scrollToBottom();
-    // Appended output should not move the text somebody is reading. If history
-    // was trimmed or changed, retain the previous distance from the live tail.
-    else if (viewedLines && this.terminal.buffer.active.type === 'normal' &&
-        viewedLines.every((line, row) => line === this.terminal.buffer.active.getLine(oldViewportY + row)?.translateToString())) {
-      this.terminal.scrollToLine(oldViewportY);
+    setPresentationPending(this.terminal, true);
+    try {
+      this.terminal.resize(frame.cols, frame.rows);
+      this.modes = modes;
+      // Restore input modes synchronously before yielding to another key event.
+      applyPresentationModes(this.terminal, modes);
+      await new Promise<void>(resolve => this.terminal.write(frame.data, resolve));
+      if (this.disposed) throw new Error('Terminal renderer is disposed.');
+      applyPresentationModes(this.terminal, modes);
+      if (atBottom) this.terminal.scrollToBottom();
+      // Appended output should not move the text somebody is reading. If history
+      // was trimmed or changed, retain the previous distance from the live tail.
+      else if (viewedLines && this.terminal.buffer.active.type === 'normal' &&
+          viewedLines.every((line, row) => line === this.terminal.buffer.active.getLine(oldViewportY + row)?.translateToString())) {
+        this.terminal.scrollToLine(oldViewportY);
+      }
+      else this.terminal.scrollToLine(Math.max(0, this.terminal.buffer.active.baseY - oldOffset));
+      if (selection && this.terminal.buffer.active.type === old.type) {
+        const length = (selection.end.y - selection.start.y) * frame.cols + selection.end.x - selection.start.x;
+        if (length > 0) this.terminal.select(selection.start.x, selection.start.y, length);
+        // History trimming or a repaint can move different text under identical
+        // coordinates. Never retain a selection that silently selects new text.
+        if (this.terminal.getSelection() !== selectedText) this.terminal.clearSelection();
+      }
+    } finally {
+      setPresentationPending(this.terminal, false);
+      if (!this.disposed) this.terminal.refresh?.(0, frame.rows - 1);
     }
-    else this.terminal.scrollToLine(Math.max(0, this.terminal.buffer.active.baseY - oldOffset));
-    if (selection && this.terminal.buffer.active.type === old.type) {
-      const length = (selection.end.y - selection.start.y) * frame.cols + selection.end.x - selection.start.x;
-      if (length > 0) this.terminal.select(selection.start.x, selection.start.y, length);
-      // History trimming or a repaint can move different text under identical
-      // coordinates. Never retain a selection that silently selects new text.
-      if (this.terminal.getSelection() !== selectedText) this.terminal.clearSelection();
-    }
-    this.terminal.refresh?.(0, frame.rows - 1);
   }
 
   /**

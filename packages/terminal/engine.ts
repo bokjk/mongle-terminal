@@ -1,7 +1,7 @@
 import Headless from '@xterm/headless';
 import type { Terminal } from '@xterm/headless';
 import { SerializeAddon } from '@xterm/addon-serialize';
-import { clearScrollback, presentationExtras } from './pinned-xterm.js';
+import { clearScrollback, isPresentationPending, presentationExtras } from './pinned-xterm.js';
 import { assertGeometry, PRESENTATION_VERSION } from './types.js';
 import type { PresentationSnapshot, TerminalEngineOptions, TerminalModes } from './types.js';
 
@@ -118,44 +118,53 @@ export class TerminalEngine {
     });
   }
 
-  snapshot(options: { maxBytes?: number } = {}): Promise<PresentationSnapshot> {
+  async snapshot(options: { maxBytes?: number } = {}): Promise<PresentationSnapshot> {
     const budget = options.maxBytes ?? 1536 * 1024;
     if (!Number.isSafeInteger(budget) || budget < 1024 || budget > 16 * 1024 * 1024) {
       return Promise.reject(new RangeError('Snapshot budget must be 1 KiB..16 MiB.'));
     }
-    return this.enqueue(() => {
-      const modes: TerminalModes = { ...this.terminal.modes, ...presentationExtras(this.terminal) };
-      // Exclude serializer modes: origin-mode changes move the cursor. The client
-      // handles input modes separately and never consumes future raw VT output.
-      const available = this.terminal.buffer.normal.baseY;
-      const make = (scrollback: number): PresentationSnapshot => ({
-        kind: 'presentation-v1', version: PRESENTATION_VERSION,
-        revision: this.revision, cols: this.terminal.cols, rows: this.terminal.rows,
-        data: this.serializer.serialize({ excludeModes: true, scrollback })
-        // SerializeAddon ends normal-buffer serialization with the *active*
-        // rendition. Reset it before entering alternate buffer; otherwise BCE
-        // fills untouched alternate cells with that rendition's background.
-          .replace('\x1b[?1049h\x1b[H', '\x1b[0m\x1b[?1049h\x1b[H'),
-        modes, title: this.title, historyTruncated: scrollback < available,
-        historyLinesIncluded: scrollback,
+    // Applications such as GJC split a synchronized update across PTY chunks.
+    // Wait outside the parser queue so the closing sequence can still arrive.
+    // Bound the wait for applications that forget to end DEC mode 2026.
+    const deadline = Date.now() + 1000;
+    for (;;) {
+      const snapshot = await this.enqueue(() => {
+        if (isPresentationPending(this.terminal) && Date.now() < deadline) return undefined;
+        const modes: TerminalModes = { ...this.terminal.modes, ...presentationExtras(this.terminal) };
+        // Exclude serializer modes: origin-mode changes move the cursor. The client
+        // handles input modes separately and never consumes future raw VT output.
+        const available = this.terminal.buffer.normal.baseY;
+        const make = (scrollback: number): PresentationSnapshot => ({
+          kind: 'presentation-v1', version: PRESENTATION_VERSION,
+          revision: this.revision, cols: this.terminal.cols, rows: this.terminal.rows,
+          data: this.serializer.serialize({ excludeModes: true, scrollback })
+          // SerializeAddon ends normal-buffer serialization with the *active*
+          // rendition. Reset it before entering alternate buffer; otherwise BCE
+          // fills untouched alternate cells with that rendition's background.
+            .replace('\x1b[?1049h\x1b[H', '\x1b[0m\x1b[?1049h\x1b[H'),
+          modes, title: this.title, historyTruncated: scrollback < available,
+          historyLinesIncluded: scrollback,
+        });
+        const byteSize = (frame: PresentationSnapshot) => new TextEncoder().encode(JSON.stringify(frame)).byteLength;
+        const full = make(available);
+        if (byteSize(full) <= budget) return full;
+        let best = make(0);
+        // A soft history budget must never remove current-screen cells. The
+        // transport supports this marked larger frame up to its hard limit.
+        if (byteSize(best) > budget) return { ...best, oversized: true };
+        let low = 1;
+        let high = available - 1;
+        while (low <= high) {
+          const middle = Math.floor((low + high) / 2);
+          const candidate = make(middle);
+          if (byteSize(candidate) <= budget) { best = candidate; low = middle + 1; }
+          else high = middle - 1;
+        }
+        return best;
       });
-      const byteSize = (frame: PresentationSnapshot) => new TextEncoder().encode(JSON.stringify(frame)).byteLength;
-      const full = make(available);
-      if (byteSize(full) <= budget) return full;
-      let best = make(0);
-      // A soft history budget must never remove current-screen cells. The
-      // transport supports this marked larger frame up to its hard limit.
-      if (byteSize(best) > budget) return { ...best, oversized: true };
-      let low = 1;
-      let high = available - 1;
-      while (low <= high) {
-        const middle = Math.floor((low + high) / 2);
-        const candidate = make(middle);
-        if (byteSize(candidate) <= budget) { best = candidate; low = middle + 1; }
-        else high = middle - 1;
-      }
-      return best;
-    });
+      if (snapshot) return snapshot;
+      await new Promise(resolve => setTimeout(resolve, 8));
+    }
   }
 
   clearHistory(): Promise<void> {
