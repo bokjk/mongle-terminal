@@ -41,16 +41,14 @@ export class BrowserPresentationAdapter {
   private modes: TerminalModes | undefined;
   private readonly subscriptions: Array<{ dispose(): void }> = [];
   private readonly removeBoundary: () => void;
-  private compositionWait: Promise<void> | undefined;
-  private finishComposition: (() => void) | undefined;
   private compositionEndTimer: ReturnType<typeof setTimeout> | undefined;
   private compositionActive = false;
   private compositionBlocked = false;
   private deferredKeyTimer: ReturnType<typeof setTimeout> | undefined;
   private deferredKeyBlocked = false;
   private readonly composing = () => this.beginComposition();
-  // xterm commits composition in its own setTimeout(0). Resume after that
-  // callback, otherwise reset can erase the final Korean syllable.
+  // xterm commits composition in its own setTimeout(0). Keep a blocked
+  // composition quarantined until that callback has had a chance to run.
   private readonly composed = () => {
     if (this.compositionEndTimer) clearTimeout(this.compositionEndTimer);
     this.compositionEndTimer = setTimeout(() => this.endComposition(), 0);
@@ -117,8 +115,11 @@ export class BrowserPresentationAdapter {
   private async drain(): Promise<void> {
     try {
       while (this.pending) {
-        // Leave the pending slot replaceable while an IME composition is open.
-        if (this.compositionWait) await this.compositionWait;
+        // Let native editor events and xterm's deferred commit finish this turn,
+        // but never wait for an entire composition: Korean IMEs can keep the
+        // next syllable composing while the host echoes the preceding one.
+        // reset() resets VT state, not xterm's textarea or CompositionHelper.
+        await new Promise<void>(resolve => setTimeout(resolve, 0));
         const pending = this.pending;
         if (!pending) break;
         this.pending = undefined;
@@ -191,7 +192,6 @@ export class BrowserPresentationAdapter {
     }
     const editable = !this.disposed && (this.enabled || options.preserveKeyboard === true);
     this.terminal.options.disableStdin = !editable;
-    if (!editable) this.releaseCompositionWait();
   }
 
   private acceptsTerminalInput(): boolean {
@@ -227,9 +227,6 @@ export class BrowserPresentationAdapter {
     this.compositionEndTimer = undefined;
     this.compositionActive = true;
     this.compositionBlocked ||= !this.enabled;
-    if (!this.compositionWait && !this.disposed) {
-      this.compositionWait = new Promise<void>(resolve => { this.finishComposition = resolve; });
-    }
   }
 
   endComposition(): void {
@@ -237,13 +234,6 @@ export class BrowserPresentationAdapter {
     this.compositionEndTimer = undefined;
     this.compositionActive = false;
     this.compositionBlocked = false;
-    this.releaseCompositionWait();
-  }
-
-  private releaseCompositionWait(): void {
-    this.finishComposition?.();
-    this.finishComposition = undefined;
-    this.compositionWait = undefined;
   }
 
   dispose(): void {

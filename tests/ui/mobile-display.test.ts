@@ -15,6 +15,8 @@ const reset=(size:number)=>`글자 크기 ${size}px · 기본 14px로 복원`;
 async function openPage(browser:Browser,url:string,errors:string[],width=390,storedFont?:string,storedCompact?:string){
   const page=await browser.newPage({viewport:{width,height:844},isMobile:width<=700,hasTouch:width<=700});
   page.setDefaultTimeout(5000);
+  // A cold Chrome start on hosted Windows can take longer than UI interactions.
+  page.setDefaultNavigationTimeout(15000);
   page.on('pageerror',error=>errors.push(error.message));
   await page.addInitScript('window.__name=function(fn){return fn;};');
   if(storedFont!==undefined||storedCompact!==undefined)await page.addInitScript(({font,compact})=>{

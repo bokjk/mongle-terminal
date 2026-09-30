@@ -11,6 +11,50 @@ const chrome = process.platform === 'win32' && existsSync('C:/Program Files/Goog
 
 const browserOptions = { skip: chrome ? false : 'Requires installed Windows Chrome for the real DOM check.', timeout: 30000 };
 
+test('real Chrome: light theme renders ANSI white, bright colors and true color with readable contrast', browserOptions, async () => withTerminalBrowser(async (page, engine) => {
+  await engine.write(Array.from({ length: 16 }, (_, i) => `\x1b[${i < 8 ? 30 + i : 90 + i - 8}mX`).join('') + '\x1b[38;5;255mX\x1b[38;2;250;250;250mX');
+  await page.evaluate(async snapshot => {
+    const h = (window as any).mongleTerminalTest;
+    h.terminal.options.theme = h.terminalThemes.light;
+    h.terminal.options.minimumContrastRatio = h.terminalMinimumContrast;
+    await h.adapter.applySnapshot(snapshot);
+  }, await engine.snapshot());
+  await page.waitForFunction(() => document.querySelector('.xterm-rows')?.textContent?.includes('XXXXXXXXXXXXXXXXXX'));
+  const colors = await page.locator('.xterm-rows').evaluate(element => Array.from(element.querySelectorAll('span')).filter(span => span.textContent?.includes('X')).map(span => getComputedStyle(span).color));
+  assert.equal(colors.length, 18);
+  for (const color of colors) {
+    const channels = color.match(/\d+/g)!.slice(0, 3).map(Number).map(v => v / 255).map(v => v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
+    const luminance = channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+    assert.ok(1.05 / (luminance + 0.05) >= 4.45, `low contrast: ${color}`);
+  }
+}));
+
+test('real Chrome IME: consecutive Korean syllables survive host echo frames', browserOptions, async () => withTerminalBrowser(async (page, engine) => {
+  const frame = await engine.snapshot();
+  await page.evaluate(async snapshot => {
+    const h = (window as any).mongleTerminalTest;
+    await h.adapter.applySnapshot(snapshot);
+    h.adapter.setInputEnabled(true); h.terminal.focus();
+    h.frames = setInterval(() => { void h.adapter.applySnapshot(snapshot); }, 5);
+  }, frame);
+  const cdp = await page.context().newCDPSession(page);
+  for (const syllable of ['한', '글', '입', '력']) {
+    await cdp.send('Input.imeSetComposition', { text: syllable, selectionStart: 1, selectionEnd: 1 });
+    await page.evaluate(snapshot => {
+      const h = (window as any).mongleTerminalTest;
+      clearInterval(h.frames); h.echoApplied = false;
+      void h.adapter.applySnapshot({ ...snapshot, data: 'host echo' }).then(() => { h.echoApplied = true; });
+    }, frame);
+    await page.waitForFunction(() => (window as any).mongleTerminalTest.echoApplied, undefined, { timeout: 2000 });
+    assert.equal(await page.locator('.composition-view').textContent(), syllable);
+    await cdp.send('Input.insertText', { text: syllable });
+    await page.waitForTimeout(30);
+  }
+  await page.evaluate(() => clearInterval((window as any).mongleTerminalTest.frames));
+  const inputs = await page.evaluate(() => (window as any).mongleTerminalTest.inputs.map((item: string[]) => item[0]).join(''));
+  assert.equal(inputs, '한글입력');
+}));
+
 test('real Chrome: a slow full-frame write never paints the reset or partial screen',
   browserOptions, async () => withTerminalBrowser(async (page, engine) => {
     await engine.write('old complete screen');
@@ -295,6 +339,7 @@ test('real Chrome mobile emulation: resize fences preserve the writable focused 
       h.adapter.setInputEnabled(true);
       textarea.dispatchEvent(new CompositionEvent('compositionend', { data: '한' }));
       await pending;
+      await new Promise(resolve => setTimeout(resolve, 10));
       // A fresh, fully authorized composition must still work.
       textarea.value = '';
       textarea.dispatchEvent(new CompositionEvent('compositionstart'));
@@ -305,7 +350,7 @@ test('real Chrome mobile emulation: resize fences preserve the writable focused 
       return { during, inputs: h.inputs, blurs: h.blurs, readonlyMutations: h.readonlyMutations };
     }, frame);
     assert.deepEqual(composition, {
-      during: { rendered: false, value: '한', readonly: false, focused: true },
+      during: { rendered: true, value: '한', readonly: false, focused: true },
       inputs: [['before', 'utf8'], ['after', 'utf8'], ['새', 'utf8']], blurs: 0, readonlyMutations: 0,
     }, 'a gate does not reset a live IME; its stale commit is dropped and a fresh composition works');
 

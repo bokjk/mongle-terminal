@@ -7,7 +7,7 @@ export type LayoutNode = { type: 'leaf'; terminalId: string } | { type: 'split';
 export interface Group { id: string; name: string; cwd: string; profileId: string; revision: number; layout: LayoutNode | null; }
 export interface ShellProfile { id: string; name: string; executable: string; args: string[]; kind: 'powershell' | 'cmd' | 'wsl' | 'bash'; }
 export interface Controller { connectionId: string; deviceName: string; epoch: number; ready: boolean; }
-export interface TerminalInfo { id: string; groupId: string; title: string; profileId: string; cwd: string; generation: string; status: 'running' | 'exited' | 'interrupted'; cols: number; rows: number; pid?: number; exitCode?: number; controller?: Controller; historyAvailable?: boolean; resumeOnBoot?: boolean; restoreError?: string; }
+export interface TerminalInfo { id: string; groupId: string; title: string; profileId: string; cwd: string; currentCwd?: string; generation: string; status: 'running' | 'exited' | 'interrupted'; cols: number; rows: number; pid?: number; exitCode?: number; controller?: Controller; historyAvailable?: boolean; resumeOnBoot?: boolean; restoreError?: string; }
 export interface HostSettings { name: string; recordHistory: boolean; scrollback: number; }
 export interface HostState { hostId: string; bootId: string; name: string; version: string; protocolVersion: number; capabilities?: string[]; groups: Group[]; terminals: TerminalInfo[]; profiles: ShellProfile[]; settings: HostSettings; storageError?: string; }
 export interface ConnectionContext { id: string; deviceId: string; deviceName: string; owner: boolean; }
