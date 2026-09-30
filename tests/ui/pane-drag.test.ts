@@ -196,9 +196,10 @@ test('native pane drag: dock, swap, create once, cancel, lease/input continuity 
     const spare = await host.handle('groups.create', { name: '취소 대상', profileId: profile.id }, observer);
     await cancelCase('group switch mid-drag', async () => { await page.locator('.group-main').filter({ hasText: '취소 대상' }).evaluate(element => (element as HTMLButtonElement).click()); await expect(page.getByRole('heading', { name: '취소 대상', exact: true })).toBeVisible(); });
     await selectGroup('드래그 작업');
-    await cancelCase('new terminal host switch mid-drag', async () => { await page.getByLabel('접속할 컴퓨터', { exact: true }).selectOption('1'); await expect(page.getByRole('heading', { name: '기본 그룹', exact: true })).toBeVisible(); }, page.locator('.new-terminal-drag'));
+    // Native HTML drag suppresses physical clicks/keys. Activate the UI like the group-switch boundary above.
+    await cancelCase('new terminal host switch mid-drag', async () => { await page.getByRole('button', { name: '접속할 컴퓨터', exact: true }).evaluate(element => (element as HTMLElement).click()); await page.getByRole('option').nth(1).evaluate(element => (element as HTMLElement).click()); await expect(page.getByRole('heading', { name: '기본 그룹', exact: true })).toBeVisible(); }, page.locator('.new-terminal-drag'));
     assert.equal(hosts[1].getState().terminals.length, 0, 'stale source intent cannot create on the new computer');
-    await page.getByLabel('접속할 컴퓨터', { exact: true }).selectOption('0'); await selectGroup('드래그 작업');
+    await page.getByRole('button', { name: '접속할 컴퓨터', exact: true }).click(); await page.getByRole('option').nth(0).click(); await selectGroup('드래그 작업');
 
     // If another writer wins after drop, a rejected CAS must not replay stale intent.
     await resetLayout();
