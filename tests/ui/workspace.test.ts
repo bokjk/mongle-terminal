@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, readFile, rm, mkdir } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, mkdir, realpath } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -40,7 +40,8 @@ test('real UI and host: typing, uncertain-input latch, split, resize, reload PID
     const first=host.getState().terminals[0];assert.equal(first.status,'running');const pid=first.pid;
     const changedDirectory=path.join(dataDir,'한글 작업 폴더');await mkdir(changedDirectory);
     await page.keyboard.insertText(`Set-Location -LiteralPath '${changedDirectory.replaceAll("'","''")}'`);await page.keyboard.press('Enter');
-    await expect(page.locator('.pane-footer > span').first()).toHaveText(changedDirectory);
+    // CI TEMP may use an 8.3 alias while PowerShell reports its long path.
+    await expect.poll(async()=>realpath(await page.locator('.pane-footer > span').first().innerText())).toBe(await realpath(changedDirectory));
     assert.equal(host.getState().terminals[0].cwd,first.cwd,'the displayed directory must not rewrite the launch setting');
     // A lost input response must keep typing blocked even when fresh output is
     // rendered and ACKed. Only the user's explicit control action releases it.
