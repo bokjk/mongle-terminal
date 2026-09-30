@@ -10,6 +10,7 @@ import type { HostState, SnapshotEvent, TerminalInfo } from '../../../packages/p
 import { transformInput } from '../../../packages/ui/layout';
 import type { PaneDropPreview } from './use-pane-drag';
 import { attachTerminalTap } from './terminal-tap';
+import { terminalThemes as themes, terminalMinimumContrast } from './terminal-theme';
 
 export interface PaneActions { key(data:string):void; paste(text:string):void; focus():void; search():void; }
 export interface PaneProps {
@@ -18,10 +19,6 @@ export interface PaneProps {
   dragEnabled?:boolean;dropPreview?:PaneDropPreview;onPaneDragStart?(event:DragEvent<HTMLElement>):void;onPaneDragEnd?():void;onPaneDragOver?(event:DragEvent<HTMLElement>):void;onPaneDrop?(event:DragEvent<HTMLElement>):void;onPanePointerStart?():void;dragClickAllowed?():boolean;
   onError(message:string):void; confirmPaste(text:string):Promise<boolean>; register(id:string, actions:PaneActions|null):void;
 }
-const themes = {
-  dark:{background:'#18191c',foreground:'#d8dcdf',cursor:'#b9e9cc',selectionBackground:'#44564e',black:'#26282c',red:'#ec9296',green:'#a8d9b6',yellow:'#e3cc91',blue:'#9dbde2',magenta:'#c8a5da',cyan:'#93d2ce',white:'#e7e9ed',brightBlack:'#777e88',brightWhite:'#ffffff'},
-  light:{background:'#ffffff',foreground:'#303640',cursor:'#2d7253',selectionBackground:'#d1e7da',black:'#303640',red:'#a83f50',green:'#2d7253',yellow:'#8d691b',blue:'#3b69a0',magenta:'#8453a2',cyan:'#257f82',white:'#eef0f3',brightBlack:'#727984',brightWhite:'#ffffff'}
-};
 // Keep uncertainty across pane remounts (group changes/maximize/reconnect) for
 // this client and exact live session. A new shell generation has a new latch.
 const inputSafety = new WeakMap<AppClient,Map<string,{blocked:boolean}>>();
@@ -29,6 +26,7 @@ type AcquireMode = 'background'|'intent'|'recover';
 function inputLatch(client:AppClient,state:HostState,info:TerminalInfo){let sessions=inputSafety.get(client);if(!sessions){sessions=new Map();inputSafety.set(client,sessions);}const key=`${state.hostId}:${state.bootId}:${info.id}:${info.generation}`;let latch=sessions.get(key);if(!latch){latch={blocked:false};sessions.set(key,latch);}return latch;}
 export function TerminalPane(props:PaneProps) {
   const {client,state,info} = props;
+  const displayedCwd = info.currentCwd || info.cwd;
   const mount = useRef<HTMLDivElement>(null);
   const toolbarDrag = useRef(false);
   const contextPointer = useRef('mouse');
@@ -76,7 +74,7 @@ export function TerminalPane(props:PaneProps) {
     let grant:{epoch:number;connectionId:string}|undefined;
     let acquireFailed=false;
     let pendingAcquisition:Promise<number|undefined>|undefined;
-    const terminal = new Terminal({cols:info.cols,rows:info.rows,fontSize:props.fontSize,fontFamily:'Cascadia Mono, Cascadia Code, Consolas, Menlo, monospace',lineHeight:1.15,scrollback:5000,cursorBlink:true,theme:themes[props.theme],allowProposedApi:true,convertEol:false});
+    const terminal = new Terminal({cols:info.cols,rows:info.rows,fontSize:props.fontSize,fontFamily:'Cascadia Mono, Cascadia Code, Consolas, Menlo, monospace',lineHeight:1.15,scrollback:5000,cursorBlink:true,theme:themes[props.theme],minimumContrastRatio:terminalMinimumContrast,allowProposedApi:true,convertEol:false});
     termRef.current = terminal;
     const fit = new FitAddon(); const search = new SearchAddon(); terminal.loadAddon(fit); terminal.loadAddon(search); fitRef.current = fit; searchRef.current = search;
     terminal.open(mount.current);
@@ -128,7 +126,7 @@ export function TerminalPane(props:PaneProps) {
     });
     lastSeq.current = -1; setControlled(false); setFrameError('');setControlError(false);
     // Only one frame is being rendered and one latest complete frame waits.
-    // A long mobile IME composition must not retain an unbounded snapshot chain.
+    // Slow rendering must not retain an unbounded snapshot chain.
     type PendingFrame={event:SnapshotEvent;lease?:number;waiters:Array<(applied:boolean)=>void>};
     let pendingFrame:PendingFrame|undefined;let processing=false;let synchronizing=false;
     const drain = async() => {
@@ -290,7 +288,7 @@ export function TerminalPane(props:PaneProps) {
   const otherOwner=controlOwner&&controlOwner.connectionId!==props.connectionId?controlOwner:undefined;
   return <section className={`pane ${props.selected?'active':''} ${props.maximized?'maximized':''}`} data-terminal-id={info.id} aria-label={`${info.title} 패널`} onPointerDown={event=>{contextPointer.current=event.pointerType;const target=event.target as Element;if(props.dragEnabled&&target.closest('.pane-header')&&!target.closest('.pane-toolbar'))return;props.onSelect();}} onDragOverCapture={event=>{event.preventDefault();event.stopPropagation();props.onPaneDragOver?.(event);}} onDropCapture={event=>{event.preventDefault();event.stopPropagation();props.onPaneDrop?.(event);}}>
     <header className="pane-header" draggable={Boolean(props.dragEnabled)} onPointerDown={event=>{toolbarDrag.current=Boolean((event.target as Element).closest('.pane-toolbar'));props.onPanePointerStart?.();}} onDragStart={event=>{if(!props.dragEnabled||toolbarDrag.current||(event.target as Element).closest('.pane-toolbar')){event.preventDefault();return;}props.onPaneDragStart?.(event);}} onDragEnd={props.onPaneDragEnd}>
-      {props.dragEnabled?<><span className="pane-drag-handle" title="끌어서 패널 배치" aria-label="패널 끌어서 배치"><GripVertical size={15}/></span><span className="pane-title" onDoubleClick={props.onRename} onClick={focusTitle} title={`${info.cwd} · 끌어서 패널 배치`}>{info.title}</span></>:<><SquareTerminal size={14}/><button className="pane-title" onPointerDown={event=>event.preventDefault()} onDoubleClick={props.onRename} onClick={focusTitle} title={info.cwd}>{info.title}</button></>}
+      {props.dragEnabled?<><span className="pane-drag-handle" title="끌어서 패널 배치" aria-label="패널 끌어서 배치"><GripVertical size={15}/></span><span className="pane-title" onDoubleClick={props.onRename} onClick={focusTitle} title={`${displayedCwd} · 끌어서 패널 배치`}>{info.title}</span></>:<><SquareTerminal size={14}/><button className="pane-title" onPointerDown={event=>event.preventDefault()} onDoubleClick={props.onRename} onClick={focusTitle} title={displayedCwd}>{info.title}</button></>}
       <span className="pane-meta">{info.status==='running'?(controlled?'제어 중':'보기 전용'):info.status==='interrupted'?'중단됨':'종료됨'}</span>
       <div className="pane-toolbar">
         <button className="icon-button" title="터미널 검색" aria-label="터미널 검색" onClick={()=>setSearchOpen(!searchOpen)}><Search size={14}/></button>
@@ -326,7 +324,7 @@ export function TerminalPane(props:PaneProps) {
     {(frameError||inputUncertain)&&<div className="connection-banner warning">{inputUncertain?'마지막 입력의 전달 여부를 확인해 주세요. 확인 후 제어권을 다시 가져올 수 있습니다.':frameError}</div>}
     {info.restoreError&&<div className="connection-banner warning">{info.restoreError}{info.historyAvailable?' 이전 기록은 그대로 남아 있습니다.':''}</div>}
     {historyTruncated&&<div className="history-notice">오래된 출력 일부를 생략하고 최근 기록을 표시합니다.</div>}
-    <footer className="pane-footer"><span title={info.cwd}>{info.cwd}</span>{info.status==='running'?
+    <footer className="pane-footer"><span title={`${info.currentCwd?'현재 폴더':'시작 폴더 · 현재 경로 보고 없음'}: ${displayedCwd}`}>{displayedCwd}</span>{info.status==='running'?
       busy?<span className="control-chip" role="status">연결 중…</span>:
       controlled&&!inputUncertain&&!frameError?<span className="control-chip controlled"><Keyboard size={12}/>여기서 제어 중</span>:
       otherOwner||inputUncertain||controlError||frameError?<button className="control-chip" disabled={!props.connected} onPointerDown={e=>e.preventDefault()} onClick={()=>void acquireRef.current(true)}><Eye size={12}/>{inputUncertain?'입력 확인 후 다시 제어':controlError||frameError?'제어 다시 시도':otherOwner?`${otherOwner.deviceName}에서 제어 · 가져오기`:'여기서 제어'}</button>:

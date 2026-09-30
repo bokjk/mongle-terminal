@@ -37,6 +37,7 @@ export interface TerminalEngineOptions {
   rows: number;
   scrollback?: number;
   onResponse: (data: string) => void;
+  onDirectory?: (directory: string) => void;
 }
 
 export const PRESENTATION_VERSION = 'xterm-6.0.0/serialize-0.14.0/presentation-1';

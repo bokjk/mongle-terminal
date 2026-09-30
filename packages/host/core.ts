@@ -9,6 +9,7 @@ import type { ConnectionContext, Group, HostSettings, HostState, LayoutNode, Pre
 import { HostStore, type PersistedHost, type PersistedSnapshot } from '../storage/index.js';
 import { detectShellProfiles, resolveShellLaunch, safeShellEnvironment } from '../shell-profiles/index.js';
 import { TerminalEngine } from '../terminal/engine.js';
+import { shellIntegration } from '../shell-profiles/integration.js';
 
 const nameSchema = z.string().trim().min(1).max(100);
 const cwdSchema = z.string().min(1).max(4096);
@@ -23,7 +24,7 @@ const MAX_FRAME_BYTES = 16 * 1024 * 1024;
 type Attachment = { lastSent: number; lastAck: number; pending?: SnapshotEvent };
 type Client = { ctx: ConnectionContext; send: Send; attached: Map<string, Attachment> };
 type Lease = { connectionId: string; deviceName: string; epoch: number; expires: number; ready: boolean; syncSeq: number; inputSeq: number; dedupe: Map<string, {seq:number; hash:string}> };
-type Runtime = { info: TerminalInfo; engine: TerminalEngine; pty?: pty.IPty; stopPty?:()=>Promise<void>; seq: number; epoch: number; lease?: Lease; timer?: ReturnType<typeof setTimeout>; checkpointAt: number; lastFrame?: SnapshotEvent; disposed: boolean; pendingBytes: number };
+type Runtime = { info: TerminalInfo; engine: TerminalEngine; pty?: pty.IPty; stopPty?:()=>Promise<void>; seq: number; epoch: number; lease?: Lease; timer?: ReturnType<typeof setTimeout>; checkpointAt: number; lastFrame?: SnapshotEvent; disposed: boolean; pendingBytes: number; directoryChanged?: boolean };
 
 /** Owns the shells, independent of every GUI/browser attachment. */
 export class HostCore {
@@ -353,11 +354,13 @@ export class HostCore {
   private async startTerminal(info:TerminalInfo,profile:ShellProfile,launch:{executable:string;args:string[];cwd:string},history?:PresentationSnapshot) {
     const runtime={} as Runtime;
     Object.assign(runtime,{info,seq:0,epoch:0,checkpointAt:0,disposed:false,pendingBytes:0});
-    runtime.engine=new TerminalEngine({cols:info.cols,rows:info.rows,scrollback:this.settings.scrollback,onResponse:(data:string)=>{try{if(runtime.pty && info.status==='running')runtime.pty.write(data);}catch{/* exit can race an emulator reply */}}});
+    delete info.currentCwd;
+    runtime.engine=new TerminalEngine({cols:info.cols,rows:info.rows,scrollback:this.settings.scrollback,onDirectory:directory=>{if(!runtime.disposed&&info.currentCwd!==directory){info.currentCwd=directory;runtime.directoryChanged=true;}},onResponse:(data:string)=>{try{if(runtime.pty && info.status==='running')runtime.pty.write(data);}catch{/* exit can race an emulator reply */}}});
     this.runtimes.set(info.id,runtime);
     try {
       if(history)await runtime.engine.restoreHistory(history);
-      runtime.pty=pty.spawn(launch.executable,launch.args,{name:'xterm-256color',cols:info.cols,rows:info.rows,cwd:launch.cwd,env:safeShellEnvironment(),useConpty:true,useConptyDll:true});
+      const integration=shellIntegration(profile,launch.args,safeShellEnvironment());
+      runtime.pty=pty.spawn(launch.executable,integration.args,{name:'xterm-256color',cols:info.cols,rows:info.rows,cwd:launch.cwd,env:integration.env,useConpty:true,useConptyDll:true});
       runtime.stopPty=installPtyLifecycle(runtime.pty);
     } catch {
       if(runtime.pty)try{if(runtime.stopPty)await runtime.stopPty();else runtime.pty.kill();}catch{}
@@ -389,7 +392,7 @@ export class HostCore {
   private async frame(info:TerminalInfo):Promise<SnapshotEvent> {
     const runtime=this.runtimes.get(info.id);
     let snapshot:PresentationSnapshot;
-    if(runtime){snapshot=await runtime.engine.snapshot();}
+    if(runtime){snapshot=await runtime.engine.snapshot();if(runtime.directoryChanged&&!runtime.disposed){runtime.directoryChanged=false;this.broadcastState();}}
     else snapshot=this.archivedFrames.get(info.id) || (this.settings.recordHistory ? this.store.getSnapshot(info.id,info.generation) || await this.blankSnapshot(info) : await this.blankSnapshot(info));
     const seq=runtime?++runtime.seq:(this.archivedSequences.get(info.id) || 0)+1;
     if(!runtime)this.archivedSequences.set(info.id,seq);

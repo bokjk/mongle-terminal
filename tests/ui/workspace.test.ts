@@ -38,6 +38,10 @@ test('real UI and host: typing, uncertain-input latch, split, resize, reload PID
     await page.keyboard.insertText('echo 몽글테스트');await page.keyboard.press('Enter');
     await page.waitForFunction(()=>document.querySelector('.xterm-rows')?.textContent?.includes('몽글테스트'));
     const first=host.getState().terminals[0];assert.equal(first.status,'running');const pid=first.pid;
+    const changedDirectory=path.join(dataDir,'한글 작업 폴더');await mkdir(changedDirectory);
+    await page.keyboard.insertText(`Set-Location -LiteralPath '${changedDirectory.replaceAll("'","''")}'`);await page.keyboard.press('Enter');
+    await expect(page.locator('.pane-footer > span').first()).toHaveText(changedDirectory);
+    assert.equal(host.getState().terminals[0].cwd,first.cwd,'the displayed directory must not rewrite the launch setting');
     // A lost input response must keep typing blocked even when fresh output is
     // rendered and ACKed. Only the user's explicit control action releases it.
     failNextInput=true;await page.keyboard.type('x');
