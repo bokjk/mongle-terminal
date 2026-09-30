@@ -10,6 +10,7 @@ import { HostStore, type PersistedHost, type PersistedSnapshot } from '../storag
 import { detectShellProfiles, resolveShellLaunch, safeShellEnvironment } from '../shell-profiles/index.js';
 import { TerminalEngine } from '../terminal/engine.js';
 import { shellIntegration } from '../shell-profiles/integration.js';
+import { inspectFiles } from './files.js';
 
 const nameSchema = z.string().trim().min(1).max(100);
 const cwdSchema = z.string().min(1).max(4096);
@@ -46,6 +47,7 @@ export class HostCore {
   private initialized = false;
   private initialization?: Promise<void>;
   private storageError?: string;
+  private fileReads = new Map<string, number>();
 
   constructor(private options: { dataDir: string; name?: string }) {
     this.settings = {name: options.name || hostname(), recordHistory: true, scrollback: 5000};
@@ -96,7 +98,7 @@ export class HostCore {
     return result;
   }
   getState(): HostState {
-    return structuredClone({ hostId:this.hostId, bootId:this.bootId, name:this.settings.name, version:APP_VERSION, protocolVersion:PROTOCOL_VERSION, capabilities:['control.acquire-if-free'], groups:this.groups, terminals:this.terminals, profiles:this.profiles, settings:this.settings, ...(this.storageError ? {storageError:this.storageError} : {}) });
+    return structuredClone({ hostId:this.hostId, bootId:this.bootId, name:this.settings.name, version:APP_VERSION, protocolVersion:PROTOCOL_VERSION, capabilities:['control.acquire-if-free','files.read'], groups:this.groups, terminals:this.terminals, profiles:this.profiles, settings:this.settings, ...(this.storageError ? {storageError:this.storageError} : {}) });
   }
   connect(ctx: ConnectionContext, send: Send): void {
     if (!this.initialized || this.closing || this.shutdownPrepared) throw new AppError('HOST_UNAVAILABLE','호스트가 준비되지 않았습니다.');
@@ -112,6 +114,8 @@ export class HostCore {
     if (changed) this.broadcastState();
   }
   async handle(method: string, params: unknown, ctx: ConnectionContext): Promise<any> {
+    // Filesystem latency must not block heartbeat, terminal input or shutdown.
+    if (method === 'files.list' || method === 'files.preview') return this.readFiles(method, params, ctx);
     const task = this.queue.then(async () => {
       if (this.closing || this.shutdownPrepared) throw new AppError('HOST_UNAVAILABLE','호스트가 종료 중입니다.');
       const client = this.clients.get(ctx.id);
@@ -131,6 +135,29 @@ export class HostCore {
     });
     this.queue = task.catch(() => undefined);
     return task;
+  }
+  private async readFiles(method: string, params: unknown, ctx: ConnectionContext) {
+    const p = terminalRef.extend({ root: cwdSchema, path: z.string().max(4096).default('') }).strict().parse(params);
+    const originalClient = this.clients.get(ctx.id);
+    const check = () => {
+      if (this.closing || this.shutdownPrepared) throw new AppError('HOST_UNAVAILABLE', '호스트가 종료 중입니다.');
+      const client = this.clients.get(ctx.id);
+      if (!client || client !== originalClient || client.ctx.deviceId !== ctx.deviceId) throw new AppError('NOT_CONNECTED', '연결을 다시 열어 주세요.');
+      const info = this.target(p);
+      if ((info.currentCwd || info.cwd) !== p.root) throw new AppError('FILES_ROOT_CHANGED', '터미널의 현재 폴더가 바뀌었습니다. 새로고침해 주세요.');
+    };
+    check();
+    const count = this.fileReads.get(ctx.id) || 0;
+    if (count >= 2 || [...this.fileReads.values()].reduce((a, b) => a + b, 0) >= 8) throw new AppError('FILES_BUSY', '파일을 읽는 중입니다. 잠시 후 다시 시도해 주세요.');
+    this.fileReads.set(ctx.id, count + 1);
+    try {
+      const result = await inspectFiles(p.root, p.path, this.options.dataDir, method === 'files.preview');
+      check();
+      return result;
+    } finally {
+      const remaining = (this.fileReads.get(ctx.id) || 1) - 1;
+      if (remaining) this.fileReads.set(ctx.id, remaining); else this.fileReads.delete(ctx.id);
+    }
   }
   private async route(method: string, params: unknown, client: Client): Promise<any> {
     switch (method) {

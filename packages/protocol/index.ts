@@ -11,6 +11,9 @@ export interface TerminalInfo { id: string; groupId: string; title: string; prof
 export interface HostSettings { name: string; recordHistory: boolean; scrollback: number; }
 export interface HostState { hostId: string; bootId: string; name: string; version: string; protocolVersion: number; capabilities?: string[]; groups: Group[]; terminals: TerminalInfo[]; profiles: ShellProfile[]; settings: HostSettings; storageError?: string; }
 export interface ConnectionContext { id: string; deviceId: string; deviceName: string; owner: boolean; }
+export interface FileEntry { name: string; path: string; kind: 'directory' | 'file' | 'link' | 'other'; }
+export interface DirectoryListing { root: string; path: string; absolutePath: string; entries: FileEntry[]; truncated: boolean; }
+export interface FilePreview { path: string; absolutePath: string; text: string; truncated: boolean; encoding: 'UTF-8' | 'UTF-16LE' | 'UTF-16BE'; }
 export interface RpcRequest { type: 'request'; id: string; method: string; params: unknown; }
 export type RpcResponse = { type: 'response'; id: string; ok: true; result: any } | { type: 'response'; id: string; ok: false; error: { code: string; message: string } };
 export interface PresentationSnapshot { kind: 'presentation-v1'; data: string; cols: number; rows: number; modes: Record<string, unknown>; version: string; }
