@@ -1,6 +1,6 @@
 # 배포와 자동 업데이트
 
-기준 버전: **0.3.1 Windows 미리보기**. 소스는 비공개로 유지하고 [배포 전용 공개 저장소](https://github.com/bokjk/mongle-terminal-releases/releases/latest)에 설치 파일과 업데이트 메타데이터를 게시한다. 코드 서명과 프로젝트의 오픈소스 라이선스는 아직 추가하지 않았다. 실제 배포·검증 결과는 [0.3.1 검증](validation/public-release-0.3.1.md)을 확인한다.
+기준 버전: **0.3.2 Windows 미리보기**. 소스는 비공개로 유지하고 [배포 전용 공개 저장소](https://github.com/bokjk/mongle-terminal-releases/releases/latest)에 설치 파일과 업데이트 메타데이터를 게시한다. 코드 서명과 프로젝트의 오픈소스 라이선스는 아직 추가하지 않았다. 현재 배포 준비·검증 결과는 [0.3.2 검증](validation/public-release-0.3.2.md), 공개 주소 전환 결과는 [0.3.1 검증](validation/public-release-0.3.1.md)을 확인한다.
 
 ## 배포 경로와 기존 사용자 전환
 
@@ -8,13 +8,13 @@
 - 배포: `bokjk/mongle-terminal-releases` (공개). 사용자 안내와 Release 산출물만 게시하며 소스·개발 문서·검증 기록·Git 이력을 복사하지 않는다.
 - 대상: Windows 11 x64, 현재 사용자용 NSIS 설치본. ZIP은 수동 교체용이다.
 - 업데이트: 설치본에 내장된 GitHub provider의 `repo`가 `mongle-terminal-releases`를 가리킨다. 사용자는 GitHub 로그인이나 토큰 없이 받는다.
-- **0.3.0 이하 설치본에는 옛 비공개 주소가 내장되어 있다.** 0.3.1을 한 번 직접 설치해야 전환된다. 이후 새 안정 버전부터 자동 다운로드한다.
+- **0.3.0 이하 설치본에는 옛 비공개 주소가 내장되어 있다.** 0.3.1 이상을 한 번 직접 설치해야 전환된다. 이후 새 안정 버전부터 자동 다운로드한다.
 
 나중에 소스를 공개하더라도 배포 주소는 그대로 유지할 수 있다. 주소를 다시 바꾸면 기존 설치본에서 도달 가능한 이전 채널에 전환 버전을 먼저 게시해야 한다. `package.json`의 `private: true`는 npm 게시 방지 설정이며 GitHub 공개 여부와 별개다.
 
 ## 비공개 테스트 배포
 
-0.3.0까지는 설치 파일을 테스터에게 직접 전달했다. 기존 사용자는 작업을 저장하고 앱 메뉴의 **완전 종료…** 후 공개 페이지에서 받은 0.3.1 설치 파일을 실행한다. 실행 중인 호스트가 남으면 설치 프로그램이 진행을 멈춘다. 사용자 데이터는 업데이트·제거 시 자동 삭제하지 않는다.
+0.3.0까지는 설치 파일을 테스터에게 직접 전달했다. 기존 사용자는 작업을 저장하고 앱 메뉴의 **완전 종료…** 후 공개 페이지에서 받은 최신 설치 파일을 실행한다. 실행 중인 호스트가 남으면 설치 프로그램이 진행을 멈춘다. 사용자 데이터는 업데이트·제거 시 자동 삭제하지 않는다.
 
 코드 서명이 없어 Windows SmartScreen이 표시될 수 있다. 출처를 확인한 설치 파일에서 **추가 정보 → 실행**을 선택한다. 현재 사용자 설치이며 관리자 권한은 필요 없다. 같은 버전 번호로 다른 바이너리를 다시 배포하지 않는다.
 
@@ -50,8 +50,8 @@ npm.cmd run typecheck
 npx.cmd tsx --test --test-concurrency=1 tests/**/*.test.ts
 node --import tsx scripts/package.ts --output release-candidate
 # CHANGELOG의 현재 버전 항목을 검토해 release-candidate/RELEASE-NOTES.md로 저장
-powershell.exe -NoProfile -File scripts/publish-release.ps1 -Version 0.3.1 -OutputDir release-candidate -CheckOnly
-powershell.exe -NoProfile -File scripts/publish-release.ps1 -Version 0.3.1 -OutputDir release-candidate
+powershell.exe -NoProfile -File scripts/publish-release.ps1 -Version 0.3.2 -OutputDir release-candidate -CheckOnly
+powershell.exe -NoProfile -File scripts/publish-release.ps1 -Version 0.3.2 -OutputDir release-candidate
 ```
 
 `--output`은 프로젝트 아래 `release` 또는 `release-<이름>`을 받는다. 실사용 앱이 있는 `release/`를 덮어쓰지 않는다. `package.ts`는 토큰이 있어도 게시하지 않는다. 게시 스크립트는 지정된 공개 저장소만 대상으로 삼아 체크섬을 확인하고 초안만 생성·갱신한다. 태그 워크플로의 artifact를 내려받았다면 동봉된 `RELEASE-NOTES.md`를 사용한다.

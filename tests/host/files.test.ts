@@ -1,0 +1,77 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdir, mkdtemp, writeFile, rm, symlink, realpath } from 'node:fs/promises';
+import path from 'node:path';
+import { tmpdir } from 'node:os';
+import { randomUUID } from 'node:crypto';
+import { inspectFiles, FILE_PREVIEW_BYTES, DIRECTORY_LIMIT } from '../../packages/host/files';
+import { HostCore } from '../../packages/host/core';
+import type { ConnectionContext, DirectoryListing, FilePreview, TerminalInfo } from '../../packages/protocol';
+
+async function fixture(t: test.TestContext, cleanup = true) {
+  const root = await mkdtemp(path.join(tmpdir(), 'mongle-files-'));
+  const data = path.join(root, '.host-private'); await mkdir(data);
+  if (cleanup) t.after(() => rm(root, { recursive: true, force: true }));
+  return { root, data };
+}
+test('file listing and text preview are bounded, read-only and escape no markup', async t => {
+  const { root, data } = await fixture(t);
+  await mkdir(path.join(root, '한글 폴더'));
+  const content = '<script>not executed</script>\n안녕하세요';
+  await writeFile(path.join(root, '읽기.txt'), content);
+  await writeFile(path.join(root, 'utf16.txt'), Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from('한글 UTF16', 'utf16le')]));
+  const listing = await inspectFiles(root, '', data, false) as DirectoryListing;
+  assert.equal(listing.entries[0].kind, 'directory');
+  assert.ok(!listing.entries.some(entry => entry.name === '.host-private'));
+  assert.equal((await inspectFiles(root, '읽기.txt', data, true) as FilePreview).text, content);
+  assert.equal((await inspectFiles(root, 'utf16.txt', data, true) as FilePreview).text, '한글 UTF16');
+  await writeFile(path.join(root, 'large.txt'), 'a'.repeat(FILE_PREVIEW_BYTES - 1) + '한글');
+  const preview = await inspectFiles(root, 'large.txt', data, true) as FilePreview;
+  assert.equal(preview.truncated, true); assert.equal(preview.text, 'a'.repeat(FILE_PREVIEW_BYTES - 1));
+  await writeFile(path.join(root, 'binary.bin'), Buffer.from([0, 1, 2, 3]));
+  await assert.rejects(inspectFiles(root, 'binary.bin', data, true), { code: 'FILES_NOT_TEXT' });
+  await assert.rejects(inspectFiles(root, '한글 폴더', data, true), { code: 'FILES_NOT_TEXT' });
+  await assert.rejects(inspectFiles(root, 'missing.txt', data, true), { code: 'FILES_UNAVAILABLE' });
+  await mkdir(path.join(root, 'many'));
+  await Promise.all(Array.from({ length: DIRECTORY_LIMIT + 2 }, (_, i) => writeFile(path.join(root, 'many', `${i}.txt`), '')));
+  const many = await inspectFiles(root, 'many', data, false) as DirectoryListing;
+  assert.equal(many.entries.length, DIRECTORY_LIMIT); assert.equal(many.truncated, true);
+});
+test('filesystem reads reject traversal, alternate streams, device paths, protected data and escaping junctions', async t => {
+  const { root, data } = await fixture(t);
+  const workspace = path.join(root, 'workspace'); await mkdir(workspace);
+  await writeFile(path.join(data, 'secret.txt'), 'must not be returned');
+  for (const relative of ['../.host-private/secret.txt', '..\\.host-private\\secret.txt', data, 'a.txt:stream', 'CON', 'NUL.txt']) await assert.rejects(inspectFiles(workspace, relative, data, true), { code: 'FILES_OUTSIDE_ROOT' });
+  await assert.rejects(inspectFiles(root, '.host-private/secret.txt', data, true), { code: 'FILES_PROTECTED' });
+  await assert.rejects(inspectFiles('\\\\server\\share', '', data, false), { code: 'FILES_UNSUPPORTED' });
+  await symlink(data, path.join(workspace, 'outside'), process.platform === 'win32' ? 'junction' : 'dir');
+  await assert.rejects(inspectFiles(workspace, 'outside/secret.txt', data, true), { code: 'FILES_OUTSIDE_ROOT' });
+  const listing = await inspectFiles(workspace, '', data, false) as DirectoryListing;
+  assert.equal(listing.entries[0].kind, 'link');
+});
+test('file RPC preserves control and checks connection, host, generation and cwd before and after IO', { skip: process.platform !== 'win32', timeout: 30000 }, async t => {
+  const { root, data } = await fixture(t, false);
+  await mkdir(path.join(root, 'workspace'));
+  const workspace = await realpath(path.join(root, 'workspace'));
+  await writeFile(path.join(workspace, 'hello.txt'), 'hello');
+  const core = new HostCore({ dataDir: data }); await core.init();
+  t.after(async () => { await core.close(); await rm(root, { recursive: true, force: true }); });
+  const ctx: ConnectionContext = { id: randomUUID(), deviceId: 'approved-browser', deviceName: 'Browser', owner: false };
+  core.connect(ctx, () => {});
+  const terminal: TerminalInfo = await core.handle('terminals.create', { groupId: core.getState().groups[0].id, profileId: 'cmd', cwd: workspace }, ctx);
+  const state = core.getState();
+  const ref = { id: terminal.id, hostId: state.hostId, bootId: state.bootId, generation: terminal.generation, root: workspace, path: '' };
+  assert.ok(state.capabilities?.includes('files.read'));
+  assert.equal((await core.handle('files.list', ref, ctx)).entries[0].name, 'hello.txt');
+  const after = core.getState().terminals[0]; assert.equal(after.pid, terminal.pid); assert.equal(after.controller, undefined);
+  await assert.rejects(core.handle('files.list', { ...ref, bootId: randomUUID() }, ctx), { code: 'HOST_CHANGED' });
+  await assert.rejects(core.handle('files.list', { ...ref, generation: randomUUID() }, ctx), { code: 'SESSION_CHANGED' });
+  await assert.rejects(core.handle('files.list', { ...ref, root }, ctx), { code: 'FILES_ROOT_CHANGED' });
+  const pending = [core.handle('files.list', ref, ctx), core.handle('files.list', ref, ctx)];
+  await assert.rejects(core.handle('files.list', ref, ctx), { code: 'FILES_BUSY' });
+  assert.ok(await core.handle('heartbeat', {}, ctx));
+  await Promise.all(pending);
+  const revoked = core.handle('files.list', ref, ctx); core.disconnect(ctx.id);
+  await assert.rejects(revoked, { code: 'NOT_CONNECTED' });
+  await assert.rejects(core.handle('files.list', ref, ctx), { code: 'NOT_CONNECTED' });
+});

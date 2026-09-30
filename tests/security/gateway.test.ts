@@ -160,6 +160,26 @@ function assertDenied(response: JsonResponse) {
   assert.ok([400, 401, 403, 404, 409, 410, 429].includes(response.status), `Expected denied request; got ${response.status}: ${response.text}`);
 }
 
+test('file RPC uses the paired WebSocket context and cannot bypass first-frame authentication', async () => {
+  const f = await fixture();
+  try {
+    const auth = await f.paired();
+    const unauthenticated = f.socket(auth.cookie); await unauthenticated.open();
+    unauthenticated.send({ type: 'request', id: 'premature-file', method: 'files.list', params: {} });
+    await unauthenticated.closed(); assert.equal(f.core.calls.length, 0);
+    const socket = f.socket(auth.cookie); await socket.open();
+    socket.send({ type: 'authenticate', ticket: await f.ticket(auth) });
+    await socket.message(message => message.type === 'authenticated');
+    for (const method of ['files.list', 'files.preview']) {
+      socket.send({ type: 'request', id: method, method, params: { path: 'src/readme.txt' } });
+      const reply = await socket.message(message => message.id === method);
+      assert.equal(reply.ok, true); assert.equal(reply.result.owner, false);
+      assert.deepEqual(f.core.calls.at(-1)?.params, { path: 'src/readme.txt' });
+      assert.equal(f.core.calls.at(-1)?.context.owner, false);
+    }
+  } finally { await f.close(); }
+});
+
 test('pairing requires local approval, matching requester secret, and one successful claim', async () => {
   const f = await fixture();
   try {
