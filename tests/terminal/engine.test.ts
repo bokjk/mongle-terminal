@@ -201,16 +201,16 @@ test('clearHistory retains all visible rows, cursor and a partial CSI parser', a
   } finally { await s.dispose(); }
 });
 
-test('IME composition delays reset, then applies and acknowledges the frame', async () => {
+test('IME composition does not stall echoed output or frame acknowledgement', async () => {
   const s = setup();
   try {
     await s.engine.write('new picture');
     s.adapter.beginComposition();
     let settled = false;
     const apply = s.adapter.applySnapshot(await s.engine.snapshot()).then(() => { settled = true; });
-    await new Promise(resolve => setTimeout(resolve, 10));
-    assert.equal(settled, false);
-    assert.equal(s.client.buffer.active.getLine(0)!.translateToString(true), '');
+    await apply;
+    assert.equal(settled, true);
+    assert.equal(s.client.buffer.active.getLine(0)!.translateToString(true), 'new picture');
     s.adapter.endComposition();
     await apply;
     assert.equal(s.client.buffer.active.getLine(0)!.translateToString(true), 'new picture');
@@ -259,7 +259,7 @@ test('an oversized current viewport is reported and preserved instead of truncat
   } finally { await s.dispose(); }
 });
 
-test('many frames waiting behind IME use one pending slot and acknowledge only after newest is applied', async () => {
+test('many frames use one pending slot and acknowledge only after newest is applied', async () => {
   const s = setup();
   try {
     s.adapter.beginComposition();

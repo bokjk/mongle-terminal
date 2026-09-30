@@ -1,6 +1,7 @@
 import Headless from '@xterm/headless';
 import type { Terminal } from '@xterm/headless';
 import { SerializeAddon } from '@xterm/addon-serialize';
+import { reportedDirectory } from '../shell-profiles/integration.js';
 import { clearScrollback, isPresentationPending, presentationExtras } from './pinned-xterm.js';
 import { assertGeometry, PRESENTATION_VERSION } from './types.js';
 import type { PresentationSnapshot, TerminalEngineOptions, TerminalModes } from './types.js';
@@ -42,6 +43,13 @@ export class TerminalEngine {
     this.terminal.onData(reply);
     this.terminal.onTitleChange(title => { this.title = title.slice(0, 512); });
     this.installHostQueries(reply);
+    for (const osc of [7, 9] as const) {
+      this.terminal.parser.registerOscHandler(osc, data => {
+        const directory = reportedDirectory(data, osc);
+        if (directory && !this.closing && !this.restoringHistory) options.onDirectory?.(directory);
+        return true;
+      });
+    }
   }
 
   private enqueue<T>(operation: () => Promise<T> | T): Promise<T> {

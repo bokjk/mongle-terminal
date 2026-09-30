@@ -33,4 +33,8 @@ node --import tsx scripts/package.ts --output release-candidate
 
 삭제한 이전 배포본은 `release-branding`, `release-tray`, `release-pane-drag`, `release-full-exit`, `release-start-folder`, `release-gjc-flicker`, `release-clipboard`, `release-streaming-flicker`, `release-autoupdate`, `release-remote-recovery`, `release-tap-control`입니다. 이전 입력 전환 웹 백업은 빠진 참조 자산을 보완하고 `.backups/web-before-input-handoff`로 모았습니다. 이 백업은 **직전 웹 화면용이며 전체 앱이나 사용자 데이터 백업이 아닙니다.**
 
+## 2026-09-29 후속 정리
+
+0.3.0 패키징 중 자동 생성된 `release-stage`(184,970,929바이트)를 삭제했습니다. `scripts/package.ts`가 패키징마다 지우고 다시 만드는 중간 작업 폴더라 Git 추적 파일이 없고 보존할 내용도 없습니다. 삭제 전후 실사용 앱(GUI 2개·호스트·PowerShell 콘솔 3개·OwnerPipe 2개, PID 동일)이 그대로 유지됨을 확인했습니다. `release`(실사용 앱)와 `release-candidate`(0.3.0 테스터 배포본, [검증 기록](validation/tester-build-0.3.0.md))는 현재 필요하므로 유지합니다.
+
 기존 검증 문서의 위 산출물 경로는 **당시 검사 이력**입니다. 오래된 로컬 바이너리는 이번에 삭제했고, 소스·문서·검증 로그와 현재 실행본은 보존했습니다. 공개 배포 전에는 현재 소스로 다시 패키징해야 합니다. 로컬 상세 증거는 Git에서 제외한 `test-results/repository-refresh/cleanup.json`에 있습니다.
