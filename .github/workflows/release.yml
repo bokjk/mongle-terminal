@@ -25,6 +25,7 @@ jobs:
       version: ${{ steps.release.outputs.version }}
       tag: ${{ steps.release.outputs.tag }}
     env:
+      MONGLE_DATA_DIR: ${{ github.workspace }}\.test-data\release-profile
       RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
     steps:
       - name: Check out release tag
@@ -64,7 +65,7 @@ jobs:
       - name: Test
         env:
           MONGLE_E2E_UPDATES: '1'
-        run: npm.cmd test
+        run: npx.cmd tsx --test --test-concurrency=1 tests/**/*.test.ts
       - name: Build and package without publishing
         run: npm.cmd run package
       - name: Recheck release documents after packaging
@@ -88,52 +89,36 @@ jobs:
     needs: build
     runs-on: windows-2022
     timeout-minutes: 10
-    permissions:
-      contents: write
     steps:
+      - name: Check distribution credentials
+        id: credentials
+        shell: pwsh
+        env:
+          RELEASE_TOKEN: ${{ secrets.RELEASE_REPO_TOKEN }}
+        run: |
+          if ($env:RELEASE_TOKEN) {
+            'available=true' >> $env:GITHUB_OUTPUT
+          } else {
+            'available=false' >> $env:GITHUB_OUTPUT
+            Write-Output '::warning::RELEASE_REPO_TOKEN is not configured. Download windows-release and use scripts/publish-release.ps1 with an authenticated gh session.'
+            'Build artifacts only: distribution credentials are missing; no public release was created.' >> $env:GITHUB_STEP_SUMMARY
+          }
+      - name: Check out trusted release script
+        if: steps.credentials.outputs.available == 'true'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.build.outputs.tag }}
+          persist-credentials: false
       - name: Download verified release files
+        if: steps.credentials.outputs.available == 'true'
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: windows-release
           path: release
-      - name: Create or update a draft release only
+      - name: Create a draft in the public distribution repository
+        if: steps.credentials.outputs.available == 'true'
         shell: pwsh
         env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ needs.build.outputs.tag }}
+          GH_TOKEN: ${{ secrets.RELEASE_REPO_TOKEN }}
           RELEASE_VERSION: ${{ needs.build.outputs.version }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          if ($env:RELEASE_TAG -ne "v$env:RELEASE_VERSION" -or $env:RELEASE_VERSION -notmatch '^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$') { throw 'Invalid release version.' }
-          $assets = @(
-            "release/MongleTerminal-Setup-$env:RELEASE_VERSION-x64.exe",
-            "release/MongleTerminal-Setup-$env:RELEASE_VERSION-x64.exe.blockmap",
-            "release/MongleTerminal-$env:RELEASE_VERSION-x64.zip",
-            'release/latest.yml',
-            'release/SHA256SUMS.txt'
-          )
-          foreach ($asset in $assets) { if (!(Test-Path -LiteralPath $asset -PathType Leaf)) { throw "Missing release asset: $asset" } }
-          $checksumLines = Get-Content -LiteralPath 'release/SHA256SUMS.txt'
-          if ($checksumLines.Count -ne 4) { throw 'Unexpected checksum count.' }
-          $expectedNames = @($assets[0..3] | ForEach-Object { Split-Path -Leaf $_ })
-          foreach ($line in $checksumLines) {
-            if ($line -notmatch '^([0-9a-f]{64})  ([A-Za-z0-9.-]+)$') { throw 'Invalid checksum record.' }
-            $expected = $Matches[1]
-            $name = $Matches[2]
-            if ($name -notin $expectedNames) { throw 'Unexpected checksum filename.' }
-            $expectedNames = @($expectedNames | Where-Object { $_ -ne $name })
-            if ((Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path 'release' $name)).Hash.ToLowerInvariant() -ne $expected) { throw "Checksum mismatch: $name" }
-          }
-          if ($expectedNames.Count -ne 0) { throw 'Missing checksum record.' }
-          $draft = gh release view "$env:RELEASE_TAG" --json isDraft --jq .isDraft 2>$null
-          if ($LASTEXITCODE -eq 0) {
-            if ($draft -ne 'true') { throw 'This version is already published; published releases are immutable. Bump the version.' }
-            gh release upload "$env:RELEASE_TAG" @assets --clobber
-            if ($LASTEXITCODE) { exit $LASTEXITCODE }
-            gh release edit "$env:RELEASE_TAG" --draft --notes-file release/RELEASE-NOTES.md
-          } else {
-            gh release create "$env:RELEASE_TAG" @assets --verify-tag --draft --latest=false --title "Mongle Terminal $env:RELEASE_VERSION" --notes-file release/RELEASE-NOTES.md
-          }
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          Write-Output 'Draft prepared. Review the release and publish it manually when ready.'
+        run: ./scripts/publish-release.ps1 -Version $env:RELEASE_VERSION

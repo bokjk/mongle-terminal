@@ -1,95 +1,71 @@
 # 배포와 자동 업데이트
 
-기준 버전: **0.3.0 Windows 미리보기 · 비공개 테스트 배포**. 0.2.0에서 자동 업데이트 연동·UI·배포 작업을 구현하고 타입·수명주기·UI·격리 Electron·실제 파일 다운로드 검사를 통과했다. NSIS·ZIP과 업데이트 메타데이터를 생성하고 체크섬을 검증했다. 공개 GitHub Release 다운로드, 실제 구버전 NSIS → 새 버전 설치와 GitHub Actions 실행은 수행하지 않았다. 이후 원격 연결 복구 수정과 함께 개발 PC의 압축 실행본에 수동 적용했으며 자동 설치 실행 검증과 구분한다. 공개 Release, 코드 서명과 프로젝트 자체의 오픈소스 라이선스는 아직 준비되지 않았다. 최신 검사 결과는 [구현·검증 상태](IMPLEMENTATION-STATUS.md)에 기록한다.
+기준 버전: **0.3.1 Windows 미리보기**. 소스는 비공개로 유지하고 [배포 전용 공개 저장소](https://github.com/bokjk/mongle-terminal-releases/releases/latest)에 설치 파일과 업데이트 메타데이터를 게시한다. 코드 서명과 프로젝트의 오픈소스 라이선스는 아직 추가하지 않았다. 실제 배포·검증 결과는 [0.3.1 검증](validation/public-release-0.3.1.md)을 확인한다.
 
-## 배포 경로
+## 배포 경로와 기존 사용자 전환
 
-- 저장소: `bokjk/mongle-terminal`. 현재 비공개 상태를 유지한다.
-- 대상: Windows 11 x64, 현재 사용자용 NSIS 설치본. ZIP은 수동 설치·교체를 위한 압축 배포본이다.
-- 업데이트 연동: `electron-updater`가 GitHub Releases의 안정 버전 채널을 확인한다. 일반 사용자는 공개된 Release만 인증 없이 받을 수 있다.
-- 비공개 저장소의 Release를 일반 설치본에 배포하기 위해 GitHub 토큰을 내장하지 않는다. 공개 전에는 자동 업데이트가 일반 사용자에게 동작한다고 안내하지 않는다.
+- 소스: `bokjk/mongle-terminal` (비공개). 공개 범위·라이선스를 바꾸지 않는다.
+- 배포: `bokjk/mongle-terminal-releases` (공개). 사용자 안내와 Release 산출물만 게시하며 소스·개발 문서·검증 기록·Git 이력을 복사하지 않는다.
+- 대상: Windows 11 x64, 현재 사용자용 NSIS 설치본. ZIP은 수동 교체용이다.
+- 업데이트: 설치본에 내장된 GitHub provider의 `repo`가 `mongle-terminal-releases`를 가리킨다. 사용자는 GitHub 로그인이나 토큰 없이 받는다.
+- **0.3.0 이하 설치본에는 옛 비공개 주소가 내장되어 있다.** 0.3.1을 한 번 직접 설치해야 전환된다. 이후 새 안정 버전부터 자동 다운로드한다.
 
-실제 공개 배포 전에 저장소 공개 여부, 라이선스와 코드 서명 방식을 별도로 결정해야 한다. `package.json`의 `private: true`는 npm 게시 방지 설정이며 GitHub 저장소 공개 여부와 별개다.
+나중에 소스를 공개하더라도 배포 주소는 그대로 유지할 수 있다. 주소를 다시 바꾸면 기존 설치본에서 도달 가능한 이전 채널에 전환 버전을 먼저 게시해야 한다. `package.json`의 `private: true`는 npm 게시 방지 설정이며 GitHub 공개 여부와 별개다.
 
 ## 비공개 테스트 배포
 
-저장소가 비공개인 동안에는 GitHub Release 대신 설치 파일을 테스터에게 직접 전달한다.
+0.3.0까지는 설치 파일을 테스터에게 직접 전달했다. 기존 사용자는 작업을 저장하고 앱 메뉴의 **완전 종료…** 후 공개 페이지에서 받은 0.3.1 설치 파일을 실행한다. 실행 중인 호스트가 남으면 설치 프로그램이 진행을 멈춘다. 사용자 데이터는 업데이트·제거 시 자동 삭제하지 않는다.
 
-1. 커밋된 소스에서 `node --import tsx scripts/package.ts --output release-candidate`로 만든다. 실사용 앱이 있는 `release/`를 덮어쓰지 않는다.
-2. 테스터에게는 `release-candidate/MongleTerminal-Setup-<version>-x64.exe` 하나를 전달한다. 파일 확인이 필요하면 같은 폴더 `SHA256SUMS.txt`의 설치 파일 값을 함께 알려 준다. ZIP·`.blockmap`·`latest.yml`은 Release 게시용이다.
-3. 코드 서명이 없어 Windows SmartScreen이 **Windows의 PC 보호**를 표시할 수 있다. 전달 경로를 확인한 테스터는 **추가 정보 → 실행**으로 설치한다. 현재 사용자 설치라 관리자 권한은 필요 없다.
-4. 앱은 비공개 저장소의 Release를 인증 없이 확인할 수 없으므로 테스터 PC의 **앱 업데이트**는 실패로 표시될 수 있다. 새 테스트 버전은 설치 파일을 다시 전달하고, 테스터가 앱 메뉴의 **완전 종료…** 후 설치한다. 실행 중인 호스트가 남아 있으면 설치 프로그램이 진행을 멈춘다.
-5. 비공개 기간에는 테스터가 GitHub 이슈를 볼 수 없으므로 버전·증상·재현 순서를 별도 연락으로 받는다. 인증 정보나 개인 터미널 출력이 담긴 파일은 요청하지 않는다.
-
-같은 버전 번호로 내용이 다른 설치 파일을 다시 배포하지 않는다. 테스트 중 수정본을 보내거나 이후 공개 Release를 게시할 때는 버전을 올려야 기존 설치본이 새 버전으로 인식한다.
+코드 서명이 없어 Windows SmartScreen이 표시될 수 있다. 출처를 확인한 설치 파일에서 **추가 정보 → 실행**을 선택한다. 현재 사용자 설치이며 관리자 권한은 필요 없다. 같은 버전 번호로 다른 바이너리를 다시 배포하지 않는다.
 
 ## 사용자 동작과 설치 대상
 
-NSIS로 설치된 앱은 시작 후와 6시간 간격으로 새 안정 버전을 확인하고 자동 다운로드한다. 설정의 **앱 업데이트**, 앱 메뉴와 트레이 메뉴에서 상태를 확인하거나 직접 새 버전을 확인할 수 있다. 이 상태는 접속 중인 원격 PC가 아니라 **지금 실행하는 데스크톱 앱**에 관한 것이다.
+NSIS 설치본은 시작 30초 후와 6시간마다 새 안정 버전을 확인하고 다운로드한다. 설정의 **앱 업데이트**, 앱 메뉴와 트레이에서 직접 확인할 수 있다. 접속 중인 다른 PC가 아닌 지금 실행하는 데스크톱 앱의 상태다.
 
-내려받기가 끝나도 자동 설치하지 않는다. 사용자가 설치를 선택하고 확인하면 현재 PC의 작업 저장·정상 종료를 거쳐 설치 프로그램을 실행한다. 다운로드만으로 실행 중인 셸을 끝내거나 앱 종료 시 임의로 설치하지 않는다.
+다운로드 후 사용자가 **설치 후 다시 시작**을 선택하고 확인하면 현재 PC의 작업 저장·정상 종료를 거쳐 설치한다. 저장이나 종료가 실패하면 설치하지 않는다. 다운로드나 평소 앱 종료만으로 설치하지 않는다. 설치 중 원격 연결도 잠시 끊기며 다음 실행에서 작업 공간과 새 셸을 복원한다. 기존 프로그램을 자동 재실행하지 않는다.
 
-설치 단계는 **현재 PC의 셸과 연결된 작업을 종료**한다. 원격 클라이언트도 그동안 연결이 끊어진다. 저장·종료 실패 시 설치로 넘어가지 않아야 한다. 새 앱을 열면 기존 작업 공간과 새 셸을 복원하며, 이전 프로그램을 자동 재실행하지 않는다.
+ZIP·개발 실행은 작업 저장·완전 종료 후 수동 교체한다. 실제 구버전 NSIS → 신버전 설치·재실행·복원 검증은 패키지 실행이나 다운로드 검사와 구분한다.
 
-개발 실행과 ZIP·압축 전 실행 파일은 자동 설치를 지원하지 않는다. 기존 작업 저장·완전 종료 후 새 배포본으로 직접 교체한다. 실제 설치본 간 교체·재실행·기록 복원은 공개 배포 전에 추가로 검증해야 한다.
+## 브랜치와 배포 순서
 
-## 배포 준비
+1. `dev`에서 만든 주제 브랜치에서 버전·잠금 파일·README·사용자 안내를 갱신하고 미배포 변경을 날짜가 있는 CHANGELOG 항목으로 옮긴다. 공개 Release 본문으로 쓰므로 해당 버전 항목에는 내부 문서 링크나 개인 정보를 넣지 않는다.
+2. 타입·빌드·회귀·패키지 검사를 수행하고 PR로 `dev`에 병합한다. 이어 `dev` → `main` 배포 PR의 **Windows checks**·**PR target branch** 통과 후 병합한다. `main` 직접 push는 하지 않는다.
+3. 병합된 `main` 커밋에 `vX.Y.Z` 태그를 push한다. [Windows release draft](../.github/workflows/release.yml)는 해당 태그를 검사·빌드·패키징하고 `windows-release` artifact를 보존한다.
+4. 배포 자격 증명이 있으면 공개 저장소에 Release **초안**을 만든다. 없으면 artifact까지만 만들고 경고한다. 유지보수자가 아래 수동 게시 명령으로 초안을 만들 수 있다.
+5. 검증된 초안의 파일·버전·변경 내용을 검토한 뒤 `gh release edit vX.Y.Z --repo bokjk/mongle-terminal-releases --draft=false --latest`로 공개한다. 인증 없는 다운로드·메타데이터·해시 일치를 확인하고 결과를 기록한다.
 
-이 절차는 아래 브랜치 흐름을 전제로 한다.
+공개 저장소의 태그는 안내 README 커밋을 가리킨다. 실제 빌드 출처는 비공개 소스의 동일 버전 태그와 Actions 기록으로 추적한다. 소스 Git 이력을 배포 저장소에 push하지 않는다. 이미 공개한 버전은 덮어쓰지 않으며 수정 시 버전을 올린다. 소스 저장소의 무료 비공개 요금제에서는 서버 측 ruleset이 미적용인 상태이므로 [기여 절차](../CONTRIBUTING.md)를 지킨다.
 
-### 브랜치와 배포 흐름
+## 자동 초안 생성 인증
 
-- GitHub 기본 브랜치는 `dev`다. 기여 PR은 이름 규칙에 맞는 작업 브랜치에서 `dev`로만 받는다. `main`으로 연 PR은 자동 검사가 `dev`로 옮기고, `main`·`dev` 브랜치에서 직접 연 PR은 실패로 표시한다. 브랜치 이름과 PR 기준은 [기여 안내](../CONTRIBUTING.md)를 따른다.
-- `main`은 배포 기준 브랜치다. 배포할 때 `dev`에서 버전과 `CHANGELOG.md`를 정리하고, 유지보수자가 같은 저장소의 `dev` → `main` 릴리스 PR을 열어 **Windows checks**와 **PR target branch**를 통과하면 병합한다.
-- 병합된 `main` 커밋에 `vX.Y.Z` 태그를 푸시하면 [Windows release draft](../.github/workflows/release.yml)가 Release 초안을 만든다. 유지보수자가 검토한 뒤 직접 게시한다.
-- 배포 중 `main`에만 생긴 변경은 같은 저장소의 `main` → `dev` PR로 역병합한다.
-- 서버 측 브랜치 규칙(ruleset)은 비공개 무료 요금제에서 GitHub API가 403을 반환해 아직 적용하지 않았다. 저장소를 공개한 뒤 Administration 쓰기 권한이 있는 소유자 `gh` 로그인으로 `node scripts/apply-branch-rules.ts --dry-run`을 실행해 계획을 확인하고, 옵션 없이 실행해 적용한다. 그 전까지는 자동 검사와 대상 브랜치 이동이 실제 강제 수단이며, 저장소 관리자는 규칙을 우회할 수 있다.
+GitHub Actions의 기본 `GITHUB_TOKEN`은 다른 저장소에 쓸 수 없다. 공개 배포 저장소 하나만 선택하고 **Contents: Read and write** 권한을 부여한 fine-grained PAT를 소스 저장소의 Actions secret **`RELEASE_REPO_TOKEN`**에 저장한다. 토큰은 초안 게시 단계에서만 사용하며 앱·소스·로그에 넣지 않는다. [GitHub 인증 문서](https://docs.github.com/en/actions/tutorials/authenticate-with-github_token)
 
-### 배포 순서
+현재 전용 secret은 미설정이다. 로그인된 유지보수자의 `gh`로 초안을 생성하는 경로를 제공하며, 이것은 설치한 사용자의 자동 업데이트와 별개다. 배포 파일이 공개되면 사용자 앱은 토큰 없이 확인·다운로드한다. 범용 개인 토큰을 자동으로 복제해 secret으로 등록하지 않는다.
 
-1. `package.json`과 잠금 파일의 버전을 올리고, `CHANGELOG.md`의 미배포 변경을 검토한다. README·사용자 안내의 버전, 기능, 산출물 이름과 알려진 문제를 일치시킨다. 태그는 해당 버전의 `v<version>`을 사용한다.
-2. Windows에서 타입 검사·관련 회귀 검사와 빌드를 수행한다. 업데이트는 이전 **설치본**에서 새 설치본으로 전환해 작업 저장·정상 종료·설치·재실행·기록 복원까지 확인해야 한다. 단순 ZIP 교체나 모의 updater 검사는 이 설치 검증을 대신하지 않는다.
-3. 설치본·ZIP과 업데이트 메타데이터를 같은 소스·버전에서 생성한다. 실행 중인 앱 폴더를 덮어쓰지 않도록 별도 출력 폴더를 사용할 수 있다.
-4. [Windows release draft](../.github/workflows/release.yml)는 `v*` 태그 푸시 또는 기존 태그를 지정한 수동 실행으로 Release **초안**을 생성한다. 초안에서 버전·태그·변경 이력과 첨부 파일을 확인하고, 검증한 안정 버전만 사람이 공개한다. 사전 버전은 안정 채널로 안내하지 않는다.
-5. 게시한 메타데이터의 버전·파일 경로·해시가 실제 첨부와 맞는지 확인하고 이전 설치본의 업데이트를 검증한다. 결과와 미검증 항목을 `docs/validation/` 및 구현·검증 상태에 기록한다.
-
-이 작업에서 실제 태그나 Release를 생성하지 않는다. 공개 배포 여부는 별도 결정이다.
-
-현재 패키징 명령:
+## 로컬 패키징과 초안 생성
 
 ```powershell
 node --import tsx scripts/release-check.ts
 npm.cmd run typecheck
-npm.cmd test
+npx.cmd tsx --test --test-concurrency=1 tests/**/*.test.ts
 node --import tsx scripts/package.ts --output release-candidate
+# CHANGELOG의 현재 버전 항목을 검토해 release-candidate/RELEASE-NOTES.md로 저장
+powershell.exe -NoProfile -File scripts/publish-release.ps1 -Version 0.3.1 -OutputDir release-candidate -CheckOnly
+powershell.exe -NoProfile -File scripts/publish-release.ps1 -Version 0.3.1 -OutputDir release-candidate
 ```
 
-`--output`은 프로젝트 아래 `release` 또는 `release-<이름>` 형식을 받는다. 검증에 실패한 파일을 기존 실행 중인 앱이나 공개 Release에 덮어쓰지 않는다.
+`--output`은 프로젝트 아래 `release` 또는 `release-<이름>`을 받는다. 실사용 앱이 있는 `release/`를 덮어쓰지 않는다. `package.ts`는 토큰이 있어도 게시하지 않는다. 게시 스크립트는 지정된 공개 저장소만 대상으로 삼아 체크섬을 확인하고 초안만 생성·갱신한다. 태그 워크플로의 artifact를 내려받았다면 동봉된 `RELEASE-NOTES.md`를 사용한다.
 
-`release-check.ts`는 패키지·잠금 파일 버전, README의 현재 버전과 변경 이력 링크, CHANGELOG의 해당 버전·날짜·변경 내용을 검사한다. 태그를 지정하면 문서가 커밋되었는지와 태그가 현재 커밋을 가리키는지도 확인한다. 예: `node --import tsx scripts/release-check.ts v0.2.0`. 이 명령이 태그를 생성하지는 않는다.
-
-배포 작업은 Windows에서 검사·패키징한 파일만 다음 작업으로 넘긴다. Release 초안 생성 작업에서만 GitHub 쓰기 권한을 사용하며, 이미 공개한 버전은 덮어쓰지 않고 실패한다. 공개한 바이너리를 바꾸려면 버전을 올려 새 Release를 준비한다.
-
-검증한 안정 버전 초안을 실제 게시할 때 GitHub의 **Set as the latest release**를 선택한다. 초안은 `--latest=false`로 생성되므로 이 설정을 확인해야 한다. 앱의 안정 채널이 `/releases/latest`에서 새 버전을 찾을 수 있어야 하며, 초안·사전 출시 버전은 자동 업데이트 대상으로 삼지 않는다.
+공개 패키지에는 빌드된 실행 코드, 필수 Windows 보조 실행 파일, Node 런타임, 네이티브 의존성, 사용자 안내와 `THIRD-PARTY-NOTICES.md`·`docs/licenses`를 포함한다. 내부 검증 문서, 소스맵, 보조 프로그램 C# 소스는 제외한다. 실행 가능한 JavaScript 번들 자체를 비밀로 보호한다는 뜻은 아니다.
 
 ## Release 첨부 파일
 
-NSIS Release에는 다음 파일을 함께 보존한다. 실제 생성 여부와 설치 검증은 배포할 버전마다 확인한다.
-
 | 파일 | 용도 |
 |---|---|
-| `MongleTerminal-Setup-<version>-x64.exe` | NSIS 설치 및 업데이트 |
-| 해당 설치본의 `.blockmap` | 차등 다운로드 정보 |
-| `latest.yml` | 안정 채널 버전·파일 경로·SHA-512 메타데이터 |
-| `MongleTerminal-<version>-x64.zip` | 수동 압축 배포 |
-| `SHA256SUMS.txt` | 위 네 파일의 SHA-256 확인값 |
+| `MongleTerminal-Setup-<version>-x64.exe` | NSIS 설치·업데이트 |
+| 위 파일의 `.blockmap` | 차등 다운로드 메타데이터 |
+| `MongleTerminal-<version>-x64.zip` | 수동 교체용 |
+| `latest.yml` | 버전·파일 이름·크기·SHA-512 |
+| `SHA256SUMS.txt` | 위 네 파일의 SHA-256 |
 
-메타데이터의 해시는 다운로드 파일의 일치 여부를 확인하는 값이다. Windows 코드 서명을 대신하지 않는다. 서명 키와 배포 토큰은 앱, 저장소, 문서 또는 로그에 넣지 않는다. 서명 없이 만든 미리보기와 서명된 공개 배포를 구분한다.
-
-## 실패와 복구
-
-업데이트 확인·다운로드에 실패해도 현재 설치본의 터미널은 유지해야 한다. 내려받은 업데이트가 있어도 설치 전 사용자의 실행 중인 작업을 보존하고, 사용자가 설치를 선택한 뒤 정상 종료가 완료된 경우에만 파일을 교체한다.
-
-현재 설치 프로그램은 `host-info.json`이 남아 있으면 실행 중인 작업 보호를 위해 진행을 멈춘다. 앱의 **완전 종료…**로 호스트를 정상 종료하고 다시 진행한다. 설치를 강행하려고 상태 파일·인증 키·세션 DB를 임의로 삭제하지 않는다.
-
-배포 중 문제를 발견하면 해당 Release를 통한 추가 업데이트 제공을 중지하고 수정 버전을 더 높은 버전으로 배포한다. 데이터 형식 호환성을 확인하지 않은 상태에서 구버전으로 자동 다운그레이드하지 않는다. 데이터 백업은 작업 저장·정상 종료 후 `%LOCALAPPDATA%\MongleTerminal` 전체를 보관하며 인증 정보가 포함되어 있으므로 공유하지 않는다.
+체크섬은 파일 일치를 확인하며 Windows 코드 서명을 대신하지 않는다. 초안은 `--latest=false`로 만들고 안정 버전을 게시할 때 latest로 지정한다. 사전 버전·초안은 일반 사용자의 안정 업데이트 채널로 사용하지 않는다.
