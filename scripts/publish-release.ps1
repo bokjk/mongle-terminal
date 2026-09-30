@@ -3,7 +3,7 @@ param(
   [string]$OutputDir = 'release',
   [switch]$CheckOnly
 )
-$env:GH_REPO = 'bokjk/mongle-terminal-releases'
+$repository = 'bokjk/mongle-terminal-releases'
 $tag = "v$Version"
 $ErrorActionPreference = 'Stop'
 if (!(Test-Path -LiteralPath "$OutputDir/RELEASE-NOTES.md" -PathType Leaf)) { throw 'Missing reviewed release notes.' }
@@ -28,19 +28,19 @@ foreach ($line in $checksumLines) {
 }
 if ($expectedNames.Count -ne 0) { throw 'Missing checksum record.' }
 if ($CheckOnly) { Write-Output 'Release asset checksums verified.'; exit 0 }
-$visibility = gh repo view --json visibility --jq .visibility
+$visibility = gh repo view $repository --json visibility --jq .visibility
 if ($LASTEXITCODE -ne 0 -or $visibility -ne 'PUBLIC') { throw 'The distribution repository must be public.' }
-$releasesJson = gh release list --limit 100 --json tagName,isDraft
+$releasesJson = gh release list --repo $repository --limit 100 --json tagName,isDraft
 if ($LASTEXITCODE) { throw 'Cannot read existing releases.' }
 $existing = @($releasesJson | ConvertFrom-Json) | Where-Object { $_.tagName -eq $tag }
 if ($existing) {
   if (!$existing.isDraft) { throw 'This version is already published; published releases are immutable. Bump the version.' }
-  gh release upload "$tag" @assets --clobber
+  gh release upload "$tag" @assets --repo $repository --clobber
   if ($LASTEXITCODE) { exit $LASTEXITCODE }
-  gh release edit "$tag" --draft --notes-file "$OutputDir/RELEASE-NOTES.md"
+  gh release edit "$tag" --repo $repository --draft --notes-file "$OutputDir/RELEASE-NOTES.md"
 } else {
   # This tag belongs to the public README repository, never the private source history.
-  gh release create "$tag" @assets --target main --draft --latest=false --title "Mongle Terminal $Version" --notes-file "$OutputDir/RELEASE-NOTES.md"
+  gh release create "$tag" @assets --repo $repository --target main --draft --latest=false --title "Mongle Terminal $Version" --notes-file "$OutputDir/RELEASE-NOTES.md"
 }
 if ($LASTEXITCODE) { exit $LASTEXITCODE }
 Write-Output 'Draft prepared. Review the release and publish it manually when ready.'
