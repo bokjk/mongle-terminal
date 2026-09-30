@@ -1,5 +1,5 @@
 import { build, Platform, Arch } from 'electron-builder';
-import { cp, mkdir, readFile, copyFile, access, rm, open } from 'node:fs/promises';
+import { cp, mkdir, readFile, copyFile, access, rm, open, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { createRequire } from 'node:module';
@@ -28,7 +28,13 @@ const bundle = path.join(root, 'release-stage', outputName, 'hostbundle');
 if (!path.resolve(bundle).startsWith(path.resolve(root) + path.sep) || path.basename(bundle) !== 'hostbundle') throw new Error('Invalid generated staging directory.');
 await rm(bundle, { recursive: true, force: true });
 await mkdir(bundle, { recursive: true });
-for (const relative of ['runtime', 'platform/windows', 'dist/host', 'dist/web']) await cp(path.join(root, relative), path.join(bundle, relative), { recursive: true });
+// Public packages contain runtime files only, never development sources or
+// internal validation documents (which can contain local machine details).
+for (const relative of ['dist/host', 'dist/web', 'docs/licenses']) await cp(path.join(root, relative), path.join(bundle, relative), { recursive: true, filter: file => !file.endsWith('.map') });
+for (const relative of ['runtime/node.exe', 'platform/windows/HostLauncher.exe', 'platform/windows/OwnerPipe.exe', 'platform/windows/icon.ico', 'docs/USER-GUIDE.md', 'docs/THIRD-PARTY-NOTICES.md']) {
+  await mkdir(path.dirname(path.join(bundle, relative)), { recursive: true });
+  await copyFile(path.join(root, relative), path.join(bundle, relative));
+}
 const nativePackages = new Set<string>();
 async function copyDependency(name: string) {
   if (nativePackages.has(name)) return; nativePackages.add(name);
@@ -39,9 +45,6 @@ async function copyDependency(name: string) {
 }
 await copyDependency('node-pty');
 await copyFile(path.join(path.dirname(process.execPath), 'LICENSE'), path.join(bundle, 'runtime/NODE-LICENSE.txt'));
-for (const relative of ['docs']) {
-  try { await access(path.join(root, relative)); await cp(path.join(root, relative), path.join(bundle, relative), { recursive: true }); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
-}
 const makeInstaller = !process.argv.includes('--dir');
 const requiredNativeFiles = [
   'node-pty/package.json', 'node-pty/lib/index.js',
@@ -59,6 +62,14 @@ async function verifyPackagedHost(appOutDir: string) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
   }
   const installed = path.join(appOutDir, 'resources/hostbundle');
+  for (const [directory, allowed] of Object.entries({
+    docs: ['USER-GUIDE.md', 'THIRD-PARTY-NOTICES.md', 'licenses'],
+    'platform/windows': ['HostLauncher.exe', 'OwnerPipe.exe', 'icon.ico'],
+    runtime: ['node.exe', 'NODE-LICENSE.txt'],
+  })) {
+    const entries = await readdir(path.join(installed, directory));
+    if (entries.length !== allowed.length || entries.some(entry => !allowed.includes(entry))) throw new Error('Unexpected public package contents: ' + directory);
+  }
   const modules = path.join(installed, 'node_modules');
   // electron-builder may omit node_modules from extraResources. Copy explicitly
   // after its file filters, before archiving. Never rely on development parents.
@@ -102,12 +113,12 @@ const results = await build({ projectDir: root, publish: 'never', targets: Platf
   appId: 'dev.mongle.terminal', productName: 'Mongle Terminal', executableName: 'MongleTerminal',
   directories: { output: outputName, buildResources: 'platform/windows' },
   electronDist: 'node_modules/electron/dist',
-  files: ['dist/desktop/**', 'package.json', '!node_modules/**'],
+  files: ['dist/desktop/**', '!dist/**/*.map', 'package.json', '!node_modules/**'],
   extraResources: [{ from: bundle, to: 'hostbundle' }],
   afterPack: async context => { await verifyPackagedHost(context.appOutDir); },
   asar: true, npmRebuild: false, nodeGypRebuild: false, buildDependenciesFromSource: false,
   extraMetadata: { main: 'dist/desktop/main.cjs', dependencies: {} },
-  publish: { provider: 'github', owner: 'bokjk', repo: 'mongle-terminal', channel: 'latest', releaseType: 'draft', tagNamePrefix: 'v' },
+  publish: { provider: 'github', owner: 'bokjk', repo: 'mongle-terminal-releases', channel: 'latest', releaseType: 'draft', tagNamePrefix: 'v' },
   generateUpdatesFilesForAllChannels: false,
   win: { target: ['nsis', 'zip'], icon: 'platform/windows/icon.ico', signAndEditExecutable: true, signExecutable: false, artifactName: 'MongleTerminal-${version}-${arch}.${ext}' },
   nsis: { oneClick: false, perMachine: false, allowElevation: false, allowToChangeInstallationDirectory: true, deleteAppDataOnUninstall: false, include: 'platform/windows/installer.nsh', artifactName: 'MongleTerminal-Setup-${version}-${arch}.${ext}', runAfterFinish: false, createDesktopShortcut: true, createStartMenuShortcut: true, shortcutName: '몽글터미널', installerIcon: 'platform/windows/icon.ico', uninstallerIcon: 'platform/windows/icon.ico' },
