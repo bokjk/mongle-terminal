@@ -5,12 +5,14 @@ export function shellIntegration(profile: ShellProfile, args: string[], environm
   const env = { ...environment };
   const integratedArgs = [...args];
   if (profile.kind === 'powershell') {
+    // The PowerShell host writes Unicode console text. Console.Write instead
+    // encodes through OutputEncoding and can replace Hangul with '?' on US PCs.
     const script = String.raw`
 $global:__MongleOriginalPrompt = $function:prompt
 function global:prompt {
   $result = & $global:__MongleOriginalPrompt
   if ($PWD.Provider.Name -eq 'FileSystem') {
-    [Console]::Write(([char]27 + ']9;9;' + $PWD.ProviderPath + [char]27 + '\'))
+    Write-Host -NoNewline ([char]27 + ']9;9;' + $PWD.ProviderPath + [char]27 + '\')
   }
   $result
 }`;

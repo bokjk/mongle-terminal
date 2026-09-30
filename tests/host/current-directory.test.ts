@@ -48,7 +48,8 @@ for (const profile of profiles.filter(p => p.kind !== 'wsl')) {
       const state = host.getState(), ref = { id: info.id, generation: info.generation, hostId: state.hostId, bootId: state.bootId };
       const lease = await host.handle('control.acquire', { ...ref, cols: 80, rows: 24 }, ctx);
       await host.handle('terminal.ack', { ...ref, seq: lease.frame.seq, epoch: lease.epoch }, ctx);
-      const command = profile.kind === 'powershell' ? "Set-Location -LiteralPath './한글 space'" : profile.kind === 'cmd' ? 'cd /d "한글 space"' : "cd './한글 space'";
+      // Non-Korean Windows can use an output code page that cannot encode Hangul.
+      const command = profile.kind === 'powershell' ? "[Console]::OutputEncoding=[Text.Encoding]::ASCII; Set-Location -LiteralPath './한글 space'" : profile.kind === 'cmd' ? 'cd /d "한글 space"' : "cd './한글 space'";
       await host.handle('terminal.input', { ...ref, epoch: lease.epoch, inputId: randomUUID(), clientInputSeq: 1, data: command + '\r' }, ctx);
       await wait(() => Boolean(current().currentCwd?.endsWith('한글 space')));
       await wait(() => states.some(s => s.terminals.find((t: any) => t.id === info.id)?.currentCwd?.endsWith('한글 space')));
