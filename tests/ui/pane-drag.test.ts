@@ -137,7 +137,7 @@ test('native pane drag: dock, swap, create once, cancel, lease/input continuity 
     for (const position of ['left', 'right', 'top', 'bottom', 'center'] as Position[]) {
       await resetLayout(); const beforeSource = (await pane(a).boundingBox())!, beforeTarget = (await pane(c).boundingBox())!;
       const start = calls.length; const revision = group(mainGroup.id).revision;
-      await beginDrag(page, position === 'center' ? pane(a).locator('.pane-title') : handle(a), pane(c), position);
+      await beginDrag(page, handle(a), pane(c), position);
       const preview = pane(c).locator(`.pane-drop-preview[data-drop-position="${position}"]`);
       await expect(preview).toBeVisible(); await expect(preview).toHaveText({ left: '왼쪽에 분할', right: '오른쪽에 분할', top: '위쪽에 분할', bottom: '아래쪽에 분할', center: '위치 바꾸기' }[position]);
       if (position === 'left' || position === 'center') await page.screenshot({ path: path.join(output, `preview-${position}.png`) });

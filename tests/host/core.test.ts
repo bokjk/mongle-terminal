@@ -6,13 +6,45 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { HostCore } from '../../packages/host/core.js';
 import { HostStore } from '../../packages/storage/index.js';
-import type { ConnectionContext, SnapshotEvent, TerminalInfo } from '../../packages/protocol/index.js';
+import { findLeaf, leafIds, type ConnectionContext, type SnapshotEvent, type TerminalInfo } from '../../packages/protocol/index.js';
 
 const owner = ():ConnectionContext => ({id:randomUUID(),deviceId:randomUUID(),deviceName:'테스트 PC',owner:true});
 const delay = (ms:number) => new Promise(resolve=>setTimeout(resolve,ms));
 async function waitFor(operation:()=>Promise<boolean>,timeout=15_000){const until=Date.now()+timeout;while(Date.now()<until){if(await operation())return;await delay(80);}throw new Error('Timed out waiting for real terminal output.');}
 function ref(core:HostCore,info:TerminalInfo){const s=core.getState();return {id:info.id,hostId:s.hostId,bootId:s.bootId,generation:info.generation};}
 async function harness(t:test.TestContext){const dataDir=await mkdtemp(join(tmpdir(),'mongle-core-test-'));const core=new HostCore({dataDir,name:'테스트'});await core.init();const ctx=owner();core.connect(ctx,()=>{});t.after(async()=>{await core.close();await rm(dataDir,{recursive:true,force:true});});return {core,ctx,dataDir,request:(method:string,params:unknown={})=>core.handle(method,params,ctx)};}
+
+test('host stores per-region tabs, rejects invalid membership and preserves siblings on remove/move',async t=>{
+  const {core,request,dataDir}=await harness(t),profile=core.getState().profiles.find(p=>p.kind==='cmd')||core.getState().profiles[0];assert.ok(profile);
+  const group=await request('groups.create',{name:'영역별 탭',profileId:profile.id});
+  const a:TerminalInfo=await request('terminals.create',{groupId:group.id});
+  const b:TerminalInfo=await request('terminals.create',{groupId:group.id,splitTarget:a.id,axis:'vertical'});
+  const before=core.getState().groups.find(g=>g.id===group.id)!.layout;
+  const extra:TerminalInfo=await request('terminals.create',{groupId:group.id,tabTarget:b.id});
+  const layout=core.getState().groups.find(g=>g.id===group.id)!.layout!;
+  assert.ok(core.getState().capabilities?.includes('layout.tabs'));
+  assert.equal(layout.type,'split');assert.equal(layout.type==='split'&&layout.ratio,before?.type==='split'&&before.ratio);
+  assert.deepEqual(findLeaf(layout,extra.id),{type:'leaf',terminalId:b.id,tabs:[extra.id]});
+  assert.equal(extra.profileId,b.profileId);assert.equal(extra.cwd,b.cwd);
+  const current=core.getState().groups.find(g=>g.id===group.id)!;
+  for(const tabs of [[extra.id,extra.id],[a.id],[randomUUID()]]){
+    await assert.rejects(request('groups.layout',{id:group.id,revision:current.revision,layout:{type:'split',axis:'vertical',ratio:.5,first:{type:'leaf',terminalId:a.id},second:{type:'leaf',terminalId:b.id,tabs}}}),{code:'INVALID_LAYOUT'});
+  }
+  const count=core.getState().terminals.length;
+  await assert.rejects(request('terminals.create',{groupId:group.id,tabTarget:randomUUID()}),{code:'INVALID_TARGET'});
+  await assert.rejects(request('terminals.create',{groupId:group.id,tabTarget:b.id,splitTarget:a.id}),{code:'INVALID_TARGET'});
+  assert.equal(core.getState().terminals.length,count);
+  const saved=new HostStore(dataDir);assert.deepEqual(saved.load()!.groups.find(g=>g.id===group.id)!.layout,layout);saved.close();
+  await request('terminals.remove',{...ref(core,b),terminate:true});
+  assert.deepEqual(findLeaf(core.getState().groups.find(g=>g.id===group.id)!.layout,extra.id),{type:'leaf',terminalId:extra.id});
+  const more:TerminalInfo=await request('terminals.create',{groupId:group.id,tabTarget:extra.id});
+  const destination=await request('groups.create',{name:'이동 대상',profileId:profile.id});
+  const moved=await request('terminals.move',{...ref(core,extra),groupId:destination.id});
+  assert.equal(moved.pid,extra.pid);assert.equal(moved.generation,extra.generation);
+  assert.deepEqual(leafIds(core.getState().groups.find(g=>g.id===group.id)!.layout),[a.id,more.id]);
+  await core.close();const restored=new HostCore({dataDir});await restored.init();
+  try{assert.deepEqual(leafIds(restored.getState().groups.find(g=>g.id===group.id)!.layout),[a.id,more.id]);}finally{await restored.close();}
+});
 
 test('group layout CAS validates membership, split, reorder and removal',async t=>{
   const {core,request}=await harness(t),state=core.getState(),profile=state.profiles.find(p=>p.id==='cmd') || state.profiles[0];assert.ok(profile);
