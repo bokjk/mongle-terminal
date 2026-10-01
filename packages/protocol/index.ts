@@ -3,7 +3,9 @@ import { version } from '../../package.json';
 
 export const PROTOCOL_VERSION = 1;
 export const APP_VERSION = version;
-export type LayoutNode = { type: 'leaf'; terminalId: string } | { type: 'split'; axis: 'horizontal' | 'vertical'; ratio: number; first: LayoutNode; second: LayoutNode };
+/** A leaf is one split region. `tabs` holds its additional sessions in display order. */
+export type LayoutLeaf = { type: 'leaf'; terminalId: string; tabs?: string[] };
+export type LayoutNode = LayoutLeaf | { type: 'split'; axis: 'horizontal' | 'vertical'; ratio: number; first: LayoutNode; second: LayoutNode };
 export interface Group { id: string; name: string; cwd: string; profileId: string; revision: number; layout: LayoutNode | null; }
 export interface ShellProfile { id: string; name: string; executable: string; args: string[]; kind: 'powershell' | 'cmd' | 'wsl' | 'bash'; }
 export interface Controller { connectionId: string; deviceName: string; epoch: number; ready: boolean; }
@@ -27,6 +29,29 @@ export const idSchema = z.string().uuid();
 export const dimensionSchema = z.object({ cols: z.number().int().min(20).max(400), rows: z.number().int().min(5).max(200) });
 export class AppError extends Error { constructor(public code: string, message: string) { super(message); this.name = 'AppError'; } }
 export function errorResult(error: unknown) { return error instanceof AppError ? { code: error.code, message: error.message } : error instanceof z.ZodError ? { code: 'INVALID_REQUEST', message: '요청 형식이 올바르지 않습니다.' } : { code: 'INTERNAL_ERROR', message: '작업을 완료하지 못했습니다.' }; }
-export function leafIds(node: LayoutNode | null): string[] { return !node ? [] : node.type === 'leaf' ? [node.terminalId] : [...leafIds(node.first), ...leafIds(node.second)]; }
-export function removeLeaf(node: LayoutNode | null, id: string): LayoutNode | null { if (!node || node.type === 'leaf') return node?.terminalId === id ? null : node; const a = removeLeaf(node.first,id), b = removeLeaf(node.second,id); return a && b ? {...node, first:a, second:b} : a || b; }
-export function splitLeaf(node: LayoutNode | null, target: string | undefined, id: string, axis: 'horizontal' | 'vertical'): LayoutNode { const next: LayoutNode = {type:'leaf', terminalId:id}; if (!node) return next; if (!target || node.type === 'leaf' && node.terminalId === target) return {type:'split',axis,ratio:0.5,first:node,second:next}; if (node.type === 'split') return {...node,first:leafIds(node.first).includes(target) ? splitLeaf(node.first,target,id,axis) : node.first, second:leafIds(node.second).includes(target) ? splitLeaf(node.second,target,id,axis) : node.second}; return node; }
+export function leafIds(node: LayoutNode | null): string[] { return !node ? [] : node.type === 'leaf' ? [node.terminalId, ...(node.tabs || [])] : [...leafIds(node.first), ...leafIds(node.second)]; }
+export function findLeaf(node: LayoutNode | null, id: string): LayoutLeaf | undefined {
+  if (!node) return undefined;
+  return node.type === 'leaf' ? leafIds(node).includes(id) ? node : undefined : findLeaf(node.first,id) || findLeaf(node.second,id);
+}
+export function removeLeaf(node: LayoutNode | null, id: string): LayoutNode | null {
+  if (!node) return null;
+  if (node.type === 'leaf') {
+    if (!leafIds(node).includes(id)) return node;
+    const ids=leafIds(node).filter(value=>value!==id);
+    return ids.length ? {type:'leaf',terminalId:ids[0],...(ids.length>1?{tabs:ids.slice(1)}:{})} : null;
+  }
+  const a=removeLeaf(node.first,id), b=removeLeaf(node.second,id);
+  return a && b ? {...node,first:a,second:b} : a || b;
+}
+export function appendTab(node: LayoutNode, target: string, id: string): LayoutNode {
+  if (node.type === 'leaf') return leafIds(node).includes(target) ? {...node,tabs:[...(node.tabs || []),id]} : node;
+  return {...node,first:appendTab(node.first,target,id),second:appendTab(node.second,target,id)};
+}
+export function splitLeaf(node: LayoutNode | null, target: string | undefined, id: string, axis: 'horizontal' | 'vertical'): LayoutNode {
+  const next:LayoutNode={type:'leaf',terminalId:id};
+  if (!node) return next;
+  if (!target || node.type==='leaf' && leafIds(node).includes(target)) return {type:'split',axis,ratio:0.5,first:node,second:next};
+  if (node.type==='split') return {...node,first:leafIds(node.first).includes(target)?splitLeaf(node.first,target,id,axis):node.first,second:leafIds(node.second).includes(target)?splitLeaf(node.second,target,id,axis):node.second};
+  return node;
+}

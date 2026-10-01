@@ -207,7 +207,7 @@ test('mobile display controls resize the terminal, persist preferences and prese
         }finally{await page.close();}
       });
 
-      await t.test('compact mode adds terminal height, stays reversible at 320px and 390px, and leaves desktop headers visible',async()=>{
+    await t.test('compact mode adds terminal height, stays reversible at 320px and 390px, and preserves desktop region controls',async()=>{
         for(const width of [390,320]){
           const page=await openPage(browser,url,errors,width);
           try{
@@ -261,7 +261,8 @@ test('mobile display controls resize the terminal, persist preferences and prese
         }
         const desktop=await openPage(browser,url,errors,1280,'14','true');
         try{
-          assert.equal(await desktop.locator('.workspace-header').isVisible(),true,'stored mobile compact mode must not hide the desktop header');
+          assert.equal(await desktop.locator('.workspace-header').count(),0,'desktop uses per-region tab headers without an extra workspace toolbar');
+          assert.equal(await desktop.locator('.pane-header').isVisible(),true,'mobile compact preference must not hide desktop region controls');
           assert.equal(await desktop.locator('.mobile-display-bar').count(),0);
           assert.equal(await desktop.evaluate(()=>document.documentElement.scrollWidth<=document.documentElement.clientWidth),true);
         }finally{await desktop.close();}

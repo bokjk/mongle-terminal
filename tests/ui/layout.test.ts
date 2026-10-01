@@ -1,11 +1,37 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { leafIds, type LayoutNode } from '../../packages/protocol/index.js';
+import { appendTab, findLeaf, leafIds, removeLeaf, splitLeaf, type LayoutNode } from '../../packages/protocol/index.js';
 import { dockLeaf, paneDropPosition, swapLeaves, transformInput, updateRatio, type PaneDropPosition } from '../../packages/ui/layout.js';
 const tree:LayoutNode={type:'split',axis:'horizontal',ratio:.5,first:{type:'leaf',terminalId:'a'},second:{type:'split',axis:'vertical',ratio:.4,first:{type:'leaf',terminalId:'b'},second:{type:'leaf',terminalId:'c'}}};
 test('nested resize preserves every terminal and parent ratio; clamps unusable sizes',()=>{const changed=updateRatio(tree,'1',.99);assert.deepEqual(leafIds(changed),['a','b','c']);assert.equal(changed.type==='split'&&changed.ratio,.5);assert.equal(changed.type==='split'&&changed.second.type==='split'&&changed.second.ratio,.85);assert.equal(tree.second.type==='split'&&tree.second.ratio,.4);});
 test('swapping distant leaves preserves split topology and all sessions',()=>{const changed=swapLeaves(tree,'a','c');assert.deepEqual(leafIds(changed),['c','b','a']);assert.equal(changed.type==='split'&&changed.second.type==='split'&&changed.second.axis,'vertical');assert.deepEqual(leafIds(tree),['a','b','c']);});
 test('mobile Ctrl and Alt encode terminal bytes without mangling Korean input',()=>{assert.equal(transformInput('c',true,false),'\x03');assert.equal(transformInput('[',true,false),'\x1b');assert.equal(transformInput('x',false,true),'\x1bx');assert.equal(transformInput('몽글',true,false),'몽글');assert.equal(transformInput('\x1b[A',false,false),'\x1b[A');});
+
+test('tabs stay inside their region when splitting, resizing, docking and swapping',()=>{
+  const tabs=appendTab(appendTab(tree,'a','a2'),'c','c2');
+  assert.deepEqual(findLeaf(tabs,'a2'),{type:'leaf',terminalId:'a',tabs:['a2']});
+  for(const position of ['left','right','top','bottom','center'] as const){
+    const moved=dockLeaf(tabs,'a2','c2',position);
+    assert.deepEqual(findLeaf(moved,'a'),findLeaf(tabs,'a'));
+    assert.deepEqual(findLeaf(moved,'c'),findLeaf(tabs,'c'));
+    assert.deepEqual(leafIds(moved).sort(),['a','a2','b','c','c2']);
+  }
+  assert.equal(dockLeaf(tabs,'a','a2','center'),tabs);
+  const split=splitLeaf(tabs,'a2','d','vertical');
+  assert.deepEqual(findLeaf(split,'a2'),findLeaf(tabs,'a'));
+  assert.deepEqual(leafIds(split),['a','a2','d','b','c','c2']);
+  assert.deepEqual(findLeaf(updateRatio(tabs,'',.35),'a2'),findLeaf(tabs,'a'));
+});
+
+test('closing a tab promotes another in the same region; only its last tab collapses a split',()=>{
+  const tabs=appendTab(appendTab(tree,'a','a2'),'a2','a3');
+  const promoted=removeLeaf(tabs,'a')!;
+  assert.deepEqual(findLeaf(promoted,'a3'),{type:'leaf',terminalId:'a2',tabs:['a3']});
+  assert.equal(promoted.type==='split'&&promoted.ratio,.5);
+  assert.deepEqual(findLeaf(removeLeaf(promoted,'a2'),'a3'),{type:'leaf',terminalId:'a3'});
+  assert.deepEqual(removeLeaf(removeLeaf(promoted,'a2'),'a3'),tree.second);
+  assert.deepEqual(removeLeaf(tabs,'a2')?.type==='split'&&findLeaf(removeLeaf(tabs,'a2'),'a'),{type:'leaf',terminalId:'a',tabs:['a3']});
+});
 
 test('docking each edge replaces the target with an equal split and collapses the old parent',()=>{
   const original = structuredClone(tree);

@@ -210,7 +210,10 @@ test('real desktop/mobile UI and PowerShell: deliberate input transfers control 
   assert.equal(mobileCalls('control.acquire').length, 2);
   assert.notEqual(mobileCalls('control.acquire')[1].params.takeover, false);
   await writeAndObserve(mobile.page, `${marker}D_`);
-  await desktop.page.locator('.pane-title').click();
+  await desktop.page.getByRole('tab').click();
+  assert.equal(desktopCalls('control.acquire').length,2,'Tab selection keeps the phone in control');
+  assert.equal(currentTerminal().controller?.connectionId,mobile.context.id);
+  await desktop.page.getByRole('button',{name:'검증 휴대폰에서 제어 · 가져오기',exact:true}).click();
   await desktop.page.getByText('여기서 제어 중', { exact: true }).waitFor();
   assert.equal(desktopCalls('control.acquire').length, 3);
   assert.notEqual(desktopCalls('control.acquire')[2].params.takeover, false);

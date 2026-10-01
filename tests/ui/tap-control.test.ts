@@ -4,7 +4,7 @@ import {createServer} from 'node:http';
 import {fileURLToPath} from 'node:url';
 import test from 'node:test';
 import {build} from 'esbuild';
-import {chromium,type Page} from '@playwright/test';
+import {chromium,expect,type Page} from '@playwright/test';
 import {TerminalEngine} from '../../packages/terminal/engine.js';
 
 const chrome=process.platform==='win32'&&existsSync('C:/Program Files/Google/Chrome/Application/chrome.exe');
@@ -128,13 +128,20 @@ test('input intent transfers control consistently while background events preser
         await desktop.locator('.terminal-canvas').click();await desktop.getByText('여기서 제어 중',{exact:true}).waitFor();
       }finally{await desktop.close();}
     });
-    await t.test('mobile and desktop clicks, titles, and keyboard opening return from another controller',async()=>{
+    await t.test('content, mobile titles and explicit input transfer control; desktop tabs only select',async()=>{
       for(const mobile of [true,false]){const page=await open(mobile,mobile?'':'?owner&controlled');try{
-        for(const action of mobile?['screen','title','keyboard','button']:['screen','title','button']){
+        for(const action of mobile?['screen','title','keyboard','button']:['screen','tab','button']){
           await page.evaluate(()=>(window as any).tapTest.revoke());await page.getByRole('button',{name:'다른 기기에서 제어 · 가져오기',exact:true}).waitFor();
           const before=(await acquisitions(page)).length;
           if(action==='screen')await page.locator('.terminal-canvas')[mobile?'tap':'click']();
           else if(action==='title')await page.locator('.pane-title')[mobile?'tap':'click']();
+          else if(action==='tab'){
+            await page.getByRole('tab').click();
+            assert.equal((await acquisitions(page)).length,before,'Selecting a desktop tab leaves another controller alone');
+            await expect(page.locator('.xterm-helper-textarea')).toHaveJSProperty('readOnly',true);
+            await expect(page.getByRole('button',{name:'다른 기기에서 제어 · 가져오기',exact:true})).toBeVisible();
+            continue;
+          }
           else if(action==='keyboard')await page.getByRole('button',{name:'키보드 열기',exact:true}).tap();
           else await page.getByRole('button',{name:'다른 기기에서 제어 · 가져오기',exact:true})[mobile?'tap':'click']();
           await page.getByText('여기서 제어 중',{exact:true}).waitFor();
