@@ -18,10 +18,10 @@
 
 ![몽글터미널의 그룹 탐색과 여러 터미널 분할 화면](docs/assets/desktop.png)
 
-<p align="center"><sub>0.3.5 화면을 격리된 데모 환경에서 촬영했습니다. 분할 영역 안의 탭과 왼쪽 아래 도구를 보여 주며, 프로젝트와 출력은 설명용 예시입니다.</sub></p>
+<p align="center"><sub>0.3.6 화면을 격리된 데모 환경에서 촬영했습니다. 분할 영역 안의 탭과 왼쪽 아래 도구를 보여 주며, 프로젝트와 출력은 설명용 예시입니다.</sub></p>
 
 > [!NOTE]
-> **0.3.5 Windows 미리보기.** [공개 배포 페이지](https://github.com/bokjk/mongle-terminal-releases/releases/latest)에서 설치 파일을 받습니다. 소스 저장소는 비공개로 유지하며 프로젝트의 오픈소스 라이선스는 아직 정하지 않았습니다. 실제 검증 범위는 [구현 현황](docs/IMPLEMENTATION-STATUS.md)을 확인하세요.
+> **0.3.6 Windows 미리보기.** [공개 배포 페이지](https://github.com/bokjk/mongle-terminal-releases/releases/latest)에서 설치 파일을 받습니다. 소스 저장소는 비공개로 유지하며 프로젝트의 오픈소스 라이선스는 아직 정하지 않았습니다. 실제 검증 범위는 [구현 현황](docs/IMPLEMENTATION-STATUS.md)을 확인하세요.
 
 ## 터미널 여러 개, 하나의 작업 공간
 
@@ -68,7 +68,17 @@
 
 **파일 탐색기**를 누르면 오른쪽에 공용 패널이 열립니다. PC에서는 왼쪽 아래, 모바일에서는 상단 폴더 버튼으로 엽니다. 마지막으로 선택한 터미널의 현재 폴더를 따라가며, 하위 폴더 펼치기·새로고침·텍스트 미리보기·경로 복사를 제공합니다. 원격 터미널에서는 해당 PC의 파일을 읽습니다. 파일 패널의 폭과 열림 상태는 이 화면에 저장합니다. 파일을 편집하거나 터미널의 폴더를 바꾸지는 않습니다. 0.3.2부터 사용할 수 있습니다.
 
-**개발 소스의 미배포 기능 — Git 변경 보기:** 패널 위의 **파일 / Git**으로 전환해 현재 폴더의 충돌·스테이징된 변경·작업 폴더 변경·새 파일을 확인합니다. 파일 트리에도 변경 상태를 색과 문자로 함께 표시하고, 변경을 포함한 폴더에는 점을 붙입니다. 패널이 열려 있으면 상태를 자동 갱신하며, 파일을 누르면 현재 내용을 읽기 전용으로 봅니다. 선택한 PC에 Git이 설치되어 있어야 하며 기존 공개 0.3.5에는 아직 포함되지 않았습니다. [사용법](docs/USER-GUIDE.md#git-변경-보기) · [검증 범위](docs/validation/git-file-explorer.md)
+**0.3.6부터 Git 변경 보기:** 패널 위의 **파일 / Git**으로 전환해 현재 폴더의 충돌·스테이징된 변경·작업 폴더 변경·새 파일을 확인합니다. 파일 트리에도 변경 상태를 색과 문자로 함께 표시하고, 변경을 포함한 폴더에는 점을 붙입니다. 패널이 열려 있으면 상태를 자동 갱신하며, 파일을 누르면 현재 내용을 읽기 전용으로 봅니다. 선택한 PC에 Git이 설치되어 있어야 합니다. [사용법](docs/USER-GUIDE.md#git-변경-보기) · [검증 범위](docs/validation/git-file-explorer.md)
+
+<details>
+<summary><strong>파일 / Git 실제 화면</strong></summary>
+
+<p><img src="docs/assets/git-switch.png" width="360" alt="파일과 Git 보기 전환" /></p>
+<table><tr><td><img src="docs/assets/git-files.png" width="240" alt="변경 상태 색과 문자 및 폴더 점을 표시하는 파일 트리" /></td><td><img src="docs/assets/git-changes.png" width="240" alt="스테이징·작업 폴더·새 파일 그룹을 표시하는 Git 보기" /></td></tr></table>
+
+0.3.6 실제 패키지의 격리된 예시 저장소입니다. 같은 파일이 여러 그룹에 있어도 전체 개수에는 한 번만 셉니다. [촬영 조건](docs/assets/screenshots.md)
+
+</details>
 
 터미널은 한글 조합 중에도 출력을 갱신하며, 밝은 테마에서는 터미널 글자에 최소 명암 대비를 적용합니다. 세션 아래 경로는 셸이 보고한 현재 폴더를 표시합니다. 새 PowerShell·명령 프롬프트·Git Bash 세션에서 자동 보고하며, 보고가 없는 셸은 시작 폴더를 표시합니다. [검증·적용 범위](docs/validation/input-cwd-theme.md)
 
@@ -139,7 +149,7 @@ PR 양식과 자동 검사를 제공합니다. `main` 등 다른 브랜치로 �
 | `npm.cmd test` | 자동 검사; 조건부 생략 항목은 별도 확인 |
 | `node --import tsx scripts/package.ts --output release-candidate` | 실사용 `release/`와 분리한 패키징 |
 
-패키징은 `MongleTerminal-Setup-0.3.5-x64.exe`와 `MongleTerminal-0.3.5-x64.zip`을 생성합니다. 사용자에게는 설치 파일 하나만 전달하면 됩니다([배포 안내](docs/RELEASING.md)). `npm.cmd run package`의 기본 출력은 `release/`이므로 그 폴더에서 앱이 실행 중일 때 사용하지 마세요. `npm.cmd run host`는 개발용이며 배포본 실행 검증을 대신하지 않습니다.
+패키징은 `MongleTerminal-Setup-0.3.6-x64.exe`와 `MongleTerminal-0.3.6-x64.zip`을 생성합니다. 사용자에게는 설치 파일 하나만 전달하면 됩니다([배포 안내](docs/RELEASING.md)). `npm.cmd run package`의 기본 출력은 `release/`이므로 그 폴더에서 앱이 실행 중일 때 사용하지 마세요. `npm.cmd run host`는 개발용이며 배포본 실행 검증을 대신하지 않습니다.
 
 | 경로 | 역할 |
 |---|---|
