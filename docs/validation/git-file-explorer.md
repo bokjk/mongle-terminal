@@ -1,6 +1,6 @@
 # 파일·Git 전환과 변경 상태 검증
 
-기준일: 2026-10-01. `codex/git-file-explorer`의 구현을 [PR #23](https://github.com/bokjk/mongle-terminal/pull/23)으로 dev에 병합했고 **0.3.6 배포 준비에 포함했다.** 공개 게시 상태는 [0.3.6 배포 검증](public-release-0.3.6.md)과 구분한다. 기존 0.3.5 공개 산출물을 덮어쓰거나 실사용 설치본을 자동 교체하지 않는다.
+기준일: 2026-10-01. `codex/git-file-explorer`의 구현을 [PR #23](https://github.com/bokjk/mongle-terminal/pull/23)으로 dev에 병합했고 **0.3.6 안정 latest로 공개했다.** 실제 최종 패키지 조작·공개 설치본 전체 다운로드·해시 검증은 [0.3.6 배포 검증](public-release-0.3.6.md)에 기록했다. 기존 0.3.5 공개 산출물을 덮어쓰거나 실사용 설치본을 자동 교체하지 않았다.
 
 ## 설계와 참고
 

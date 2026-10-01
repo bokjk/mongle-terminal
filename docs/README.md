@@ -10,7 +10,7 @@
 
 현재 앱의 실행 방법은 [사용자 안내](USER-GUIDE.md), 구현과 실제 검증 결과는 [구현·검증 상태](IMPLEMENTATION-STATUS.md)를 기준으로 확인한다. 아래 01–06 문서는 구현 전에 작성한 설계 기준이며 미실행 표시를 최종 검증 결과로 해석하지 않는다.
 
-버전별 변경은 [변경 이력](../CHANGELOG.md), 설치본·자동 업데이트와 Release 절차는 [배포 안내](RELEASING.md), 다운로드·패키지 검증은 [자동 업데이트 검증](validation/auto-update.md)에 기록한다.
+버전별 변경은 [변경 이력](../CHANGELOG.md), 설치본·자동 업데이트와 Release 절차는 [배포 안내](RELEASING.md), 현재 파일/Git 보기의 공개 게시·패키지·실제 다운로드 결과는 [0.3.6 배포 검증](validation/public-release-0.3.6.md)에 기록한다. 초기 업데이트 구현 검증은 [자동 업데이트 검증](validation/auto-update.md)을 확인한다.
 
 ## 문서 읽는 순서
 
