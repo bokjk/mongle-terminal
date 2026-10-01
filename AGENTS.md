@@ -6,6 +6,11 @@
 - 필수 양식·문서 영향은 `scripts/check-contribution.ts`가 검사하며 타입·빌드·회귀는 `.github/workflows/ci.yml`에 정의한다. CI 준비·실행·서버 측 병합 제한 적용을 구분한다.
 - 작업은 `dev` 또는 `dev`에서 만든 주제 브랜치(`<종류>/<설명>`, 규칙은 `scripts/pr-target.ts`)에 커밋한다. `main`에는 직접 커밋·push하지 않고 배포 시 `dev` → `main` 배포 PR로만 반영한다. 대상 브랜치 검사는 `.github/workflows/pr-target.yml`, 서버 측 규칙은 `.github/rulesets/`와 `scripts/apply-branch-rules.ts`가 담당한다.
 
+## 디자인과 UI/UX
+
+- 디자인이나 UI/UX를 추가·수정할 때는 [Mobbin](https://mobbin.com)의 관련 사례를 먼저 직접 확인하고 참고한다. 변경하는 화면·사용 흐름에 맞는 패턴을 비교하여 프로젝트의 기존 디자인 체계에 맞게 적용한다.
+- 실제로 확인한 참고 사례와 적용한 판단을 설명한다. 접근하지 못한 자료를 확인한 것으로 표현하지 않는다. 수정한 흐름은 실제 앱에서 조작해 검증한다.
+
 ## 기능과 문서를 함께 유지하기
 
 - 사용자에게 보이는 기능 추가·변경·수정은 같은 작업에서 `README.md`와 `CHANGELOG.md`에 반영한다. README는 현재 제공 기능·설치/실행·사용 흐름을 설명하고, CHANGELOG의 **미배포 변경**에는 사용자에게 미치는 변화를 기록한다. 내부 구현만 바뀌면 README 내용이 여전히 정확한지 확인하고 불필요한 설명을 늘리지 않는다.

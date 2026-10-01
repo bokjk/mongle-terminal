@@ -137,7 +137,7 @@ test('native pane drag: dock, swap, create once, cancel, lease/input continuity 
     for (const position of ['left', 'right', 'top', 'bottom', 'center'] as Position[]) {
       await resetLayout(); const beforeSource = (await pane(a).boundingBox())!, beforeTarget = (await pane(c).boundingBox())!;
       const start = calls.length; const revision = group(mainGroup.id).revision;
-      await beginDrag(page, position === 'center' ? pane(a).locator('.pane-title') : handle(a), pane(c), position);
+      await beginDrag(page, handle(a), pane(c), position);
       const preview = pane(c).locator(`.pane-drop-preview[data-drop-position="${position}"]`);
       await expect(preview).toBeVisible(); await expect(preview).toHaveText({ left: '왼쪽에 분할', right: '오른쪽에 분할', top: '위쪽에 분할', bottom: '아래쪽에 분할', center: '위치 바꾸기' }[position]);
       if (position === 'left' || position === 'center') await page.screenshot({ path: path.join(output, `preview-${position}.png`) });
@@ -232,10 +232,14 @@ test('native pane drag: dock, swap, create once, cancel, lease/input continuity 
 
     // Existing separator gestures still affect only geometry, not terminal lifetimes.
     await resetLayout(); const separator = page.getByRole('separator', { name: '좌우 분할 크기', exact: true });
+    // Host state can lead the renderer: each gesture must see the acknowledged revision before the next CAS.
+    await expect(separator).toHaveAttribute('aria-valuenow', '42');
     await separator.focus(); await page.keyboard.press('ArrowRight'); await until(() => group(mainGroup.id).layout, value => value?.type === 'split' && value.ratio > .42, 'keyboard resize');
+    await expect(separator).toHaveAttribute('aria-valuenow', '47');
     await page.keyboard.press('Home'); await until(() => group(mainGroup.id).layout, value => value?.type === 'split' && value.ratio === .5, 'Home equalize');
+    await expect(separator).toHaveAttribute('aria-valuenow', '50');
     const separatorBox = (await separator.boundingBox())!; await page.mouse.move(separatorBox.x + separatorBox.width/2, separatorBox.y + separatorBox.height/2); await page.mouse.down(); await page.mouse.move(separatorBox.x+70,separatorBox.y+separatorBox.height/2,{steps:8}); await page.mouse.up();
-    await until(() => group(mainGroup.id).layout, value => value?.type === 'split' && value.ratio > .5, 'pointer resize'); await separator.dblclick(); await until(() => group(mainGroup.id).layout, value => value?.type === 'split' && value.ratio === .5, 'double-click equalize');
+    await until(() => group(mainGroup.id).layout, value => value?.type === 'split' && value.ratio > .5, 'pointer resize'); await expect.poll(async () => Number(await separator.getAttribute('aria-valuenow'))).toBeGreaterThan(50); await separator.dblclick(); await until(() => group(mainGroup.id).layout, value => value?.type === 'split' && value.ratio === .5, 'double-click equalize');
     await assertNoOverlap([a,b,c]); await proveVariable(a, markers.get(a)!, 'RESIZED'); steps.push('keyboard, Home, pointer resize and double-click equalize retain usable nonoverlapping panes');
 
     // New-terminal source drag creates one default shell at the requested side.

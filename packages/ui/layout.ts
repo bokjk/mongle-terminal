@@ -1,33 +1,34 @@
-import type { LayoutNode } from '../protocol/index';
+import { appendTab, findLeaf, leafIds, removeLeaf, type LayoutNode } from '../protocol/index';
 export function updateRatio(node: LayoutNode, path: string, ratio: number): LayoutNode {
   if (node.type === 'leaf') return node;
   if (!path) return {...node,ratio: Math.min(.85, Math.max(.15, ratio))};
   return {...node, [path[0] === '0' ? 'first' : 'second']: updateRatio(path[0] === '0' ? node.first : node.second,path.slice(1),ratio)};
 }
 export function swapLeaves(node: LayoutNode, first: string, second: string): LayoutNode {
-  return node.type === 'leaf' ? {...node,terminalId:node.terminalId === first ? second : node.terminalId === second ? first : node.terminalId} : {...node,first:swapLeaves(node.first,first,second),second:swapLeaves(node.second,first,second)};
+  const a=findLeaf(node,first),b=findLeaf(node,second);
+  if (!a || !b || a===b) return node;
+  const swap=(current:LayoutNode):LayoutNode=>current===a?b:current===b?a:current.type==='leaf'?current:{...current,first:swap(current.first),second:swap(current.second)};
+  return swap(node);
 }
 
 export type PaneDropPosition = 'left' | 'right' | 'top' | 'bottom' | 'center';
 
-/** Move an existing session to an edge of another pane without creating a shell. */
+/** Move a whole split region, including its tabs, without creating a shell. */
 export function dockLeaf(node: LayoutNode, source: string, target: string, position: PaneDropPosition): LayoutNode {
   if (source === target) return node;
-  const find = (current: LayoutNode, id: string): Extract<LayoutNode, {type:'leaf'}> | undefined =>
-    current.type === 'leaf' ? current.terminalId === id ? current : undefined : find(current.first, id) || find(current.second, id);
-  const sourceLeaf = find(node, source);
-  if (!sourceLeaf || !find(node, target)) return node;
+  const sourceLeaf=findLeaf(node,source),targetLeaf=findLeaf(node,target);
+  if (!sourceLeaf || !targetLeaf || sourceLeaf===targetLeaf) return node;
   if (position === 'center') return swapLeaves(node, source, target);
 
   const remove = (current: LayoutNode): LayoutNode | null => {
-    if (current.type === 'leaf') return current.terminalId === source ? null : current;
+    if (current.type === 'leaf') return current===sourceLeaf ? null : current;
     const first = remove(current.first), second = remove(current.second);
     if (!first || !second) return first || second;
     return first === current.first && second === current.second ? current : {...current, first, second};
   };
   const insert = (current: LayoutNode): LayoutNode => {
     if (current.type === 'leaf') {
-      if (current.terminalId !== target) return current;
+      if (!leafIds(current).includes(target)) return current;
       const before = position === 'left' || position === 'top';
       return {type:'split', axis:position === 'left' || position === 'right' ? 'horizontal' : 'vertical', ratio:0.5,
         first:before ? sourceLeaf : current, second:before ? current : sourceLeaf};
@@ -39,7 +40,32 @@ export function dockLeaf(node: LayoutNode, source: string, target: string, posit
   return insert(remove(node)!);
 }
 
-/** Central half swaps panes; outer quarters dock to their nearest normalized edge. */
+/** Move one existing session into a split or another region's tab list. */
+export function dockTab(node: LayoutNode, source: string, target: string, position: PaneDropPosition): LayoutNode {
+  const sourceLeaf=findLeaf(node,source),targetLeaf=findLeaf(node,target);
+  if (!sourceLeaf || !targetLeaf) return node;
+  const sameRegion=sourceLeaf===targetLeaf;
+  if (sameRegion && (position==='center' || leafIds(sourceLeaf).length<2)) return node;
+  const remaining=removeLeaf(node,source);
+  if (!remaining) return node;
+  // Removing the primary tab promotes a sibling. Target that surviving region
+  // even when the pointer was over the very tab being detached.
+  const targetId=sameRegion?leafIds(sourceLeaf).find(id=>id!==source)!:target;
+  if (position==='center') return appendTab(remaining,targetId,source);
+  const insert=(current:LayoutNode):LayoutNode=>{
+    if (current.type==='leaf') {
+      if (!leafIds(current).includes(targetId)) return current;
+      const moved:LayoutNode={type:'leaf',terminalId:source},before=position==='left'||position==='top';
+      return {type:'split',axis:position==='left'||position==='right'?'horizontal':'vertical',ratio:0.5,
+        first:before?moved:current,second:before?current:moved};
+    }
+    const first=insert(current.first),second=insert(current.second);
+    return first===current.first&&second===current.second?current:{...current,first,second};
+  };
+  return insert(remaining);
+}
+
+/** Central half is a center drop; outer quarters dock to their nearest normalized edge. */
 export function paneDropPosition(xRatio: number, yRatio: number, allowCenter = true): PaneDropPosition {
   const clamp = (value: number) => Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0.5;
   const x = clamp(xRatio), y = clamp(yRatio);

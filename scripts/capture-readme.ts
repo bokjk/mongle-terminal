@@ -139,22 +139,36 @@ try {
   await renderDemo(desktop, 0, 'web');
   await renderDemo(desktop, 1, 'tests');
   await renderDemo(desktop, 2, 'notes');
+  // Show a real additional session inside the first split region.
+  const firstTerminal=host.getState().terminals[0],beforeTab=new Set(host.getState().terminals.map(terminal=>terminal.id));
+  await desktop.locator('.pane').first().getByRole('button',{name:'탭 추가',exact:true}).click();
+  await desktop.getByRole('button',{name:'터미널 열기',exact:true}).click();
+  await expect(desktop.locator('.pane')).toHaveCount(4);
+  const extraTab=host.getState().terminals.find(terminal=>!beforeTab.has(terminal.id));assert.ok(extraTab);
+  const extraPane=desktop.locator(`.pane[data-terminal-id="${extraTab.id}"]`);
+  await extraPane.getByText('여기서 제어 중',{exact:true}).waitFor();
+  await extraPane.locator(`#terminal-tab-${extraTab.id}`).dblclick();
+  await desktop.getByLabel('이름',{exact:true}).fill('작업 메모');await desktop.getByRole('button',{name:'저장',exact:true}).click();
+  await renderDemo(desktop,3,'notes');
+  await desktop.locator(`#terminal-tab-${firstTerminal.id}`).click();
+  await expect(desktop.getByRole('tablist')).toHaveCount(3);
+  await expect(desktop.locator('.pane:visible')).toHaveCount(3);
   for (const name of ['실험실', '개인 도구']) {
     await desktop.getByRole('button', { name: '새 그룹', exact: true }).click();
     await desktop.getByLabel('이름', { exact: true }).fill(name);
     await desktop.getByRole('button', { name: '저장', exact: true }).click();
     await desktop.getByRole('heading', { name, exact: true }).waitFor();
   }
-  await desktop.getByRole('button', { name: '몽글 프로젝트 터미널 3개', exact: true }).click();
+  await desktop.getByRole('button', { name: '몽글 프로젝트 터미널 4개', exact: true }).click();
   await desktop.locator('.pane').first().getByText('여기서 제어 중', { exact: true }).waitFor();
-  await desktop.locator('.pane').first().locator('.pane-title').click();
+  await desktop.locator(`#terminal-tab-${firstTerminal.id}`).click();
   await desktop.mouse.move(1400, 50);
   await desktop.evaluate(() => document.fonts.ready);
   await mkdir('docs/assets', { recursive: true });
   await desktop.screenshot({ path: 'docs/assets/desktop.png' });
 
   const mobile = await openSurface(true);
-  await mobile.getByRole('button', { name: '설정', exact: true }).first().click();
+  await mobile.locator('.workspace-header').getByRole('button', { name: '설정', exact: true }).click();
   await mobile.getByRole('button', { name: '어둡게', exact: true }).click();
   await mobile.getByRole('dialog', { name: '설정', exact: true }).getByLabel('터미널 글자 크기', { exact: true }).selectOption('12');
   await mobile.getByRole('button', { name: '설정 닫기' }).click();
@@ -169,7 +183,7 @@ try {
   }
   await mobile.screenshot({ path: 'docs/assets/mobile.png' });
   console.log('Captured real UI: docs/assets/desktop.png (1440×900), docs/assets/mobile.png (390×844).');
-  console.log('Three live shells; sample tests actually ran. No pixels or rendered app DOM edited.');
+  console.log('Four live shells in three split regions, including two tabs; sample tests actually ran. No pixels or rendered app DOM edited.');
 } catch (error) {
   const page = browser?.contexts().at(-1)?.pages().at(-1);
   if (page) {

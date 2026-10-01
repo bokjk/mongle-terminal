@@ -4,7 +4,7 @@ import { readFile, stat, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import * as pty from 'node-pty';
 import { z } from 'zod';
-import { APP_VERSION, PROTOCOL_VERSION, AppError, dimensionSchema, idSchema, leafIds, removeLeaf, splitLeaf } from '../protocol/index.js';
+import { APP_VERSION, PROTOCOL_VERSION, AppError, appendTab, dimensionSchema, idSchema, leafIds, removeLeaf, splitLeaf } from '../protocol/index.js';
 import type { ConnectionContext, Group, HostSettings, HostState, LayoutNode, PresentationSnapshot, Send, ShellProfile, SnapshotEvent, TerminalInfo } from '../protocol/index.js';
 import { HostStore, type PersistedHost, type PersistedSnapshot } from '../storage/index.js';
 import { detectShellProfiles, resolveShellLaunch, safeShellEnvironment } from '../shell-profiles/index.js';
@@ -17,7 +17,7 @@ const cwdSchema = z.string().min(1).max(4096);
 const exportedSettingsSchema=z.object({version:z.literal(1),name:nameSchema,recordHistory:z.boolean(),groups:z.array(z.object({name:nameSchema,cwd:cwdSchema,profileId:z.string().max(300)}).strict()).max(100)}).strict();
 const terminalRef = z.object({ id: idSchema, hostId: idSchema, bootId: idSchema, generation: idSchema });
 const layoutSchema: z.ZodType<LayoutNode> = z.lazy(() => z.union([
-  z.object({type: z.literal('leaf'), terminalId: idSchema}).strict(),
+  z.object({type: z.literal('leaf'), terminalId: idSchema, tabs: z.array(idSchema).min(1).max(15).optional()}).strict(),
   z.object({type: z.literal('split'), axis: z.enum(['horizontal','vertical']), ratio: z.number().min(0.05).max(0.95), first: layoutSchema, second: layoutSchema}).strict(),
 ]));
 const LEASE_MS = 15_000;
@@ -98,7 +98,7 @@ export class HostCore {
     return result;
   }
   getState(): HostState {
-    return structuredClone({ hostId:this.hostId, bootId:this.bootId, name:this.settings.name, version:APP_VERSION, protocolVersion:PROTOCOL_VERSION, capabilities:['control.acquire-if-free','files.read'], groups:this.groups, terminals:this.terminals, profiles:this.profiles, settings:this.settings, ...(this.storageError ? {storageError:this.storageError} : {}) });
+    return structuredClone({ hostId:this.hostId, bootId:this.bootId, name:this.settings.name, version:APP_VERSION, protocolVersion:PROTOCOL_VERSION, capabilities:['control.acquire-if-free','files.read','layout.tabs'], groups:this.groups, terminals:this.terminals, profiles:this.profiles, settings:this.settings, ...(this.storageError ? {storageError:this.storageError} : {}) });
   }
   connect(ctx: ConnectionContext, send: Send): void {
     if (!this.initialized || this.closing || this.shutdownPrepared) throw new AppError('HOST_UNAVAILABLE','호스트가 준비되지 않았습니다.');
@@ -212,16 +212,18 @@ export class HostCore {
         this.groups=this.groups.filter(g=>g.id!==p.id);this.persist(true);this.broadcastState();return {removed:true};
       }
       case 'terminals.create': {
-        const p=z.object({groupId:idSchema,profileId:z.string().max(300).optional(),cwd:cwdSchema.optional(),splitTarget:idSchema.optional(),axis:z.enum(['horizontal','vertical']).optional()}).strict().parse(params);
+        const p=z.object({groupId:idSchema,profileId:z.string().max(300).optional(),cwd:cwdSchema.optional(),splitTarget:idSchema.optional(),tabTarget:idSchema.optional(),axis:z.enum(['horizontal','vertical']).optional()}).strict().parse(params);
         const group=this.group(p.groupId);
         if (this.terminals.filter(t=>t.groupId===group.id).length>=16 || this.terminals.filter(t=>t.status==='running').length>=32 || this.terminals.length>=128) throw new AppError('LIMIT_REACHED','터미널 한도에 도달했습니다. 사용하지 않는 터미널을 정리해 주세요.');
         if (p.splitTarget && !leafIds(group.layout).includes(p.splitTarget)) throw new AppError('INVALID_TARGET','분할할 터미널을 찾을 수 없습니다.');
-        const source=p.splitTarget ? this.terminal(p.splitTarget) : undefined;
+        if (p.tabTarget && (p.splitTarget || p.axis || !leafIds(group.layout).includes(p.tabTarget))) throw new AppError('INVALID_TARGET','탭을 추가할 분할 영역을 찾을 수 없습니다.');
+        const target=p.tabTarget || p.splitTarget;
+        const source=target ? this.terminal(target) : undefined;
         const profile=this.profile(p.profileId || source?.profileId || group.profileId);
         const launch=await resolveShellLaunch(profile,p.cwd || source?.cwd || group.cwd);
         this.requireClient(client);
         const info:TerminalInfo={id:randomUUID(),groupId:group.id,title:profile.name,profileId:profile.id,cwd:launch.cwd,generation:randomUUID(),status:'interrupted',cols:100,rows:30};
-        this.terminals.push(info);group.layout=splitLeaf(group.layout,p.splitTarget,info.id,p.axis || 'horizontal');group.revision++;
+        this.terminals.push(info);group.layout=p.tabTarget?appendTab(group.layout!,p.tabTarget,info.id):splitLeaf(group.layout,p.splitTarget,info.id,p.axis || 'horizontal');group.revision++;
         this.persist(true);
         try {await this.startTerminal(info,profile,launch);} finally {this.persist();this.broadcastState();}
         return structuredClone(info);
