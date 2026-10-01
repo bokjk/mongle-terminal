@@ -18,10 +18,10 @@
 
 ![몽글터미널의 그룹 탐색과 여러 터미널 분할 화면](docs/assets/desktop.png)
 
-<p align="center"><sub>0.3.4 화면을 격리된 데모 환경에서 촬영했습니다. 분할 영역 안의 탭과 왼쪽 아래 도구를 보여 주며, 프로젝트와 출력은 설명용 예시입니다.</sub></p>
+<p align="center"><sub>0.3.5 화면을 격리된 데모 환경에서 촬영했습니다. 분할 영역 안의 탭과 왼쪽 아래 도구를 보여 주며, 프로젝트와 출력은 설명용 예시입니다.</sub></p>
 
 > [!NOTE]
-> **0.3.4 Windows 미리보기.** [공개 배포 페이지](https://github.com/bokjk/mongle-terminal-releases/releases/latest)에서 설치 파일을 받습니다. 소스 저장소는 비공개로 유지하며 프로젝트의 오픈소스 라이선스는 아직 정하지 않았습니다. 실제 검증 범위는 [구현 현황](docs/IMPLEMENTATION-STATUS.md)을 확인하세요.
+> **0.3.5 Windows 미리보기.** [공개 배포 페이지](https://github.com/bokjk/mongle-terminal-releases/releases/latest)에서 설치 파일을 받습니다. 소스 저장소는 비공개로 유지하며 프로젝트의 오픈소스 라이선스는 아직 정하지 않았습니다. 실제 검증 범위는 [구현 현황](docs/IMPLEMENTATION-STATUS.md)을 확인하세요.
 
 ## 터미널 여러 개, 하나의 작업 공간
 
@@ -137,7 +137,7 @@ PR 양식과 자동 검사를 제공합니다. `main` 등 다른 브랜치로 �
 | `npm.cmd test` | 자동 검사; 조건부 생략 항목은 별도 확인 |
 | `node --import tsx scripts/package.ts --output release-candidate` | 실사용 `release/`와 분리한 패키징 |
 
-패키징은 `MongleTerminal-Setup-0.3.4-x64.exe`와 `MongleTerminal-0.3.4-x64.zip`을 생성합니다. 사용자에게는 설치 파일 하나만 전달하면 됩니다([배포 안내](docs/RELEASING.md)). `npm.cmd run package`의 기본 출력은 `release/`이므로 그 폴더에서 앱이 실행 중일 때 사용하지 마세요. `npm.cmd run host`는 개발용이며 배포본 실행 검증을 대신하지 않습니다.
+패키징은 `MongleTerminal-Setup-0.3.5-x64.exe`와 `MongleTerminal-0.3.5-x64.zip`을 생성합니다. 사용자에게는 설치 파일 하나만 전달하면 됩니다([배포 안내](docs/RELEASING.md)). `npm.cmd run package`의 기본 출력은 `release/`이므로 그 폴더에서 앱이 실행 중일 때 사용하지 마세요. `npm.cmd run host`는 개발용이며 배포본 실행 검증을 대신하지 않습니다.
 
 | 경로 | 역할 |
 |---|---|
