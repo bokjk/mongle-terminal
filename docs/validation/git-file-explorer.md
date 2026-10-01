@@ -1,6 +1,6 @@
 # 파일·Git 전환과 변경 상태 검증
 
-기준일: 2026-10-01. `codex/git-file-explorer`의 **미배포 개발 기능**이다. 공개 최신 0.3.5 파일과 실사용 설치본은 변경하지 않는다.
+기준일: 2026-10-01. `codex/git-file-explorer`의 구현을 [PR #23](https://github.com/bokjk/mongle-terminal/pull/23)으로 dev에 병합했고 **0.3.6 배포 준비에 포함했다.** 공개 게시 상태는 [0.3.6 배포 검증](public-release-0.3.6.md)과 구분한다. 기존 0.3.5 공개 산출물을 덮어쓰거나 실사용 설치본을 자동 교체하지 않는다.
 
 ## 설계와 참고
 
@@ -33,7 +33,7 @@ NUL 구분 porcelain v2로 한글·공백·이름 변경을 파싱하고 스테�
 
 전체 기본 회귀는 **307개 중 295 통과·1 실패·11 선택 실행 건너뜀**이었다. 실패한 Windows kill-on-close Job 검사는 샌드박스에서 호스트 시작 접근 거부가 발생했으며, `tests/platform/lifecycle.test.ts`만 샌드박스 밖에서 다시 실행해 **3/3 통과**했다. 이후 삭제 스테이징·재생성 보완은 위 26개 관련 검사로 다시 확인했다. 로그: `test-results/git-explorer-full-suite.log`, `test-results/git-explorer-lifecycle.log`.
 
-GitHub CI는 PR 최신 커밋의 **Windows checks / PR target branch**에서 별도로 확인한다. 시험 저장소·호스트·셸·개인 데이터는 TEMP에 격리했고 실사용 호스트·인증 정보·Tailscale 설정은 변경하지 않았다. 생성 화면·로그는 로컬 `test-results`에 보관하며 커밋하지 않는다. 개발 검증 패키지는 기존 소스 버전 0.3.5를 유지하며 공개 0.3.5 산출물을 교체하지 않는다.
+기능 [PR 검사](https://github.com/bokjk/mongle-terminal/actions/runs/36827058113)의 **Windows checks / PR target branch**가 통과했다. 전체 회귀는 307개 중 296 통과·실패 0·선택 실행 11 생략했다. 시험 저장소·호스트·셸·개인 데이터는 TEMP에 격리했고 실사용 호스트·인증 정보·Tailscale 설정은 변경하지 않았다. 생성 화면·로그는 로컬 `test-results`에 보관하며 커밋하지 않는다. 위 구현 초기 개발 검증 패키지는 0.3.5 소스 버전이었으며 공개 0.3.5 산출물은 교체하지 않았다. 0.3.6 패키지·게시 결과는 배포 검증에서 구분한다.
 
 ## 남은 범위
 
