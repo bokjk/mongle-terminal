@@ -129,7 +129,7 @@ export function App(){
         {state&&!state.groups.length&&<p className="hint sidebar-empty">그룹을 만들어 작업을<br/>한곳에 모아 보세요.</p>}
       </nav></div>
       <div className="sidebar-footer">
-        {!mobile&&group?.layout&&<><h1 className="workspace-title sidebar-workspace-title">{group.name}</h1><button className="button subtle new-terminal-drag" aria-label="터미널 추가" disabled={!connected} draggable={paneDrag.enabled} title="새 터미널 · 끌어서 원하는 위치에 분할" onPointerDown={paneDrag.pointerStart} onDragStart={event=>paneDrag.start(event)} onDragEnd={paneDrag.cancel} onClick={()=>{if(paneDrag.clickAllowed())setEditor({kind:'new-terminal'});}}><Plus size={16}/>새 분할</button></>}
+        {!mobile&&group?.layout&&<><h1 className="workspace-title sidebar-workspace-title">{group.name}</h1><button className="button subtle new-terminal-drag" aria-label="새 터미널" disabled={!connected} draggable={paneDrag.enabled} title="새 터미널 · 끌어서 원하는 위치에 분할" onPointerDown={paneDrag.pointerStart} onDragStart={event=>paneDrag.start(event)} onDragEnd={paneDrag.cancel} onClick={()=>{if(paneDrag.clickAllowed())setEditor({kind:'new-terminal'});}}><Plus size={16}/>새 터미널</button></>}
         {!mobile&&<button className="button subtle" aria-label="파일 탐색기" aria-expanded={filesOpen} disabled={!state} onClick={()=>setFilesOpen(open=>!open)}><Folder size={17}/>파일 탐색기</button>}
         <button className="button subtle" aria-label="설정" disabled={!state} onClick={()=>setSettingsOpen(true)}><SettingsIcon size={17}/>설정<span className="version">v{state?.version||APP_VERSION}</span></button><div className="sidebar-note"><span className="connection-dot connected"/>창을 닫아도 작업은 계속돼요</div>
       </div>
