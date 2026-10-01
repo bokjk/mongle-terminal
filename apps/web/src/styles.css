@@ -139,7 +139,7 @@ button.host-select:hover { background: var(--surface-hover); border-color: var(-
 .workspace-header > .new-terminal-drag { flex-shrink: 0; width: 30px; min-height: 30px; padding: 0; background: transparent; border-color: transparent; color: var(--text-secondary); }
 .workspace-header > .new-terminal-drag:hover:not(:disabled) { background: var(--surface-hover); border-color: transparent; color: var(--text); }
 .workspace-header > .new-terminal-drag .button-label { display: none; }
-.terminal-tabs { display: flex; flex: 1; align-self: stretch; align-items: stretch; min-width: 0; gap: 1px; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; }
+.terminal-tabs { display: flex; flex: 0 1 auto; align-self: stretch; align-items: stretch; min-width: 0; gap: 1px; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; }
 .terminal-tab { display: flex; flex: 0 0 auto; min-width: 90px; max-width: 190px; margin: 3px 0 0; border: 1px solid transparent; border-bottom: 2px solid transparent; border-radius: 5px 5px 0 0; color: var(--text-secondary); }
 .terminal-tab:hover { background: var(--surface); }
 .terminal-tab.active { color: var(--text); background: var(--surface); border-color: var(--border-subtle); border-bottom-color: var(--accent); }
