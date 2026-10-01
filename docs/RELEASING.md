@@ -1,6 +1,6 @@
 # 배포와 자동 업데이트
 
-기준 버전: **0.3.4 Windows 미리보기**. 소스는 비공개로 유지하고 [배포 전용 공개 저장소](https://github.com/bokjk/mongle-terminal-releases/releases/latest)에 설치 파일과 업데이트 메타데이터를 게시한다. 코드 서명과 프로젝트의 오픈소스 라이선스는 아직 추가하지 않았다. 0.3.4 배포 준비·검증 결과는 [0.3.4 검증](validation/public-release-0.3.4.md), 이전 공개 배포는 [0.3.3 검증](validation/public-release-0.3.3.md), 공개 주소 전환 결과는 [0.3.1 검증](validation/public-release-0.3.1.md)을 확인한다.
+기준 버전: **0.3.5 Windows 미리보기**. 소스는 비공개로 유지하고 [배포 전용 공개 저장소](https://github.com/bokjk/mongle-terminal-releases/releases/latest)에 설치 파일과 업데이트 메타데이터를 게시한다. 코드 서명과 프로젝트의 오픈소스 라이선스는 아직 추가하지 않았다. 새 터미널 버튼 이름의 0.3.5 배포 준비·검증 결과는 [0.3.5 검증](validation/public-release-0.3.5.md), 이전 공개 배포는 [0.3.4 검증](validation/public-release-0.3.4.md), 공개 주소 전환 결과는 [0.3.1 검증](validation/public-release-0.3.1.md)을 확인한다.
 
 ## 배포 경로와 기존 사용자 전환
 
@@ -50,8 +50,8 @@ npm.cmd run typecheck
 npx.cmd tsx --test --test-concurrency=1 tests/**/*.test.ts
 node --import tsx scripts/package.ts --output release-candidate
 # CHANGELOG의 현재 버전 항목을 검토해 release-candidate/RELEASE-NOTES.md로 저장
-powershell.exe -NoProfile -File scripts/publish-release.ps1 -Version 0.3.4 -OutputDir release-candidate -CheckOnly
-powershell.exe -NoProfile -File scripts/publish-release.ps1 -Version 0.3.4 -OutputDir release-candidate
+powershell.exe -NoProfile -File scripts/publish-release.ps1 -Version 0.3.5 -OutputDir release-candidate -CheckOnly
+powershell.exe -NoProfile -File scripts/publish-release.ps1 -Version 0.3.5 -OutputDir release-candidate
 ```
 
 `--output`은 프로젝트 아래 `release` 또는 `release-<이름>`을 받는다. 실사용 앱이 있는 `release/`를 덮어쓰지 않는다. `package.ts`는 토큰이 있어도 게시하지 않는다. 게시 스크립트는 지정된 공개 저장소만 대상으로 삼아 체크섬을 확인하고 초안만 생성·갱신한다. 태그 워크플로의 artifact를 내려받았다면 동봉된 `RELEASE-NOTES.md`를 사용한다.
