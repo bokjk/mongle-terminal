@@ -1,22 +1,24 @@
 import { randomUUID, createHash } from 'node:crypto';
 import { hostname, homedir } from 'node:os';
 import { readFile, stat, unlink } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, dirname, basename } from 'node:path';
 import * as pty from 'node-pty';
 import { z } from 'zod';
 import { APP_VERSION, PROTOCOL_VERSION, AppError, appendTab, dimensionSchema, idSchema, leafIds, removeLeaf, splitLeaf } from '../protocol/index.js';
-import type { ConnectionContext, Group, HostSettings, HostState, LayoutNode, PresentationSnapshot, Send, ShellProfile, SnapshotEvent, TerminalInfo } from '../protocol/index.js';
+import type { ConnectionContext, Group, HostSettings, HostState, LayoutNode, PresentationSnapshot, Send, ShellProfile, SnapshotEvent, TerminalInfo, Repository, Worktree, WorktreeOperation, ProjectInspection } from '../protocol/index.js';
 import { HostStore, type PersistedHost, type PersistedSnapshot } from '../storage/index.js';
 import { detectShellProfiles, resolveShellLaunch, safeShellEnvironment } from '../shell-profiles/index.js';
 import { TerminalEngine } from '../terminal/engine.js';
 import { shellIntegration } from '../shell-profiles/integration.js';
-import { inspectFiles } from './files.js';
+import { inspectFiles, within } from './files.js';
 import { inspectGit } from './git.js';
+import { inspectProject, inspectKnownRepository, validateWorktree, prepareWorktree, addWorktree, removeWorktree, samePath, worktreeSlug } from './worktrees.js';
 
 const nameSchema = z.string().trim().min(1).max(100);
 const cwdSchema = z.string().min(1).max(4096);
 const exportedSettingsSchema=z.object({version:z.literal(1),name:nameSchema,recordHistory:z.boolean(),groups:z.array(z.object({name:nameSchema,cwd:cwdSchema,profileId:z.string().max(300)}).strict()).max(100)}).strict();
 const terminalRef = z.object({ id: idSchema, hostId: idSchema, bootId: idSchema, generation: idSchema });
+const hostRef = z.object({hostId:idSchema,bootId:idSchema});
 const layoutSchema: z.ZodType<LayoutNode> = z.lazy(() => z.union([
   z.object({type: z.literal('leaf'), terminalId: idSchema, tabs: z.array(idSchema).min(1).max(15).optional()}).strict(),
   z.object({type: z.literal('split'), axis: z.enum(['horizontal','vertical']), ratio: z.number().min(0.05).max(0.95), first: layoutSchema, second: layoutSchema}).strict(),
@@ -37,6 +39,12 @@ export class HostCore {
   private profiles: ShellProfile[] = [];
   private groups: Group[] = [];
   private terminals: TerminalInfo[] = [];
+  private repositories: Repository[] = [];
+  private worktrees: Worktree[] = [];
+  private worktreeOperations: WorktreeOperation[] = [];
+  private projectTasks = new Map<string,Promise<void>>();
+  private projectReads = 0;
+  private metadataVersion = 0;
   private runtimes = new Map<string, Runtime>();
   private archivedSequences = new Map<string, number>();
   private archivedFrames = new Map<string, PresentationSnapshot>();
@@ -66,6 +74,9 @@ export class HostCore {
     if (saved) {
       this.settings = saved.settings;
       this.groups = saved.groups;
+      this.repositories = saved.repositories || [];
+      this.worktrees = (saved.worktrees || []).map(item=>item.status==='removing'?{...item,status:'missing',reason:'삭제 결과를 확인하려면 목록을 새로고침해 주세요.'}:item);
+      this.worktreeOperations = (saved.worktreeOperations || []).map(item=>item.status==='pending'||item.status==='running'?{...item,status:'attention',message:'호스트가 재시작되었습니다. 목록을 새로고침해 작업 결과를 확인해 주세요.'}:item);
       this.terminals = saved.terminals.map(({controller, pid, ...info}) => ({...info, status: info.status === 'running' ? 'interrupted' : info.status, resumeOnBoot: info.status === 'running' || info.resumeOnBoot === true || legacyResume.has(info.id), historyAvailable: Boolean(this.settings.recordHistory && this.store.getSnapshot(info.id, info.generation))}));
     } else {
       this.groups = [{id:randomUUID(),name:'기본 그룹',cwd:homedir(),profileId:this.profiles[0]?.id || '',revision:0,layout:null}];
@@ -99,7 +110,7 @@ export class HostCore {
     return result;
   }
   getState(): HostState {
-    return structuredClone({ hostId:this.hostId, bootId:this.bootId, name:this.settings.name, version:APP_VERSION, protocolVersion:PROTOCOL_VERSION, capabilities:['control.acquire-if-free','files.read','git.read','layout.tabs'], groups:this.groups, terminals:this.terminals, profiles:this.profiles, settings:this.settings, ...(this.storageError ? {storageError:this.storageError} : {}) });
+    return structuredClone({ hostId:this.hostId, bootId:this.bootId, name:this.settings.name, version:APP_VERSION, protocolVersion:PROTOCOL_VERSION, capabilities:['control.acquire-if-free','files.read','git.read','layout.tabs','worktrees.manage'], groups:this.groups, terminals:this.terminals, repositories:this.repositories,worktrees:this.worktrees,worktreeOperations:this.worktreeOperations,profiles:this.profiles, settings:this.settings, ...(this.storageError ? {storageError:this.storageError} : {}) });
   }
   connect(ctx: ConnectionContext, send: Send): void {
     if (!this.initialized || this.closing || this.shutdownPrepared) throw new AppError('HOST_UNAVAILABLE','호스트가 준비되지 않았습니다.');
@@ -117,6 +128,14 @@ export class HostCore {
   async handle(method: string, params: unknown, ctx: ConnectionContext): Promise<any> {
     // Filesystem latency must not block heartbeat, terminal input or shutdown.
     if (method === 'files.list' || method === 'files.preview' || method === 'git.status') return this.readFiles(method, params, ctx);
+    if (method.startsWith('projects.') || method.startsWith('worktrees.')) return this.projectRequest(method,params,ctx);
+    if(method==='terminals.create'||method==='terminals.restart') {
+      const client=this.connectedClient(ctx);
+      const p=z.object({worktreeId:idSchema.optional(),tabTarget:idSchema.optional(),splitTarget:idSchema.optional(),id:idSchema.optional()}).passthrough().parse(params);
+      const source=this.terminals.find(t=>t.id===(method==='terminals.restart'?p.id:p.tabTarget||p.splitTarget));
+      const linked=this.worktrees.find(w=>w.id===(p.worktreeId||source?.worktreeId));
+      if(linked)await this.projectRead(()=>validateWorktree(this.repository(linked.repositoryId),linked,this.options.dataDir),client);
+    }
     const task = this.queue.then(async () => {
       if (this.closing || this.shutdownPrepared) throw new AppError('HOST_UNAVAILABLE','호스트가 종료 중입니다.');
       const client = this.clients.get(ctx.id);
@@ -128,7 +147,7 @@ export class HostCore {
           this.settings=before.settings;this.groups=before.groups;
           // A PTY can exit while cwd validation awaits I/O. Roll back only the
           // metadata owned by this mutation, retaining actual lifecycle state.
-          this.terminals=before.terminals.map(old=>{const current=this.terminals.find(t=>t.id===old.id)||old;Object.assign(current,{title:old.title,groupId:old.groupId,profileId:old.profileId,cwd:old.cwd});if(method==='settings.update')current.historyAvailable=old.historyAvailable;return current;});
+          this.terminals=before.terminals.map(old=>{const current=this.terminals.find(t=>t.id===old.id)||old;Object.assign(current,{title:old.title,groupId:old.groupId,profileId:old.profileId,cwd:old.cwd,worktreeId:old.worktreeId});if(method==='settings.update')current.historyAvailable=old.historyAvailable;return current;});
         }
         if(error instanceof AppError && error.code==='STORAGE_ERROR')this.broadcastState();
         throw error;
@@ -136,6 +155,174 @@ export class HostCore {
     });
     this.queue = task.catch(() => undefined);
     return task;
+  }
+  private connectedClient(ctx:ConnectionContext) {
+    if(this.closing||this.shutdownPrepared)throw new AppError('HOST_UNAVAILABLE','호스트가 종료 중입니다.');
+    const client=this.clients.get(ctx.id);
+    if(!client||client.ctx.deviceId!==ctx.deviceId)throw new AppError('NOT_CONNECTED','연결을 다시 열어 주세요.');
+    return client;
+  }
+  private async projectRead<T>(read:()=>Promise<T>,client:Client) {
+    if(this.projectReads>=4)throw new AppError('WORKTREE_BUSY','다른 프로젝트 조회가 끝난 뒤 다시 시도해 주세요.');
+    this.projectReads++;
+    try{const value=await read();this.requireClient(client);if(this.closing||this.shutdownPrepared)throw new AppError('HOST_UNAVAILABLE','호스트가 종료 중입니다.');return value;}
+    finally{this.projectReads--;}
+  }
+  /** Only short metadata/PTY commits use the terminal queue; Git never runs on it. */
+  private projectCommit<T>(change:()=>T|Promise<T>):Promise<T> {
+    const task=this.queue.then(async()=>{
+      const before=this.getState(),version=this.metadataVersion;
+      try{return await change();}
+      catch(error){
+        if((error instanceof AppError&&error.code==='STORAGE_ERROR')||version===this.metadataVersion){
+          this.groups=before.groups;this.repositories=before.repositories||[];this.worktrees=before.worktrees||[];this.worktreeOperations=before.worktreeOperations||[];
+          this.terminals=before.terminals.map(old=>{const current=this.terminals.find(t=>t.id===old.id)||old;Object.assign(current,{groupId:old.groupId,worktreeId:old.worktreeId});return current;});
+          this.broadcastState();
+        }
+        throw error;
+      }
+    });
+    this.queue=task.catch(()=>undefined);return task;
+  }
+  private repository(id:string){const value=this.repositories.find(item=>item.id===id);if(!value)throw new AppError('PROJECT_NOT_FOUND','프로젝트를 찾을 수 없습니다.');return value;}
+  private worktree(id:string){const value=this.worktrees.find(item=>item.id===id);if(!value)throw new AppError('WORKTREE_NOT_FOUND','워크트리를 찾을 수 없습니다.');return value;}
+  private operation(id:string){const value=this.worktreeOperations.find(item=>item.id===id);if(!value)throw new AppError('OPERATION_NOT_FOUND','워크트리 작업 기록을 찾을 수 없습니다.');return value;}
+  private mergeProject(repository:Repository,inspection:ProjectInspection) {
+    if(!samePath(repository.commonDir,inspection.commonDir))throw new AppError('WORKTREE_CHANGED','저장소 연결이 바뀌었습니다.');
+    repository.checkedAt=Date.now();delete repository.error;
+    const previous=this.worktrees.filter(item=>item.repositoryId===repository.id);
+    const next=inspection.worktrees.map(item=>{
+      const old=previous.find(old=>samePath(old.path,item.path));
+      const recovered=this.worktreeOperations.find(op=>op.repositoryId===repository.id&&op.kind==='create'&&op.path&&samePath(op.path,item.path)&&op.head===item.head&&op.branch===item.branch);
+      return {...old,...item,id:old?.id||recovered?.worktreeId||randomUUID(),repositoryId:repository.id,name:old?.name||recovered?.name||(item.main?'원래 작업':item.branch||basename(item.path)),managed:old?.managed||Boolean(recovered),...(old?.status==='removing'?{status:'removing' as const}:{})};
+    });
+    for(const old of previous)if(!next.some(item=>item.id===old.id))next.push({...old,status:'missing',reason:'폴더 확인 필요'});
+    this.worktrees=[...this.worktrees.filter(item=>item.repositoryId!==repository.id),...next];
+    for(const op of this.worktreeOperations.filter(op=>op.repositoryId===repository.id&&op.status==='attention')){
+      if(op.kind==='create'&&next.some(item=>item.id===op.worktreeId&&item.status==='ready'))Object.assign(op,{status:'succeeded',message:'워크트리를 다시 연결했습니다. 이름을 누르면 터미널을 열 수 있습니다.'});
+      if(op.kind==='remove'&&!inspection.worktrees.some(item=>op.path&&samePath(item.path,op.path))){this.worktrees=this.worktrees.filter(item=>item.id!==op.worktreeId);Object.assign(op,{status:'succeeded',message:'워크트리 삭제 결과를 확인했습니다. 브랜치는 남아 있습니다.'});}
+    }
+  }
+  private assertNoWorktreeTerminals(worktree:Worktree) {
+    if(this.terminals.some(t=>t.worktreeId===worktree.id||within(worktree.path,t.cwd)||(t.currentCwd&&within(worktree.path,t.currentCwd))))throw new AppError('WORKTREE_IN_USE','이 폴더를 사용하는 터미널이 있습니다. 다른 그룹의 터미널과 종료된 탭도 먼저 닫아 주세요.');
+  }
+  private async openWorktree(worktree:Worktree,group:Group,client:Client,preferredId?:string,tabTarget?:string):Promise<TerminalInfo> {
+    this.requireClient(client);
+    if(this.closing||this.shutdownPrepared)throw new AppError('HOST_UNAVAILABLE','호스트가 종료 중입니다.');
+    if(group.repositoryId!==worktree.repositoryId)throw new AppError('WORKTREE_CHANGED','다른 프로젝트의 워크트리입니다.');
+    const terminals=this.terminals.filter(t=>t.groupId===group.id&&t.worktreeId===worktree.id);
+    const existing=terminals.find(t=>t.id===preferredId)||terminals.find(t=>t.status==='running')||terminals[0];
+    if(existing)return structuredClone(existing);
+    const target=tabTarget&&leafIds(group.layout).includes(tabTarget)?tabTarget:leafIds(group.layout)[0];
+    return this.route('terminals.create',{groupId:group.id,worktreeId:worktree.id,...(target?{tabTarget:target}:{})},client);
+  }
+  private async projectRequest(method:string,params:unknown,ctx:ConnectionContext):Promise<any> {
+    const client=this.connectedClient(ctx),ref=hostRef.passthrough().parse(params);
+    if(ref.hostId!==this.hostId||ref.bootId!==this.bootId)throw new AppError('HOST_CHANGED','호스트가 바뀌었습니다. 다시 연결해 주세요.');
+    const check=()=>{this.requireClient(client);if(this.closing||this.shutdownPrepared)throw new AppError('HOST_UNAVAILABLE','호스트가 종료 중입니다.');};
+    if(method==='projects.inspect'){
+      const p=hostRef.extend({path:cwdSchema}).strict().parse(params);
+      return this.projectRead(()=>inspectProject(p.path,this.options.dataDir),client);
+    }
+    if(method==='projects.attach'){
+      const p=hostRef.extend({path:cwdSchema,groupId:idSchema.optional(),revision:z.number().int().nonnegative().optional()}).strict().parse(params);
+      const inspection=await this.projectRead(()=>inspectProject(p.path,this.options.dataDir),client);
+      return this.projectCommit(async()=>{
+        check();
+        let repository=this.repositories.find(item=>samePath(item.commonDir,inspection.commonDir));
+        let group=repository?this.groups.find(item=>item.repositoryId===repository!.id):undefined;
+        if(p.groupId&&group&&group.id!==p.groupId)throw new AppError('PROJECT_EXISTS','이 저장소는 이미 다른 그룹에 연결되어 있습니다. 기존 프로젝트를 열어 주세요.');
+        if(!group&&p.groupId){group=this.group(p.groupId);this.revision(group,p.revision??-1);if(group.repositoryId)throw new AppError('PROJECT_BOUND','이미 다른 저장소에 연결된 그룹입니다.');}
+        if(!repository){
+          if(this.repositories.length>=100)throw new AppError('LIMIT_REACHED','프로젝트는 호스트당 100개까지 등록할 수 있습니다.');
+          repository={id:randomUUID(),commonDir:inspection.commonDir,root:inspection.root,baseRef:inspection.baseRef,worktreeRoot:join(dirname(inspection.root),`${basename(inspection.root)}.worktrees`),checkedAt:Date.now()};this.repositories.push(repository);
+        }
+        if(!group){
+          if(this.groups.length>=100)throw new AppError('LIMIT_REACHED','그룹 개수 한도에 도달했습니다.');
+          const profile=this.profiles.find(p=>p.kind!=='wsl');if(!profile)throw new AppError('PROFILE_NOT_FOUND','프로젝트를 열 로컬 셸이 없습니다.');
+          group={id:randomUUID(),name:basename(inspection.root),cwd:inspection.selectedPath,profileId:profile.id,revision:0,layout:null};this.groups.push(group);
+        }
+        group.repositoryId=repository.id;group.revision++;
+        this.mergeProject(repository,inspection);
+        for(const terminal of this.terminals.filter(t=>t.groupId===group!.id&&!t.worktreeId)){
+          const match=this.worktrees.find(w=>w.repositoryId===repository!.id&&w.status==='ready'&&within(w.path,terminal.cwd));if(match)terminal.worktreeId=match.id;
+        }
+        this.persist(true);this.broadcastState();
+        const worktree=this.worktrees.find(w=>w.repositoryId===repository!.id&&samePath(w.path,inspection.selectedPath))!;
+        let terminalId:string|undefined,warning:string|undefined;
+        if(!p.groupId){try{terminalId=(await this.openWorktree(worktree,group,client)).id;}catch(error){warning=error instanceof AppError?error.message:'프로젝트는 연결했지만 터미널을 열지 못했습니다.';}}
+        return {groupId:group.id,worktreeId:worktree.id,terminalId,warning};
+      });
+    }
+    if(method==='worktrees.refresh'){
+      const p=hostRef.extend({repositoryId:idSchema}).strict().parse(params),repository=this.repository(p.repositoryId);
+      if(this.projectTasks.has(repository.id))throw new AppError('WORKTREE_BUSY','워크트리 작업을 처리하고 있습니다. 완료 후 갱신됩니다.');
+      try{
+        const inspection=await this.projectRead(()=>inspectKnownRepository(repository,this.options.dataDir),client);
+        return await this.projectCommit(()=>{check();if(this.projectTasks.has(repository.id))throw new AppError('WORKTREE_BUSY','워크트리 작업 완료 후 다시 갱신됩니다.');this.mergeProject(this.repository(repository.id),inspection);this.persist(true);this.broadcastState();return inspection;});
+      }catch(error){if(error instanceof AppError&&error.code!=='WORKTREE_BUSY')await this.projectCommit(()=>{check();this.repository(repository.id).error=error.message;this.persist(true);this.broadcastState();});throw error;}
+    }
+    if(method==='worktrees.open'){
+      const p=hostRef.extend({worktreeId:idSchema,groupId:idSchema,preferredId:idSchema.optional(),tabTarget:idSchema.optional()}).strict().parse(params);
+      const worktree=this.worktree(p.worktreeId),group=this.group(p.groupId);
+      // An exited/history tab remains useful even when its folder has disappeared.
+      if(!this.terminals.some(t=>t.groupId===group.id&&t.worktreeId===worktree.id))await this.projectRead(()=>validateWorktree(this.repository(worktree.repositoryId),worktree,this.options.dataDir),client);
+      return this.projectCommit(()=>{check();return this.openWorktree(this.worktree(p.worktreeId),this.group(p.groupId),client,p.preferredId,p.tabTarget);});
+    }
+    if(method==='worktrees.rename'){
+      const p=hostRef.extend({worktreeId:idSchema,name:nameSchema}).strict().parse(params);
+      return this.projectCommit(()=>{check();const worktree=this.worktree(p.worktreeId);worktree.name=p.name;this.persist(true);this.broadcastState();return structuredClone(worktree);});
+    }
+    if(method==='worktrees.operation'){
+      const p=hostRef.extend({id:idSchema}).strict().parse(params);return structuredClone(this.operation(p.id));
+    }
+    if(method==='worktrees.create'||method==='worktrees.remove'){
+      const createSchema=hostRef.extend({requestId:idSchema,groupId:idSchema,name:nameSchema,baseRef:z.string().min(1).max(300),branch:z.string().min(1).max(200).optional(),path:cwdSchema.optional(),existingBranch:z.boolean().default(false),openTerminal:z.boolean(),tabTarget:idSchema.optional()}).strict();
+      const removeSchema=hostRef.extend({requestId:idSchema,groupId:idSchema,worktreeId:idSchema,confirmed:z.literal(true)}).strict();
+      const p=method==='worktrees.create'?createSchema.parse(params):removeSchema.parse(params);
+      const fingerprint=createHash('sha256').update(JSON.stringify({...p,hostId:undefined,bootId:undefined,requestId:undefined})).digest('hex');
+      return this.projectCommit(()=>{
+        check();const old=this.worktreeOperations.find(op=>op.requestId===p.requestId);
+        if(old){if(old.fingerprint!==fingerprint)throw new AppError('REQUEST_CHANGED','같은 요청으로 다른 작업을 보낼 수 없습니다. 새로 시도해 주세요.');return structuredClone(old);}
+        const group=this.group(p.groupId);if(!group.repositoryId)throw new AppError('PROJECT_NOT_FOUND','먼저 프로젝트 폴더를 연결해 주세요.');
+        const repository=this.repository(group.repositoryId);
+        if(this.worktreeOperations.filter(op=>op.status==='pending'||op.status==='running').length>=8)throw new AppError('WORKTREE_BUSY','진행 중인 워크트리 작업이 많습니다. 완료 후 다시 시도해 주세요.');
+        const worktreeId='worktreeId' in p?p.worktreeId:randomUUID();
+        if('worktreeId' in p){const target=this.worktree(worktreeId);if(target.repositoryId!==repository.id||target.main||!target.managed)throw new AppError('WORKTREE_PROTECTED','이 프로젝트에서 앱이 만든 연결 워크트리만 삭제할 수 있습니다.');this.assertNoWorktreeTerminals(target);if(target.status!=='ready')throw new AppError('WORKTREE_UNAVAILABLE','먼저 목록을 새로고침해 폴더 상태를 확인해 주세요.');target.status='removing';}
+        const op:WorktreeOperation={id:randomUUID(),requestId:p.requestId,fingerprint,kind:'name' in p?'create':'remove',repositoryId:repository.id,groupId:group.id,worktreeId,status:'pending',createdAt:Date.now(),...('name' in p?{name:p.name}:{path:this.worktree(worktreeId).path})};
+        // Retain the latest 256 finished requests as a bounded retry journal.
+        if(this.worktreeOperations.length>=256){const oldest=this.worktreeOperations.findIndex(item=>item.status==='succeeded'||item.status==='failed');if(oldest<0)throw new AppError('LIMIT_REACHED','확인이 필요한 작업을 먼저 정리해 주세요.');this.worktreeOperations.splice(oldest,1);}
+        this.worktreeOperations.push(op);this.persist(true);this.broadcastState();
+        const previous=this.projectTasks.get(repository.id)||Promise.resolve();
+        const job=previous.catch(()=>{}).then(async()=>{
+          try{
+            if('name' in p){
+              const slug=worktreeSlug(p.name),input={name:p.name,branch:p.branch||`worktree/${slug}-${worktreeId.slice(0,8)}`,baseRef:p.baseRef,path:p.path||join(repository.worktreeRoot,`${slug}-${worktreeId.slice(0,8)}`),existingBranch:p.existingBranch};
+              const prepared=await prepareWorktree(repository,input,this.options.dataDir);
+              await this.projectCommit(()=>{Object.assign(this.operation(op.id),prepared,{status:'running'});this.persist(true);this.broadcastState();});
+              const inspection=await addWorktree(repository,prepared,this.options.dataDir);
+              await this.projectCommit(()=>{const current=this.repository(repository.id);current.baseRef=p.baseRef;this.mergeProject(current,inspection);this.persist(true);this.broadcastState();});
+              let terminalId:string|undefined,message:string|undefined;
+              if(p.openTerminal){
+                try{terminalId=(await this.projectCommit(()=>this.openWorktree(this.worktree(worktreeId),this.group(group.id),client,undefined,p.tabTarget))).id;}
+                catch(error){message=`워크트리는 만들었지만 터미널을 열지 못했습니다. ${error instanceof AppError?error.message:'이름을 눌러 다시 열어 주세요.'}`;}
+              }
+              await this.projectCommit(()=>{Object.assign(this.operation(op.id),{status:'succeeded',terminalId,message});this.persist(true);this.broadcastState();});
+            }else{
+              await this.projectCommit(()=>{this.operation(op.id).status='running';this.persist(true);this.broadcastState();});
+              const target=this.worktree(worktreeId);
+              const inspection=await removeWorktree(repository,target,this.options.dataDir,()=>this.assertNoWorktreeTerminals(this.worktree(worktreeId)));
+              await this.projectCommit(()=>{this.worktrees=this.worktrees.filter(w=>w.id!==worktreeId);this.mergeProject(this.repository(repository.id),inspection);Object.assign(this.operation(op.id),{status:'succeeded',message:'워크트리를 삭제했습니다. 브랜치는 남아 있습니다.'});this.persist(true);this.broadcastState();});
+            }
+          }catch(error){
+            try{await this.projectCommit(()=>{const current=this.operation(op.id);current.status=current.status==='running'?'attention':'failed';current.message=error instanceof AppError?error.message:'작업 결과를 확인하지 못했습니다. 목록을 새로고침해 주세요.';const target=this.worktrees.find(w=>w.id===worktreeId);if(target?.status==='removing')target.status='ready';this.persist(true);this.broadcastState();});}
+            catch{this.notice('STORAGE_ERROR','워크트리 작업 결과를 저장하지 못했습니다. 목록을 새로고침해 실제 결과를 확인해 주세요.');}
+          }
+        }).finally(()=>{if(this.projectTasks.get(repository.id)===job)this.projectTasks.delete(repository.id);});
+        this.projectTasks.set(repository.id,job);return structuredClone(op);
+      });
+    }
+    throw new AppError('UNKNOWN_METHOD','지원하지 않는 프로젝트 요청입니다.');
   }
   private async readFiles(method: string, params: unknown, ctx: ConnectionContext) {
     const p = terminalRef.extend({ root: cwdSchema, path: z.string().max(4096).default('') }).strict().parse(params);
@@ -186,6 +373,7 @@ export class HostCore {
       case 'groups.update': {
         const p = z.object({id:idSchema,name:nameSchema.optional(),cwd:cwdSchema.optional(),profileId:z.string().max(300).optional(),revision:z.number().int().nonnegative()}).strict().parse(params);
         const group = this.group(p.id); this.revision(group,p.revision);
+        if(group.repositoryId && p.cwd && !samePath(p.cwd,group.cwd))throw new AppError('PROJECT_BOUND','프로젝트에 연결된 그룹의 시작 폴더는 바꿀 수 없습니다.');
         const profile = this.profile(p.profileId || group.profileId);
         const launch = await resolveShellLaunch(profile,p.cwd || group.cwd);
         this.requireClient(client);
@@ -208,25 +396,34 @@ export class HostCore {
       }
       case 'groups.delete': {
         const p=z.object({id:idSchema,terminate:z.boolean(),revision:z.number().int().nonnegative()}).strict().parse(params);this.revision(this.group(p.id),p.revision);
+        if(this.worktreeOperations.some(op=>op.groupId===p.id&&(op.status==='pending'||op.status==='running')))throw new AppError('WORKTREE_BUSY','워크트리 작업이 끝난 뒤 프로젝트를 제거해 주세요.');
         const terminals=this.terminals.filter(t=>t.groupId===p.id);
         if (!p.terminate && terminals.some(t=>t.status==='running')) throw new AppError('CONFIRM_REQUIRED','실행 중인 터미널을 종료하려면 확인이 필요합니다.');
         for (const info of terminals) await this.removeTerminal(info);
         this.groups=this.groups.filter(g=>g.id!==p.id);this.persist(true);this.broadcastState();return {removed:true};
       }
       case 'terminals.create': {
-        const p=z.object({groupId:idSchema,profileId:z.string().max(300).optional(),cwd:cwdSchema.optional(),splitTarget:idSchema.optional(),tabTarget:idSchema.optional(),axis:z.enum(['horizontal','vertical']).optional()}).strict().parse(params);
+        const p=z.object({groupId:idSchema,profileId:z.string().max(300).optional(),cwd:cwdSchema.optional(),splitTarget:idSchema.optional(),tabTarget:idSchema.optional(),axis:z.enum(['horizontal','vertical']).optional(),worktreeId:idSchema.optional()}).strict().parse(params);
         const group=this.group(p.groupId);
         if (this.terminals.filter(t=>t.groupId===group.id).length>=16 || this.terminals.filter(t=>t.status==='running').length>=32 || this.terminals.length>=128) throw new AppError('LIMIT_REACHED','터미널 한도에 도달했습니다. 사용하지 않는 터미널을 정리해 주세요.');
         if (p.splitTarget && !leafIds(group.layout).includes(p.splitTarget)) throw new AppError('INVALID_TARGET','분할할 터미널을 찾을 수 없습니다.');
         if (p.tabTarget && (p.splitTarget || p.axis || !leafIds(group.layout).includes(p.tabTarget))) throw new AppError('INVALID_TARGET','탭을 추가할 분할 영역을 찾을 수 없습니다.');
         const target=p.tabTarget || p.splitTarget;
         const source=target ? this.terminal(target) : undefined;
+        const linked=p.worktreeId||source?.worktreeId;
+        const worktree=linked?this.worktree(linked):undefined;
+        if(worktree&&worktree.status!=='ready')throw new AppError('WORKTREE_UNAVAILABLE','워크트리 폴더를 사용할 수 없습니다. 목록을 새로고침해 주세요.');
         const profile=this.profile(p.profileId || source?.profileId || group.profileId);
-        const launch=await resolveShellLaunch(profile,p.cwd || source?.cwd || group.cwd);
+        if(worktree&&profile.kind==='wsl')throw new AppError('WORKTREE_UNSUPPORTED','워크트리 터미널은 PowerShell·CMD·Git Bash로 열어 주세요. WSL 내부 경로는 아직 지원하지 않습니다.');
+        const launch=await resolveShellLaunch(profile,p.cwd || worktree?.path || source?.cwd || group.cwd);
+        if(worktree&&!within(worktree.path,launch.cwd))throw new AppError('INVALID_CWD','연결된 워크트리 안의 시작 폴더를 선택해 주세요.');
+        const associated=worktree||this.worktrees.find(w=>w.status==='ready'&&within(w.path,launch.cwd));
+        if(this.worktrees.some(w=>w.status==='removing'&&within(w.path,launch.cwd)))throw new AppError('WORKTREE_BUSY','삭제 중인 워크트리에서는 터미널을 열 수 없습니다.');
         this.requireClient(client);
-        const info:TerminalInfo={id:randomUUID(),groupId:group.id,title:profile.name,profileId:profile.id,cwd:launch.cwd,generation:randomUUID(),status:'interrupted',cols:100,rows:30};
+        const info:TerminalInfo={id:randomUUID(),groupId:group.id,title:profile.name,profileId:profile.id,cwd:launch.cwd,generation:randomUUID(),status:'interrupted',cols:100,rows:30,...(associated?{worktreeId:associated.id}:{})};
+        const previousLayout=group.layout,previousRevision=group.revision;
         this.terminals.push(info);group.layout=p.tabTarget?appendTab(group.layout!,p.tabTarget,info.id):splitLeaf(group.layout,p.splitTarget,info.id,p.axis || 'horizontal');group.revision++;
-        this.persist(true);
+        try{this.persist(true);}catch(error){this.terminals=this.terminals.filter(t=>t.id!==info.id);group.layout=previousLayout;group.revision=previousRevision;throw error;}
         try {await this.startTerminal(info,profile,launch);} finally {this.persist();this.broadcastState();}
         return structuredClone(info);
       }
@@ -361,6 +558,7 @@ export class HostCore {
   private async restoreTerminal(info:TerminalInfo):Promise<void> {
     const previous={...info};
     try {
+      if(info.worktreeId){const worktree=this.worktree(info.worktreeId);await validateWorktree(this.repository(worktree.repositoryId),worktree,this.options.dataDir);}
       if(this.terminals.filter(item=>item.status==='running').length>=32)throw new AppError('LIMIT_REACHED','실행 가능한 터미널 수를 넘어 새 셸을 열지 못했습니다.');
       const profile=this.profile(info.profileId),launch=await resolveShellLaunch(profile,info.cwd);
       const snapshot=this.settings.recordHistory?this.store.getSnapshot(info.id,info.generation):undefined;
@@ -466,8 +664,9 @@ export class HostCore {
   private running(info:TerminalInfo){const runtime=this.runtimes.get(info.id);if(!runtime?.pty || info.status!=='running')throw new AppError('NOT_RUNNING','터미널이 종료되었습니다. 새 셸을 열어 주세요.');return runtime;}
   private revision(group:Group,revision:number){if(group.revision!==revision)throw new AppError('REVISION_CONFLICT','다른 화면에서 배치가 변경되었습니다. 최신 상태에서 다시 시도해 주세요.');}
   private checkTreeSize(node:unknown){const queue=[node];let count=0;while(queue.length){const n=queue.pop();if(++count>31)throw new AppError('INVALID_LAYOUT','분할 구조가 너무 큽니다.');if(n&&typeof n==='object'&&(n as any).type==='split'){queue.push((n as any).first,(n as any).second);}}}
-  private persisted():PersistedHost{return {schemaVersion:1,hostId:this.hostId,settings:this.settings,groups:this.groups,terminals:this.terminals.map(({controller,pid,...info})=>info)};}
+  private persisted():PersistedHost{return {schemaVersion:2,hostId:this.hostId,settings:this.settings,groups:this.groups,terminals:this.terminals.map(({controller,pid,...info})=>info),repositories:this.repositories,worktrees:this.worktrees,worktreeOperations:this.worktreeOperations};}
   private async prepareShutdown():Promise<void>{
+    if(this.projectTasks.size)throw new AppError('WORKTREE_BUSY','워크트리 작업이 끝난 뒤 정상 종료를 다시 시도해 주세요.');
     // This runs on the mutation queue. Earlier input/layout/settings requests
     // settle first; later requests cannot change the accepted checkpoint.
     const snapshots:PersistedSnapshot[]=[];
@@ -496,7 +695,7 @@ export class HostCore {
       throw new AppError('STORAGE_ERROR',this.storageError);
     }
   }
-  private persist(required=false,clearSnapshots?:'all'|string[]){if(!this.initialized && !required)return;try{this.store.save(this.persisted(),clearSnapshots);}catch{this.storageError='설정을 저장하지 못했습니다. 디스크 공간과 접근 권한을 확인해 주세요.';if(required)throw new AppError('STORAGE_ERROR',this.storageError);}}
+  private persist(required=false,clearSnapshots?:'all'|string[]){if(!this.initialized && !required)return;try{this.store.save(this.persisted(),clearSnapshots);this.metadataVersion++;this.storageError=undefined;}catch{this.storageError='설정을 저장하지 못했습니다. 디스크 공간과 접근 권한을 확인해 주세요.';if(required)throw new AppError('STORAGE_ERROR',this.storageError);}}
   private send(client:Client,message:Parameters<Send>[0]){try{client.send(message);}catch{this.disconnect(client.ctx.id);}}
   private broadcastState(){const event={type:'state' as const,state:this.getState()};for(const client of this.clients.values())this.send(client,event);}
   private notice(code:string,message:string){for(const client of this.clients.values())this.send(client,{type:'notice',code,message});}
@@ -504,7 +703,7 @@ export class HostCore {
   private async disposeRuntime(id:string){const r=this.runtimes.get(id);if(!r)return;if(r.timer)clearTimeout(r.timer);if(r.pty)await r.stopPty?.();r.disposed=true;await r.engine.dispose();this.runtimes.delete(id);}
   private async removeTerminal(info:TerminalInfo){await this.disposeRuntime(info.id);for(const c of this.clients.values())c.attached.delete(info.id);const group=this.group(info.groupId);group.layout=removeLeaf(group.layout,info.id);group.revision++;this.terminals=this.terminals.filter(t=>t.id!==info.id);this.archivedFrames.delete(info.id);this.archivedSequences.delete(info.id);this.store.clearSnapshot(info.id);}
   async close():Promise<void>{
-    if(this.closing)return;this.closing=true;if(this.leaseTimer)clearInterval(this.leaseTimer);await this.queue;
+    if(this.closing)return;this.closing=true;if(this.leaseTimer)clearInterval(this.leaseTimer);await this.queue;await Promise.allSettled([...this.projectTasks.values()]);await this.queue;
     for(const info of this.terminals)if(info.status==='running')info.resumeOnBoot=true;
     this.persist();
     for(const info of this.terminals){const runtime=this.runtimes.get(info.id);if(runtime){try{await this.stopTerminal(info,true);}catch{}await this.disposeRuntime(info.id);}}

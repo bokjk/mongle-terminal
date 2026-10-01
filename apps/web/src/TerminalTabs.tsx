@@ -1,9 +1,10 @@
 import { useEffect, useRef, type DragEvent, type KeyboardEvent } from 'react';
 import { SquareTerminal, X } from 'lucide-react';
-import type { TerminalInfo } from '../../../packages/protocol/index';
+import type { TerminalInfo, Worktree } from '../../../packages/protocol/index';
+import { terminalLabel } from './worktree-labels';
 
-export function TerminalTabs({terminals,activeId,connected,onSelect,onClose,onRename,clickAllowed,dragEnabled,onDragStart,onDragEnd}:{
-  terminals:TerminalInfo[];activeId:string;connected:boolean;
+export function TerminalTabs({terminals,activeId,connected,worktrees,onSelect,onClose,onRename,clickAllowed,dragEnabled,onDragStart,onDragEnd}:{
+  terminals:TerminalInfo[];activeId:string;connected:boolean;worktrees?:Worktree[];
   onSelect:(id:string,focusTab?:boolean)=>void;onClose:(terminal:TerminalInfo)=>void;onRename:(terminal:TerminalInfo)=>void;clickAllowed:()=>boolean;
   dragEnabled:boolean;onDragStart:(event:DragEvent<HTMLElement>,id:string)=>void;onDragEnd:()=>void;
 }){
@@ -24,15 +25,15 @@ export function TerminalTabs({terminals,activeId,connected,onSelect,onClose,onRe
     {terminals.map(terminal=><div key={terminal.id} className={`terminal-tab ${terminal.id===activeId?'active':''}`}>
       <button ref={button=>{if(button)buttons.current.set(terminal.id,button);else buttons.current.delete(terminal.id);}}
         id={`terminal-tab-${terminal.id}`} className="terminal-tab-select pane-title" role="tab"
-        aria-label={terminal.title} aria-selected={terminal.id===activeId}
+        aria-label={terminalLabel(terminal,worktrees)} aria-selected={terminal.id===activeId}
         aria-controls={`terminal-panel-${terminal.id}`}
         draggable={dragEnabled} onDragStart={event=>{event.stopPropagation();onDragStart(event,terminal.id);}} onDragEnd={event=>{event.stopPropagation();onDragEnd();}}
-        tabIndex={terminal.id===activeId?0:-1} title={`${terminal.title} · ${terminal.currentCwd||terminal.cwd}${terminal.status==='running'?'':' · 종료됨'}${dragEnabled?' · 끌어서 이 탭 분할·이동':''}`}
+        tabIndex={terminal.id===activeId?0:-1} title={`${terminalLabel(terminal,worktrees)} · ${terminal.currentCwd||terminal.cwd}${terminal.status==='running'?'':' · 종료됨'}${dragEnabled?' · 끌어서 이 탭 분할·이동':''}`}
         onClick={()=>{if(clickAllowed())onSelect(terminal.id);}} onDoubleClick={()=>onRename(terminal)} onKeyDown={event=>navigate(event,terminal)}>
-        <SquareTerminal size={14}/><span className="terminal-tab-title">{terminal.title}</span>
+        <SquareTerminal size={14}/><span className="terminal-tab-title">{terminalLabel(terminal,worktrees)}</span>
         {terminal.status!=='running'&&<span className="terminal-tab-ended" aria-hidden="true"/>}
       </button>
-      <button className="terminal-tab-close" tabIndex={-1} aria-label={`${terminal.title} 탭 닫기`} title="터미널 종료 및 탭 닫기" disabled={!connected} onClick={()=>onClose(terminal)}><X size={13}/></button>
+      <button className="terminal-tab-close" tabIndex={-1} aria-label={`${terminalLabel(terminal,worktrees)} 탭 닫기`} title="터미널 종료 및 탭 닫기" disabled={!connected} onClick={()=>onClose(terminal)}><X size={13}/></button>
     </div>)}
   </div>;
 }

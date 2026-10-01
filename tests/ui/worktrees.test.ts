@@ -1,0 +1,78 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import path from 'node:path';
+import { tmpdir } from 'node:os';
+import { randomUUID } from 'node:crypto';
+import { createServer } from 'node:http';
+import { chromium, expect } from '@playwright/test';
+import { HostCore } from '../../packages/host/core';
+import { gitFixture } from '../helpers/git';
+import type { ConnectionContext } from '../../packages/protocol';
+
+test('worktree UI with real Git and shells: optional opening, focus, tabs, ownership, deletion and mobile', {skip:process.platform!=='win32'||!existsSync('dist/web/index.html'),timeout:120000},async t=>{
+  const fixture=await gitFixture(),host=new HostCore({dataDir:fixture.data,name:'워크트리 검증 PC'});await host.init();
+  t.after(async()=>{await host.close();assert.equal(path.dirname(fixture.root),tmpdir());assert.ok(path.basename(fixture.root).startsWith('mongle-git-'));await rm(fixture.root,{recursive:true,force:true});});
+  const ctx:ConnectionContext={id:randomUUID(),deviceId:'worktree-ui',deviceName:'검증 화면',owner:true},remote:ConnectionContext={id:randomUUID(),deviceId:'other',deviceName:'다른 기기',owner:false};
+  host.connect(ctx,()=>{});host.connect(remote,()=>{});
+  const group=host.getState().groups[0];await host.handle('groups.update',{id:group.id,revision:group.revision,name:'워크트리 프로젝트',cwd:fixture.repository,profileId:'cmd'},ctx);
+  const browser=await chromium.launch({channel:'chrome',headless:true});t.after(()=>browser.close());
+  const page=await browser.newPage({viewport:{width:1440,height:900}});page.setDefaultTimeout(15000);
+  const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
+  const server=createServer(async(req,res)=>{try{const file=path.resolve('dist/web',new URL(req.url||'/','http://localhost').pathname.slice(1)||'index.html');if(!file.startsWith(path.resolve('dist/web')+path.sep))throw new Error();res.setHeader('Content-Type',file.endsWith('.js')?'application/javascript':file.endsWith('.css')?'text/css':file.endsWith('.png')?'image/png':'text/html');res.end(await readFile(file));}catch{res.writeHead(404).end();}});
+  await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>new Promise<void>(resolve=>server.close(()=>resolve())));const address=server.address();assert.ok(address&&typeof address!=='string');
+  let delivery=Promise.resolve(),loseCreateResponse=false,delayedOpen:{entered:boolean;release:Promise<void>}|undefined;
+  await page.exposeBinding('worktreeRequest',async(_source,method:string,params:unknown)=>{const result=await host.handle(method,params,ctx);await delivery;if(method==='worktrees.create'&&loseCreateResponse){loseCreateResponse=false;throw new Error('검증용 응답 유실');}if(method==='worktrees.open'&&delayedOpen){const gate=delayedOpen;gate.entered=true;await gate.release;delayedOpen=undefined;}return result;});
+  host.connect(ctx,event=>{delivery=delivery.then(()=>page.evaluate(value=>(window as any).__worktreeListeners?.forEach((fn:any)=>fn(value)),event)).catch(()=>{});});
+  await page.addInitScript('window.__name=function(fn){return fn;};');
+  await page.addInitScript(({connectionId})=>{const listeners=new Set();(window as any).__worktreeListeners=listeners;(window as any).mongle={request:(method:string,params:unknown)=>(window as any).worktreeRequest(method,params),subscribe:(fn:any)=>{listeners.add(fn);return()=>listeners.delete(fn);},onConnection:(fn:any)=>{fn({status:'connected',owner:true,connectionId});return()=>{};},listHosts:async()=>[{id:'local',name:'워크트리 검증 PC',local:true,selected:true}]};},{connectionId:ctx.id});
+  const output=path.resolve('test-results/worktrees');await mkdir(output,{recursive:true});
+  const pane=(id:string)=>page.locator(`[data-terminal-id="${id}"]`);
+  const worktree=(name:string)=>host.getState().worktrees!.find(w=>w.name===name)!;
+  const terminals=(id:string)=>host.getState().terminals.filter(t=>t.worktreeId===id);
+  try{
+    await page.goto(`http://127.0.0.1:${address.port}`);
+    await page.getByLabel('워크트리 프로젝트 그룹 메뉴').click();await page.getByRole('button',{name:'프로젝트 연결',exact:true}).click();await page.getByRole('dialog').getByRole('button',{name:'연결',exact:true}).click();
+    await expect(page.getByRole('button',{name:'원래 작업 워크트리 열기'})).toBeVisible();assert.equal(host.getState().terminals.length,0);
+    await page.getByRole('button',{name:'프로젝트 열기',exact:true}).click();await page.getByLabel('프로젝트 폴더').fill(fixture.repository);await page.getByRole('dialog').getByRole('button',{name:'프로젝트 열기',exact:true}).click();
+    await expect(page.getByRole('dialog')).toHaveCount(0);await expect.poll(()=>host.getState().terminals.length).toBe(1);
+    const original=host.getState().terminals[0];await expect(pane(original.id)).toBeVisible();
+    await page.getByRole('button',{name:'워크트리',exact:true}).click();await page.keyboard.press('Escape');await expect(page.getByRole('dialog')).toHaveCount(0);
+    await page.getByRole('button',{name:'워크트리',exact:true}).click();await page.getByLabel('워크트리 이름',{exact:true}).fill('로그인 수정');await page.getByLabel('생성 후 터미널 열기').uncheck();
+    await page.screenshot({animations:'disabled',path:path.join(output,'create-without-terminal.png')});
+    await page.getByRole('button',{name:'워크트리 만들기',exact:true}).click();await expect(page.getByRole('dialog')).toHaveCount(0);assert.equal(host.getState().terminals.length,1);await expect(pane(original.id)).toBeVisible();
+    const login=worktree('로그인 수정');assert.ok(login.managed);
+    await page.getByRole('button',{name:'로그인 수정 워크트리 열기'}).dblclick();await expect.poll(()=>terminals(login.id).length).toBe(1);
+    const loginTerminal=terminals(login.id)[0];await expect(pane(loginTerminal.id)).toBeVisible();await expect(page.getByRole('tab',{name:/로그인 수정 ·/})).toHaveAttribute('aria-selected','true');
+    await pane(loginTerminal.id).getByRole('button',{name:'탭 추가',exact:true}).click();await expect(page.getByLabel('시작 폴더',{exact:true})).toHaveValue(login.path);await page.getByRole('button',{name:'터미널 열기',exact:true}).click();
+    await expect.poll(()=>terminals(login.id).length).toBe(2);const extra=terminals(login.id).find(t=>t.id!==loginTerminal.id)!;await expect(pane(extra.id)).toBeVisible();
+    await page.locator(`#terminal-tab-${extra.id}`).dblclick();await page.getByLabel('이름',{exact:true}).fill('테스트');await page.getByRole('button',{name:'저장',exact:true}).click();
+    await expect(page.getByRole('tab',{name:'로그인 수정 · 테스트'})).toBeVisible();
+    await page.getByRole('button',{name:'원래 작업 워크트리 열기'}).click();await page.getByRole('button',{name:'로그인 수정 워크트리 열기'}).click();await expect(pane(extra.id)).toBeVisible();assert.equal(terminals(login.id).length,2);
+    await page.getByRole('button',{name:'워크트리',exact:true}).click();await page.getByLabel('워크트리 이름',{exact:true}).fill('디자인 변경');await expect(page.getByLabel('생성 후 터미널 열기')).toBeChecked();await page.getByRole('button',{name:'만들고 터미널 열기'}).click();await expect(page.getByRole('dialog')).toHaveCount(0);
+    const design=worktree('디자인 변경'),designTerminal=terminals(design.id)[0];await expect(pane(designTerminal.id)).toBeVisible();
+    await writeFile(path.join(design.path,'design-only.txt'),'separate worktree');assert.equal(existsSync(path.join(fixture.repository,'design-only.txt')),false);assert.equal(existsSync(path.join(login.path,'design-only.txt')),false);
+    await page.getByRole('button',{name:'원래 작업 워크트리 열기'}).click();
+    const state=host.getState();await host.handle('control.acquire',{hostId:state.hostId,bootId:state.bootId,id:designTerminal.id,generation:designTerminal.generation,cols:90,rows:24},remote);
+    await page.getByRole('button',{name:'디자인 변경 워크트리 열기'}).click();await expect(pane(designTerminal.id)).toBeVisible();assert.equal(host.getState().terminals.find(t=>t.id===designTerminal.id)?.controller?.connectionId,remote.id);
+    assert.equal(host.getState().terminals.find(t=>t.id===original.id)?.pid,original.pid);
+    await page.screenshot({animations:'disabled',path:path.join(output,'desktop.png')});
+    await page.getByRole('button',{name:'로그인 수정 터미널 2개 선택'}).click();await page.getByRole('dialog').getByRole('button',{name:/로그인 수정 · 테스트/}).click();await expect(pane(extra.id)).toBeVisible();
+    let releaseOpen!:()=>void;delayedOpen={entered:false,release:new Promise<void>(resolve=>releaseOpen=resolve)};
+    await page.getByRole('button',{name:'디자인 변경 워크트리 열기'}).click();await expect.poll(()=>delayedOpen?.entered).toBe(true);
+    await page.getByRole('tab',{name:/원래 작업 ·/}).click();await expect(pane(original.id)).toBeVisible();releaseOpen();await expect(page.getByRole('button',{name:'디자인 변경 워크트리 열기'})).toBeEnabled();await expect(pane(original.id)).toBeVisible();
+    await page.getByLabel('로그인 수정 워크트리 메뉴').click();await page.getByRole('button',{name:'워크트리 삭제…',exact:true}).click();await page.getByRole('dialog').getByRole('button',{name:'워크트리 삭제',exact:true}).click();await expect(page.getByRole('dialog').getByRole('alert')).toContainText('터미널');await page.getByRole('dialog').getByRole('button',{name:'취소',exact:true}).click();
+    for(const terminal of terminals(login.id)){
+      await page.getByRole('button',{name:`로그인 수정 · ${terminal.title} 탭 닫기`,exact:true}).click();await page.getByRole('dialog').getByRole('button',{name:'종료하고 닫기',exact:true}).click();await expect.poll(()=>host.getState().terminals.some(t=>t.id===terminal.id)).toBe(false);
+    }
+    await expect(page.getByRole('button',{name:'로그인 수정 워크트리 열기'})).toBeVisible();await page.getByRole('button',{name:'로그인 수정 워크트리 열기'}).click();await expect.poll(()=>terminals(login.id).length).toBe(1);assert.notEqual(terminals(login.id)[0].id,loginTerminal.id);
+    await page.reload();await expect(page.getByRole('button',{name:'로그인 수정 워크트리 열기'})).toBeVisible();assert.equal(terminals(login.id).length,1);
+    await page.getByRole('button',{name:'워크트리',exact:true}).click();await page.getByLabel('워크트리 이름',{exact:true}).fill('응답 복구');await page.getByLabel('생성 후 터미널 열기').uncheck();
+    await page.getByText('고급 설정',{exact:true}).click();await page.getByLabel('기존 브랜치 연결').check();await expect(page.getByLabel('연결할 브랜치').locator('option[value="main"]')).toHaveJSProperty('disabled',true);await page.getByLabel('기존 브랜치 연결').uncheck();
+    loseCreateResponse=true;await page.getByRole('button',{name:'워크트리 만들기',exact:true}).click();await expect(page.getByRole('alert')).toContainText('응답 유실');await expect(page.getByLabel('워크트리 이름',{exact:true})).toBeDisabled();
+    await page.getByRole('button',{name:'결과 확인',exact:true}).click();await expect(page.getByRole('dialog')).toHaveCount(0);assert.equal(host.getState().worktrees!.filter(w=>w.name==='응답 복구').length,1);assert.equal(terminals(worktree('응답 복구').id).length,0);
+    await page.setViewportSize({width:390,height:844});await page.getByRole('button',{name:'그룹 메뉴 열기'}).click();await expect(page.getByRole('button',{name:'디자인 변경 워크트리 열기'})).toBeVisible();await page.screenshot({animations:'disabled',path:path.join(output,'mobile-sidebar.png')});await page.getByRole('button',{name:'디자인 변경 워크트리 열기'}).click();await expect(pane(designTerminal.id)).toBeVisible();await expect(page.locator('.sidebar.open')).toHaveCount(0);await page.screenshot({animations:'disabled',path:path.join(output,'mobile-terminal.png')});
+    assert.deepEqual(errors,[]);
+  }catch(error){await page.screenshot({animations:'disabled',path:path.join(output,'failure.png')}).catch(()=>{});throw error;}
+});

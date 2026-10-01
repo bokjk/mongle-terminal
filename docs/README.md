@@ -22,6 +22,7 @@
 | [04. 구현 순서와 검증](04-implementation-and-validation.md) | P0 실험 4개, 작업 의존성, 기능 24개·보안/복구 12개 시나리오 |
 | [05. 오픈소스 비교](05-open-source-comparison.md) | Herdr·Paseo·Orca·Wave·Tabby·WezTerm 비교와 적용 결정 |
 | [06. 검토 및 현재 검증 상태](06-review-and-status.md) | 설계 검토에서 발견한 사항, 수정 결과, 미검증 범위 |
+| [07. 워크트리 기능 설계안](07-worktrees-design.md) | 미배포 기능의 설계 기준: 프로젝트 등록, 선택적 터미널 생성, 클릭 시 포커스, 저장·복구·삭제 |
 
 ## 정한 방향
 

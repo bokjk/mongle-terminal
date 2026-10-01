@@ -123,6 +123,55 @@ button.host-select:hover { background: var(--surface-hover); border-color: var(-
 .sidebar-section-label { display: flex; justify-content: space-between; align-items: center; padding: 0 11px 9px; color: var(--text-muted); font-size: 10px; font-weight: 600; letter-spacing: .8px; text-transform: uppercase; }
 .sidebar-section-label .icon-button { width: 32px; height: 32px; min-height: 32px; margin-right: -6px; }
 .group-list { display: flex; flex-direction: column; gap: 4px; overflow-y: auto; padding: 2px 2px 20px; }
+.button.project-open { justify-content: flex-start; flex-shrink: 0; margin: 0 2px 14px; color: var(--text); }
+.project-group { flex-shrink: 0; min-width: 0; }
+.group-row .group-collapse { flex-shrink: 0; width: 22px; min-width: 22px; height: 28px; min-height: 28px; margin-left: -6px; margin-right: -6px; }
+.worktree-list { margin: 5px 0 12px 13px; padding-left: 8px; border-left: 1px solid var(--border-subtle); }
+.worktree-row { position: relative; display: flex; align-items: center; gap: 3px; min-height: 52px; margin: 2px 0; border-radius: var(--radius-sm); color: var(--text-secondary); }
+.worktree-row:hover { background: var(--surface-hover); }
+.worktree-row.selected { background: var(--accent-dim); color: var(--text); }
+.worktree-row.selected::before { content: ''; position: absolute; left: -9px; top: 8px; bottom: 8px; width: 2px; border-radius: 2px; background: var(--accent); }
+.worktree-main { display: flex; flex: 1; gap: 9px; align-items: center; min-width: 0; padding: 9px 5px 9px 8px; border: 0; background: transparent; text-align: left; color: inherit; }
+.worktree-main > svg { flex-shrink: 0; color: var(--text-muted); }
+.selected .worktree-main > svg { color: var(--accent); }
+.worktree-main > span { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.worktree-main strong { font-size: 12px; font-weight: 500; }
+.worktree-main small { font-size: 10px; color: var(--text-muted); }
+.worktree-main strong, .worktree-main small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.worktree-count { display: flex; align-items: center; justify-content: center; gap: 3px; min-width: 27px; min-height: 26px; padding: 3px 5px; border: 1px solid var(--border-subtle); border-radius: 5px; background: var(--surface-raised); color: var(--text-secondary); font-size: 10px; font-variant-numeric: tabular-nums; }
+.worktree-empty { font-size: 9px; color: var(--text-muted); }
+.worktree-actions > summary.icon-button { min-width: 20px; width: 20px; min-height: 28px; height: 28px; }
+.worktree-actions > div { right: 0; }
+.worktree-add { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 35px; padding: 8px; margin-top: 4px; border: 0; border-radius: var(--radius-sm); color: var(--text-secondary); background: transparent; text-align: left; font-size: 12px; }
+.worktree-add:hover { color: var(--text); background: var(--surface-hover); }
+.worktree-status { display: flex; align-items: center; gap: 6px; padding: 5px 8px; font-size: 10px; color: var(--text-muted); }
+.worktree-result { margin: 8px 0; padding: 9px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 11px; line-height: 1.6; color: var(--text-secondary); overflow-wrap: anywhere; }
+.worktree-result .button { padding: 5px 0; font-size: 10px; }
+.project-context { display: flex; align-items: center; gap: 8px; margin: 0 0 18px; color: var(--text); font-size: 12px; }
+.project-context > span { color: var(--text-muted); }
+.project-context > svg { color: var(--accent); }
+.worktree-preview { display: flex; flex-direction: column; gap: 7px; padding: 12px; margin: 14px 0; border: 1px solid var(--border-subtle); border-radius: var(--radius); background: var(--bg); overflow-wrap: anywhere; }
+.worktree-preview > span { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--text-secondary); }
+.worktree-preview small, .worktree-path { color: var(--text-muted); font-family: var(--mono); font-size: 11px; overflow-wrap: anywhere; }
+.worktree-advanced { margin: 16px 0; }
+.worktree-advanced > summary { color: var(--text-secondary); font-size: 12px; cursor: pointer; padding: 4px 0; }
+.worktree-advanced[open] > summary { margin-bottom: 12px; }
+.worktree-check { display: flex; align-items: flex-start; gap: 10px; padding: 8px 0; font-size: 12px; cursor: pointer; }
+.worktree-check input { accent-color: var(--accent); flex-shrink: 0; margin-top: 2px; width: 15px; height: 15px; }
+.worktree-check small { display: block; margin-top: 5px; color: var(--text-muted); font-size: 11px; line-height: 1.5; }
+.primary-choice { border-top: 1px solid var(--border-subtle); padding-top: 16px; }
+.worktree-location { flex-shrink: 0; color: var(--warning); font-size: 10px; }
+.spin { animation: worktree-spin 1s linear infinite; }
+@keyframes worktree-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spin { animation: none; } }
+@media (max-width: 700px) {
+  .worktree-main, .worktree-count, .worktree-add, .worktree-actions > summary.icon-button { min-height: 44px; }
+  .worktree-count, .worktree-actions > summary.icon-button { min-width: 44px; }
+  .worktree-main { gap: 6px; padding-left: 5px; }
+  .worktree-count > svg { display: none; }
+  .worktree-list { margin-left: 7px; padding-left: 6px; }
+  .worktree-location { max-width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}
 .group-row { position: relative; display: flex; align-items: center; gap: 10px; width: 100%; min-height: 43px; padding: 10px 12px; border: 1px solid transparent; border-radius: 7px; background: transparent; color: var(--text-secondary); text-align: left; }
 .group-row:hover { color: var(--text); background: var(--surface-hover); }
 .group-row.active { color: var(--text); background: var(--surface-hover); border-color: var(--border); }

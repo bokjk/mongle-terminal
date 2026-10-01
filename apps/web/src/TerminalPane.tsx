@@ -11,6 +11,7 @@ import { transformInput } from '../../../packages/ui/layout';
 import type { PaneDropPreview } from './use-pane-drag';
 import { attachTerminalTap } from './terminal-tap';
 import { terminalThemes as themes, terminalMinimumContrast } from './terminal-theme';
+import { terminalLabel, outsideWorktree } from './worktree-labels';
 
 export interface PaneActions { key(data:string):void; paste(text:string):void; focus():void; search():void; }
 export interface PaneProps {
@@ -27,6 +28,8 @@ function inputLatch(client:AppClient,state:HostState,info:TerminalInfo){let sess
 export function TerminalPane(props:PaneProps) {
   const {client,state,info} = props;
   const displayedCwd = info.currentCwd || info.cwd;
+  const worktree=state.worktrees?.find(item=>item.id===info.worktreeId);
+  const label=terminalLabel(info,state.worktrees);
   const mount = useRef<HTMLDivElement>(null);
   const toolbarDrag = useRef(false);
   const contextPointer = useRef('mouse');
@@ -288,7 +291,7 @@ export function TerminalPane(props:PaneProps) {
   const otherOwner=controlOwner&&controlOwner.connectionId!==props.connectionId?controlOwner:undefined;
   return <section className={`pane ${props.selected?'active':''} ${props.maximized?'maximized':''}`} id={`terminal-panel-${info.id}`} role={props.tabbed?'tabpanel':undefined} aria-labelledby={props.tabbed?`terminal-tab-${info.id}`:undefined} data-terminal-id={info.id} aria-label={props.tabbed?undefined:`${info.title} 패널`} onFocusCapture={()=>props.onSelect()} onPointerDown={event=>{contextPointer.current=event.pointerType;const target=event.target as Element;if(props.dragEnabled&&target.closest('.pane-header')&&!target.closest('.pane-toolbar'))return;props.onSelect();}} onDragOverCapture={event=>{event.preventDefault();event.stopPropagation();props.onPaneDragOver?.(event);}} onDropCapture={event=>{event.preventDefault();event.stopPropagation();props.onPaneDrop?.(event);}}>
     <header className={`pane-header ${props.tabs?'pane-tab-header':''}`} draggable={Boolean(props.dragEnabled)} onPointerDown={event=>{toolbarDrag.current=Boolean((event.target as Element).closest('.pane-toolbar,.new-tab,.terminal-tab-close'));props.onPanePointerStart?.();}} onDragStart={event=>{if(!props.dragEnabled||toolbarDrag.current||(event.target as Element).closest('.pane-toolbar,.new-tab,.terminal-tab-close')){event.preventDefault();return;}props.onPaneDragStart?.(event);}} onDragEnd={props.onPaneDragEnd}>
-      {props.tabs?<>{props.dragEnabled&&<span className="pane-drag-handle" title="끌어서 영역과 모든 탭 배치" aria-label="패널 끌어서 배치"><GripVertical size={15}/></span>}{props.tabs}<button className="icon-button new-tab" aria-label="탭 추가" title={props.canAddTab?'이 영역에 새 탭 (Ctrl+Shift+T)':'탭 추가는 호스트 업데이트가 필요합니다'} disabled={!props.connected||!props.canAddTab} onClick={props.onNewTab}><span aria-hidden="true">+</span></button></>:props.dragEnabled?<><span className="pane-drag-handle" title="끌어서 패널 배치" aria-label="패널 끌어서 배치"><GripVertical size={15}/></span><span className="pane-title" onDoubleClick={props.onRename} onClick={focusTitle} title={`${displayedCwd} · 끌어서 패널 배치`}>{info.title}</span></>:<><SquareTerminal size={14}/><button className="pane-title" onPointerDown={event=>event.preventDefault()} onDoubleClick={props.onRename} onClick={focusTitle} title={displayedCwd}>{info.title}</button></>}
+      {props.tabs?<>{props.dragEnabled&&<span className="pane-drag-handle" title="끌어서 영역과 모든 탭 배치" aria-label="패널 끌어서 배치"><GripVertical size={15}/></span>}{props.tabs}<button className="icon-button new-tab" aria-label="탭 추가" title={props.canAddTab?'이 영역에 새 탭 (Ctrl+Shift+T)':'탭 추가는 호스트 업데이트가 필요합니다'} disabled={!props.connected||!props.canAddTab} onClick={props.onNewTab}><span aria-hidden="true">+</span></button></>:props.dragEnabled?<><span className="pane-drag-handle" title="끌어서 패널 배치" aria-label="패널 끌어서 배치"><GripVertical size={15}/></span><span className="pane-title" onDoubleClick={props.onRename} onClick={focusTitle} title={`${displayedCwd} · 끌어서 패널 배치`}>{label}</span></>:<><SquareTerminal size={14}/><button className="pane-title" onPointerDown={event=>event.preventDefault()} onDoubleClick={props.onRename} onClick={focusTitle} title={displayedCwd}>{label}</button></>}
       {!props.tabs&&<span className="pane-meta">{info.status==='running'?(controlled?'제어 중':'보기 전용'):info.status==='interrupted'?'중단됨':'종료됨'}</span>}
       <div className="pane-toolbar">
         <button className="icon-button" title="터미널 검색" aria-label="터미널 검색" onClick={()=>setSearchOpen(!searchOpen)}><Search size={14}/></button>
@@ -324,7 +327,7 @@ export function TerminalPane(props:PaneProps) {
     {(frameError||inputUncertain)&&<div className="connection-banner warning">{inputUncertain?'마지막 입력의 전달 여부를 확인해 주세요. 확인 후 제어권을 다시 가져올 수 있습니다.':frameError}</div>}
     {info.restoreError&&<div className="connection-banner warning">{info.restoreError}{info.historyAvailable?' 이전 기록은 그대로 남아 있습니다.':''}</div>}
     {historyTruncated&&<div className="history-notice">오래된 출력 일부를 생략하고 최근 기록을 표시합니다.</div>}
-    <footer className="pane-footer"><span title={`${info.currentCwd?'현재 폴더':'시작 폴더 · 현재 경로 보고 없음'}: ${displayedCwd}`}>{displayedCwd}</span>{info.status==='running'?
+    <footer className="pane-footer"><span title={`${info.currentCwd?'현재 폴더':'시작 폴더 · 현재 경로 보고 없음'}: ${displayedCwd}`}>{displayedCwd}</span>{outsideWorktree(info,worktree)&&<span className="worktree-location">다른 폴더에서 작업 중</span>}{info.status==='running'?
       busy?<span className="control-chip" role="status">연결 중…</span>:
       controlled&&!inputUncertain&&!frameError?<span className="control-chip controlled"><Keyboard size={12}/>여기서 제어 중</span>:
       otherOwner||inputUncertain||controlError||frameError?<button className="control-chip" disabled={!props.connected} onPointerDown={e=>e.preventDefault()} onClick={()=>void acquireRef.current(true)}><Eye size={12}/>{inputUncertain?'입력 확인 후 다시 제어':controlError||frameError?'제어 다시 시도':otherOwner?`${otherOwner.deviceName}에서 제어 · 가져오기`:'여기서 제어'}</button>:
