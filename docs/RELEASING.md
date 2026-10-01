@@ -1,6 +1,6 @@
 # 배포와 자동 업데이트
 
-기준 버전: **0.3.5 Windows 미리보기**. 소스는 비공개로 유지하고 [배포 전용 공개 저장소](https://github.com/bokjk/mongle-terminal-releases/releases/latest)에 설치 파일과 업데이트 메타데이터를 게시한다. 코드 서명과 프로젝트의 오픈소스 라이선스는 아직 추가하지 않았다. 새 터미널 버튼 이름의 0.3.5 배포 준비·검증 결과는 [0.3.5 검증](validation/public-release-0.3.5.md), 이전 공개 배포는 [0.3.4 검증](validation/public-release-0.3.4.md), 공개 주소 전환 결과는 [0.3.1 검증](validation/public-release-0.3.1.md)을 확인한다.
+기준 버전: **0.3.5 Windows 미리보기**. 소스는 비공개로 유지하고 [배포 전용 공개 저장소](https://github.com/bokjk/mongle-terminal-releases/releases/latest)에 설치 파일과 업데이트 메타데이터를 게시한다. 코드 서명과 프로젝트의 오픈소스 라이선스는 아직 추가하지 않았다. 새 터미널 버튼 이름의 0.3.5 공개 게시와 기존 0.3.4 설정을 사용한 실제 업데이트 다운로드·해시 검증이 통과했다. [0.3.5 검증](validation/public-release-0.3.5.md), 이전 공개 배포는 [0.3.4 검증](validation/public-release-0.3.4.md), 공개 주소 전환 결과는 [0.3.1 검증](validation/public-release-0.3.1.md)을 확인한다.
 
 ## 배포 경로와 기존 사용자 전환
 
