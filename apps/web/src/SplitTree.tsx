@@ -12,7 +12,7 @@ const style=(rect:Rectangle):CSSProperties=>({left:css(rect.x),top:css(rect.y),w
 const measure=(value:Length,extent:number)=>extent*value.percent/100+value.pixels;
 
 /** Stable sibling slots keep each live terminal mounted when the tree changes. */
-export function SplitTree({node,renderPane,onRatio}:{node:LayoutNode;renderPane:(id:string)=>ReactNode;onRatio:(path:string,ratio:number)=>void}){
+export function SplitTree({node,renderPane,onRatio,focusedId}:{node:LayoutNode;renderPane:(id:string)=>ReactNode;onRatio:(path:string,ratio:number)=>void;focusedId?:string}){
   const box=useRef<HTMLDivElement>(null);
   const paneOrder=useRef<string[]>([]);
   const [drag,setDrag]=useState<{path:string;ratio:number}>();
@@ -36,8 +36,8 @@ export function SplitTree({node,renderPane,onRatio}:{node:LayoutNode;renderPane:
   paneOrder.current=paneOrder.current.filter(id=>liveIds.has(id));
   for(const pane of panes)if(!paneOrder.current.includes(pane.id))paneOrder.current.push(pane.id);
   panes.sort((a,b)=>paneOrder.current.indexOf(a.id)-paneOrder.current.indexOf(b.id));
-  return <div ref={box} className="split-tree split-flat">
-    {panes.map(pane=><div key={pane.id} className="split-child split-pane-slot" style={style(pane.rect)}>{renderPane(pane.id)}</div>)}
+  return <div ref={box} className={`split-tree split-flat ${focusedId?'focused':''}`}>
+    {panes.map(pane=><div key={pane.id} className="split-child split-pane-slot" hidden={Boolean(focusedId&&focusedId!==pane.id)} style={style(focusedId?{x:zero,y:zero,width:full,height:full}:pane.rect)}>{renderPane(pane.id)}</div>)}
     {dividers.map(divider=><div key={`divider:${divider.path}`} role="separator" aria-label={divider.axis==='horizontal'?'좌우 분할 크기':'상하 분할 크기'} aria-orientation={divider.axis==='horizontal'?'vertical':'horizontal'} aria-valuemin={15} aria-valuemax={85} aria-valuenow={Math.round(divider.ratio*100)} tabIndex={0} className={`split-divider ${divider.axis==='vertical'?'split-divider-horizontal':''}`} style={style(divider.rect)} title="끌어서 크기 조절 · 두 번 클릭하면 반반" onDoubleClick={()=>onRatio(divider.path,.5)} onKeyDown={event=>{if(['ArrowLeft','ArrowUp','ArrowRight','ArrowDown','Home'].includes(event.key)){event.preventDefault();onRatio(divider.path,event.key==='Home'?.5:divider.ratio+(['ArrowLeft','ArrowUp'].includes(event.key)?-.05:.05));}}} onPointerDown={event=>{if(event.button!==0)return;active.current={path:divider.path,ratio:divider.ratio};event.currentTarget.setPointerCapture(event.pointerId);}} onPointerMove={event=>{
       if(active.current?.path!==divider.path||!box.current)return;
       const bounds=box.current.getBoundingClientRect(),horizontal=divider.axis==='horizontal';
