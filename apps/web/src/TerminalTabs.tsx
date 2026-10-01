@@ -1,10 +1,11 @@
-import { useEffect, useRef, type KeyboardEvent } from 'react';
+import { useEffect, useRef, type DragEvent, type KeyboardEvent } from 'react';
 import { SquareTerminal, X } from 'lucide-react';
 import type { TerminalInfo } from '../../../packages/protocol/index';
 
-export function TerminalTabs({terminals,activeId,connected,onSelect,onClose,onRename,clickAllowed}:{
+export function TerminalTabs({terminals,activeId,connected,onSelect,onClose,onRename,clickAllowed,dragEnabled,onDragStart,onDragEnd}:{
   terminals:TerminalInfo[];activeId:string;connected:boolean;
   onSelect:(id:string,focusTab?:boolean)=>void;onClose:(terminal:TerminalInfo)=>void;onRename:(terminal:TerminalInfo)=>void;clickAllowed:()=>boolean;
+  dragEnabled:boolean;onDragStart:(event:DragEvent<HTMLElement>,id:string)=>void;onDragEnd:()=>void;
 }){
   const buttons=useRef(new Map<string,HTMLButtonElement>());
   const ids=terminals.map(terminal=>terminal.id).join(',');
@@ -25,7 +26,8 @@ export function TerminalTabs({terminals,activeId,connected,onSelect,onClose,onRe
         id={`terminal-tab-${terminal.id}`} className="terminal-tab-select pane-title" role="tab"
         aria-label={terminal.title} aria-selected={terminal.id===activeId}
         aria-controls={`terminal-panel-${terminal.id}`}
-        tabIndex={terminal.id===activeId?0:-1} title={`${terminal.title} · ${terminal.currentCwd||terminal.cwd}${terminal.status==='running'?'':' · 종료됨'}`}
+        draggable={dragEnabled} onDragStart={event=>{event.stopPropagation();onDragStart(event,terminal.id);}} onDragEnd={event=>{event.stopPropagation();onDragEnd();}}
+        tabIndex={terminal.id===activeId?0:-1} title={`${terminal.title} · ${terminal.currentCwd||terminal.cwd}${terminal.status==='running'?'':' · 종료됨'}${dragEnabled?' · 끌어서 이 탭 분할·이동':''}`}
         onClick={()=>{if(clickAllowed())onSelect(terminal.id);}} onDoubleClick={()=>onRename(terminal)} onKeyDown={event=>navigate(event,terminal)}>
         <SquareTerminal size={14}/><span className="terminal-tab-title">{terminal.title}</span>
         {terminal.status!=='running'&&<span className="terminal-tab-ended" aria-hidden="true"/>}

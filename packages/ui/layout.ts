@@ -1,4 +1,4 @@
-import { findLeaf, leafIds, type LayoutNode } from '../protocol/index';
+import { appendTab, findLeaf, leafIds, removeLeaf, type LayoutNode } from '../protocol/index';
 export function updateRatio(node: LayoutNode, path: string, ratio: number): LayoutNode {
   if (node.type === 'leaf') return node;
   if (!path) return {...node,ratio: Math.min(.85, Math.max(.15, ratio))};
@@ -40,7 +40,32 @@ export function dockLeaf(node: LayoutNode, source: string, target: string, posit
   return insert(remove(node)!);
 }
 
-/** Central half swaps panes; outer quarters dock to their nearest normalized edge. */
+/** Move one existing session into a split or another region's tab list. */
+export function dockTab(node: LayoutNode, source: string, target: string, position: PaneDropPosition): LayoutNode {
+  const sourceLeaf=findLeaf(node,source),targetLeaf=findLeaf(node,target);
+  if (!sourceLeaf || !targetLeaf) return node;
+  const sameRegion=sourceLeaf===targetLeaf;
+  if (sameRegion && (position==='center' || leafIds(sourceLeaf).length<2)) return node;
+  const remaining=removeLeaf(node,source);
+  if (!remaining) return node;
+  // Removing the primary tab promotes a sibling. Target that surviving region
+  // even when the pointer was over the very tab being detached.
+  const targetId=sameRegion?leafIds(sourceLeaf).find(id=>id!==source)!:target;
+  if (position==='center') return appendTab(remaining,targetId,source);
+  const insert=(current:LayoutNode):LayoutNode=>{
+    if (current.type==='leaf') {
+      if (!leafIds(current).includes(targetId)) return current;
+      const moved:LayoutNode={type:'leaf',terminalId:source},before=position==='left'||position==='top';
+      return {type:'split',axis:position==='left'||position==='right'?'horizontal':'vertical',ratio:0.5,
+        first:before?moved:current,second:before?current:moved};
+    }
+    const first=insert(current.first),second=insert(current.second);
+    return first===current.first&&second===current.second?current:{...current,first,second};
+  };
+  return insert(remaining);
+}
+
+/** Central half is a center drop; outer quarters dock to their nearest normalized edge. */
 export function paneDropPosition(xRatio: number, yRatio: number, allowCenter = true): PaneDropPosition {
   const clamp = (value: number) => Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0.5;
   const x = clamp(xRatio), y = clamp(yRatio);

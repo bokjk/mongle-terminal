@@ -6,9 +6,17 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { chromium, expect } from '@playwright/test';
+import { chromium, expect, type Locator, type Page } from '@playwright/test';
 import { HostCore } from '../../packages/host/core.js';
 import { findLeaf, type ConnectionContext, type TerminalInfo } from '../../packages/protocol/index.js';
+
+async function beginTabDrag(page:Page,source:Locator,target:Locator,position:'left'|'right'|'top'|'bottom'|'center'){
+  const from=await source.boundingBox(),to=await target.boundingBox();assert.ok(from&&to);
+  const x=to.x+to.width*(position==='left'?.1:position==='right'?.9:.5),y=to.y+to.height*(position==='top'?.1:position==='bottom'?.9:.5);
+  await page.mouse.move(from.x+from.width/2,from.y+from.height/2);await page.mouse.down();
+  await page.mouse.move(from.x+from.width/2+12,from.y+from.height/2+12,{steps:3});
+  await page.mouse.move(x,y,{steps:10});await page.mouse.move(x+1,y+1);
+}
 
 test('terminal tabs preserve live panes, input and layouts; remember region selection; confirm close; fit narrow screens', {
   timeout:120000,skip:process.platform!=='win32'||!existsSync('dist/web/index.html')?'Requires Windows, Chrome and built web UI.':false,
@@ -95,7 +103,7 @@ test('terminal tabs preserve live panes, input and layouts; remember region sele
     await assertStablePanes();assert.deepEqual(identity(),originalIdentity);assert.equal(lifecycle(),lifecycleStart);
     assert.deepEqual(host.getState().groups.find(item=>item.id===group.id)!.layout,originalLayout);
 
-    // Dragging an active tab's header moves its entire region, including hidden tabs.
+    // The grip moves the entire region, including hidden tabs.
     const from=await pane(first.id).locator('.pane-drag-handle').boundingBox(),to=await pane(second.id).boundingBox();assert.ok(from&&to);
     const revision=host.getState().groups.find(item=>item.id===group.id)!.revision;
     await page.mouse.move(from.x+from.width/2,from.y+from.height/2);await page.mouse.down();
@@ -108,6 +116,65 @@ test('terminal tabs preserve live panes, input and layouts; remember region sele
     await assertStablePanes();assert.equal(lifecycle(),lifecycleStart);assert.deepEqual(identity(),originalIdentity);
     await host.handle('groups.layout',{id:group.id,revision:revision+1,layout:originalLayout},context);
     await expect.poll(async()=>(await pane(first.id).boundingBox())!.x).toBe(firstBox.x);
+
+    const currentGroup=()=>host.getState().groups.find(item=>item.id===group.id)!;
+    const resetLayout=async()=>{
+      await host.handle('groups.layout',{id:group.id,revision:currentGroup().revision,layout:originalLayout},context);
+      await expect(page.getByRole('tablist')).toHaveCount(2);
+      await page.getByRole('tab',{name:'API 서버',exact:true}).click();await page.getByRole('tab',{name:'빌드 작업',exact:true}).click();
+      await expect(pane(first.id)).toBeVisible();await expect(pane(second.id)).toBeVisible();
+    };
+    const assertDragPreservesSessions=async()=>{await assertStablePanes();assert.deepEqual(identity(),originalIdentity);assert.equal(lifecycle(),lifecycleStart);assert.equal(calls.filter(call=>call.method==='terminals.create').length,0);};
+    for(const position of ['left','right','top','bottom'] as const){
+      const source=position==='left'||position==='top'?first:leftTab,remaining=source.id===first.id?leftTab:first,rev=currentGroup().revision;
+      await beginTabDrag(page,page.locator(`#terminal-tab-${source.id}`),pane(first.id),position);
+      await expect(pane(first.id).locator(`.pane-drop-preview[data-drop-position="${position}"]`)).toHaveText(`탭을 ${position==='left'?'왼쪽':position==='right'?'오른쪽':position==='top'?'위쪽':'아래쪽'}에 분할`);
+      if(position==='right')await page.screenshot({path:path.join(output,'self-tab-drag-preview.png')});
+      await page.mouse.up();await expect.poll(()=>currentGroup().revision).toBe(rev+1);
+      await expect(page.getByRole('tablist')).toHaveCount(3);await expect(page.locator('.pane:visible')).toHaveCount(3);
+      assert.deepEqual(findLeaf(currentGroup().layout,source.id),{type:'leaf',terminalId:source.id});
+      assert.deepEqual(findLeaf(currentGroup().layout,remaining.id),{type:'leaf',terminalId:remaining.id});
+      assert.deepEqual(findLeaf(currentGroup().layout,rightTab.id),findLeaf(originalLayout,rightTab.id));
+      const movedBox=await pane(source.id).boundingBox(),restBox=await pane(remaining.id).boundingBox();assert.ok(movedBox&&restBox);
+      assert.ok(position==='left'?movedBox.x<restBox.x:position==='right'?movedBox.x>restBox.x:position==='top'?movedBox.y<restBox.y:movedBox.y>restBox.y);
+      await assertDragPreservesSessions();
+      if(position==='right')await page.screenshot({path:path.join(output,'self-tab-drag-split.png')});
+      const loneRevision=currentGroup().revision;
+      await beginTabDrag(page,page.locator(`#terminal-tab-${source.id}`),pane(source.id),'left');await page.mouse.up();
+      await expect(page.locator('.pane-drop-preview')).toHaveCount(0);assert.equal(currentGroup().revision,loneRevision);
+      await resetLayout();
+    }
+    // Inactive tabs split or merge independently; the source's other tab stays put.
+    let tabRevision=currentGroup().revision;
+    await beginTabDrag(page,page.locator(`#terminal-tab-${leftTab.id}`),pane(second.id),'right');
+    await expect(pane(second.id).locator('.pane-drop-preview')).toHaveText('탭을 오른쪽에 분할');await page.mouse.up();
+    await expect.poll(()=>currentGroup().revision).toBe(tabRevision+1);await expect(page.getByRole('tablist')).toHaveCount(3);
+    assert.deepEqual(findLeaf(currentGroup().layout,first.id),{type:'leaf',terminalId:first.id});
+    assert.deepEqual(findLeaf(currentGroup().layout,rightTab.id),findLeaf(originalLayout,rightTab.id));
+    // Moving the only tab to another region's center collapses its empty source.
+    tabRevision=currentGroup().revision;
+    await beginTabDrag(page,page.locator(`#terminal-tab-${leftTab.id}`),pane(second.id),'center');
+    await expect(pane(second.id).locator('.pane-drop-preview')).toHaveText('이 영역에 탭으로 이동');await page.mouse.up();
+    await expect.poll(()=>currentGroup().revision).toBe(tabRevision+1);await expect(page.getByRole('tablist')).toHaveCount(2);await expect(pane(leftTab.id)).toBeVisible();
+    assert.deepEqual(findLeaf(currentGroup().layout,leftTab.id),{type:'leaf',terminalId:second.id,tabs:[rightTab.id,leftTab.id]});
+    await assertDragPreservesSessions();await resetLayout();
+    tabRevision=currentGroup().revision;
+    await beginTabDrag(page,page.locator(`#terminal-tab-${leftTab.id}`),pane(second.id),'center');
+    await expect(pane(second.id).locator('.pane-drop-preview')).toBeVisible();await page.keyboard.press('Escape');await page.mouse.up();
+    await expect(page.locator('.pane-drop-preview')).toHaveCount(0);assert.equal(currentGroup().revision,tabRevision);assert.deepEqual(currentGroup().layout,originalLayout);
+    await beginTabDrag(page,page.locator(`#terminal-tab-${leftTab.id}`),pane(first.id),'center');await page.mouse.up();
+    await expect(page.locator('.pane-drop-preview')).toHaveCount(0);assert.equal(currentGroup().revision,tabRevision);
+    // Older hosts cannot receive a tabbed layout through a center drop either.
+    const modernState=host.getState(),beforeLegacyDrop=calls.length;
+    await page.evaluate(state=>(window as any).__tabsListeners.forEach((fn:any)=>fn({type:'state',state})),{...modernState,capabilities:modernState.capabilities?.filter(capability=>capability!=='layout.tabs')});
+    await expect(pane(first.id).getByRole('button',{name:'탭 추가',exact:true})).toBeDisabled();
+    await beginTabDrag(page,page.locator(`#terminal-tab-${leftTab.id}`),pane(second.id),'center');await page.mouse.up();
+    await expect(page.locator('.pane-drop-preview')).toHaveCount(0);assert.equal(currentGroup().revision,tabRevision);
+    assert.equal(calls.slice(beforeLegacyDrop).filter(call=>call.method==='groups.layout').length,0);
+    await page.evaluate(state=>(window as any).__tabsListeners.forEach((fn:any)=>fn({type:'state',state})),modernState);
+    await expect(pane(first.id).getByRole('button',{name:'탭 추가',exact:true})).toBeEnabled();
+    await assertDragPreservesSessions();
+    await page.getByRole('tab',{name:'API 서버',exact:true}).click();
     await page.getByRole('separator',{name:'좌우 분할 크기'}).focus();await page.keyboard.press('ArrowRight');
     await expect(page.getByRole('separator',{name:'좌우 분할 크기'})).toHaveAttribute('aria-valuenow','55');
     await page.keyboard.press('Home');await expect(page.getByRole('separator',{name:'좌우 분할 크기'})).toHaveAttribute('aria-valuenow','50');
@@ -181,6 +248,6 @@ test('terminal tabs preserve live panes, input and layouts; remember region sele
     await expect(page.getByRole('tablist')).toHaveCount(2);await expect(page.getByRole('separator',{name:'상하 분할 크기'})).toBeVisible();
     assert.deepEqual(findLeaf(host.getState().groups.find(item=>item.id===group.id)!.layout,leftTab.id),beforeSplit);
     assert.deepEqual(errors,[]);
-    await writeFile(path.join(output,'result.json'),JSON.stringify({passed:true,regionTabHeaders:2,paneHeaderHeight:header?.height,desktopWorkspaceHeader:false,stablePanes:true,wholeRegionDrag:true,independentTabs:true,sessionVariablesPreserved:true,shortcutsDoNotSendInput:true,selectionPerHostGroupAndRegion:true,closeConfirmation:true,lastTabCollapsesRegion:true,remoteControlPreserved:true,narrowDesktopWidth:701,mobileWidth:390,errors},null,2));
+    await writeFile(path.join(output,'result.json'),JSON.stringify({passed:true,regionTabHeaders:2,paneHeaderHeight:header?.height,desktopWorkspaceHeader:false,stablePanes:true,wholeRegionDrag:true,sameRegionTabDragEdges:4,inactiveTabDrag:true,tabMerge:true,tabDragCancel:true,tabDragDoesNotCreateShells:true,independentTabs:true,sessionVariablesPreserved:true,shortcutsDoNotSendInput:true,selectionPerHostGroupAndRegion:true,closeConfirmation:true,lastTabCollapsesRegion:true,remoteControlPreserved:true,narrowDesktopWidth:701,mobileWidth:390,errors},null,2));
   }catch(error){await page.screenshot({path:path.join(output,'failure.png')});throw error;}
 });
