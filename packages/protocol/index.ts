@@ -16,6 +16,9 @@ export interface ConnectionContext { id: string; deviceId: string; deviceName: s
 export interface FileEntry { name: string; path: string; kind: 'directory' | 'file' | 'link' | 'other'; }
 export interface DirectoryListing { root: string; path: string; absolutePath: string; entries: FileEntry[]; truncated: boolean; }
 export interface FilePreview { path: string; absolutePath: string; text: string; truncated: boolean; encoding: 'UTF-8' | 'UTF-16LE' | 'UTF-16BE'; }
+export type GitStatusCode = '' | 'M' | 'A' | 'D' | 'R' | 'C' | 'T';
+export interface GitChange { path: string; originalPath?: string; index: GitStatusCode; worktree: GitStatusCode; untracked: boolean; conflicted: boolean; }
+export type GitListing = { state: 'not-repository' | 'unavailable'; root: string; message: string } | { state: 'repository'; root: string; repositoryRoot: string; branch: string; detached: boolean; changes: GitChange[]; truncated: boolean };
 export interface RpcRequest { type: 'request'; id: string; method: string; params: unknown; }
 export type RpcResponse = { type: 'response'; id: string; ok: true; result: any } | { type: 'response'; id: string; ok: false; error: { code: string; message: string } };
 export interface PresentationSnapshot { kind: 'presentation-v1'; data: string; cols: number; rows: number; modes: Record<string, unknown>; version: string; }

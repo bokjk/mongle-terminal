@@ -4,13 +4,22 @@ import { AppError, type DirectoryListing, type FilePreview } from '../protocol/i
 
 export const FILE_PREVIEW_BYTES = 64 * 1024;
 export const DIRECTORY_LIMIT = 500;
-function within(root: string, file: string) {
+export function within(root: string, file: string) {
   const relative = path.relative(root, file);
   return relative === '' || (!relative.startsWith('..' + path.sep) && relative !== '..' && !path.isAbsolute(relative));
 }
-function localPath(value: string) {
+export function localPath(value: string) {
   // Do not initiate network logins or open Windows device namespaces.
   return path.isAbsolute(value) && !/^[\\/]{2}/.test(value) && !value.includes('\0');
+}
+
+export async function resolveFileRoot(root: string, dataDir: string) {
+  if (!localPath(root)) throw new AppError('FILES_UNSUPPORTED', '이 셸의 경로는 파일 탐색기에서 열 수 없습니다. 로컬 Windows 폴더를 선택해 주세요.');
+  const [base, protectedRoot] = await Promise.all([realpath(root), realpath(dataDir)]);
+  if (!localPath(base)) throw new AppError('FILES_UNSUPPORTED', '로컬 폴더만 탐색할 수 있습니다.');
+  if (!(await stat(base)).isDirectory()) throw new AppError('FILES_UNAVAILABLE', '터미널의 폴더를 찾을 수 없습니다.');
+  if (within(protectedRoot, base)) throw new AppError('FILES_PROTECTED', '앱의 인증·세션 데이터 폴더는 탐색할 수 없습니다.');
+  return { base, protectedRoot };
 }
 function failure(error: unknown): never {
   if (error instanceof AppError) throw error;
@@ -23,8 +32,7 @@ export async function inspectFiles(root: string, relative: string, dataDir: stri
   try {
     if (!localPath(root)) throw new AppError('FILES_UNSUPPORTED', '이 셸의 경로는 파일 탐색기에서 열 수 없습니다. 로컬 Windows 폴더를 선택해 주세요.');
     if (relative.length > 4096 || /[\x00-\x1f:]/.test(relative) || path.isAbsolute(relative) || path.win32.isAbsolute(relative) || relative.split(/[\\/]/).some(part => part === '..' || /^(con|prn|aux|nul|com[0-9]|lpt[0-9])(?:\.|$)/i.test(part))) throw new AppError('FILES_OUTSIDE_ROOT', '현재 터미널 폴더 안의 항목만 열 수 있습니다.');
-    const [base, protectedRoot] = await Promise.all([realpath(root), realpath(dataDir)]);
-    if (!(await stat(base)).isDirectory()) throw new AppError('FILES_UNAVAILABLE', '터미널의 폴더를 찾을 수 없습니다.');
+    const { base, protectedRoot } = await resolveFileRoot(root, dataDir);
     const candidate = path.resolve(base, relative);
     if (!within(base, candidate)) throw new AppError('FILES_OUTSIDE_ROOT', '현재 터미널 폴더 안의 항목만 열 수 있습니다.');
     const target = await realpath(candidate);
