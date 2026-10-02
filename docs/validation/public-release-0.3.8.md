@@ -18,4 +18,10 @@ README의 실제 예제 화면·사이드바 사용법·사용자 안내를 갱�
 - README 실제 예제 화면을 13px PC·사이드바 펼침/접힘·모바일로 촬영했다. 개인 경로를 포함한 초기 캡처는 거부했고 공용 격리 예제로 재촬영한 이미지들만 사용한다. GitHub GFM 렌더링 1280px/390px에서 이미지 7개 모두 로딩되고 문서 가로 넘침이 없었다. 로컬 링크·이미지 51개를 확인했다.
 - 로그는 `.test-data/release-038-regression.log`, `release-038-files.log`, `release-038-package.log`, `release-038-packaged-e2e.log`다. 실제 앱 증거는 `test-results/e2e/compact-workspace`와 `release-038-full-exit`, 패키지 해시는 `test-results/release-038/local-assets.json`에 있다. 생성 로그·프로필은 커밋하지 않는다.
 - PR 병합·공개 게시·인증 없는 다운로드 검증은 진행 중이다.
+
+## CI 타이밍 실패와 검사 보완
+
+최초 배포 PR 검사에서 `terminal-tabs.test.ts`의 탭 드래그 시작 좌표가 null인 실패 1건이 있었다. 같은 head 커밋의 dev push 검사는 308/0/14로 통과했다. 실패 위치는 호스트 revision이 갱신된 직후 새 활성 탭/영역의 DOM 표시를 기다리지 않고 `boundingBox`를 읽던 부분이다. 검사 helper에 실제 source/target의 표시 대기를 추가했고 로컬 관련 검사 1/1을 통과했다. 제품 코드나 타임아웃을 늘려 우회하지 않았다.
+
+배포 PR은 같은 커밋의 두 번째 CI 실행으로 재확인한다. 최종 통과 기록은 아래 게시 결과에서 구분하며 최초 실패를 숨기지 않는다. 검사 helper 보완은 배포 기록과 함께 후속 PR에 포함하고 배포 바이너리와 구분한다. 최초 실패 로그는 `.test-data/release-038-main-failed.log`, 보완 후 검사는 `.test-data/release-038-drag-readiness.log`다.
 - 실제 설치본 교체·Snap·제목 표시줄 끌기·다중 모니터 배율·실물 모바일은 미검증이다. 기존 호스트·셸·인증 데이터·Tailscale을 변경하지 않는다.
