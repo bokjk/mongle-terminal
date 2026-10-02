@@ -124,6 +124,11 @@ function trusted(event: IpcMainInvokeEvent) {
   if (!window || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame || event.senderFrame.url.split('#')[0] !== expectedURL) throw new Error('신뢰할 수 없는 화면의 요청입니다.');
 }
 function handlers() {
+  ipcMain.handle('mongle:window-theme', (event, value) => {
+    trusted(event);
+    const theme = z.enum(['dark', 'light']).parse(value);
+    if (process.platform === 'win32') window!.setTitleBarOverlay({ color: theme === 'dark' ? '#171819' : '#f7f8f5', symbolColor: theme === 'dark' ? '#eceeec' : '#242b25' });
+  });
   const allowConnectionChanges = () => { if (fullExitCommitted) throw new AppError('SHUTTING_DOWN', '현재 컴퓨터의 완전 종료가 진행 중입니다.'); };
   ipcMain.handle('mongle:connection-info', event => { trusted(event); return connection; });
   ipcMain.handle('mongle:hosts', event => { trusted(event); return registry.list(); });
@@ -183,6 +188,7 @@ function handlers() {
 }
 async function createWindow() {
   const created = new BrowserWindow({ width: 1380, height: 900, minWidth: 760, minHeight: 520, title: '몽글터미널', icon: path.join(root, 'platform/windows/icon.ico'), backgroundColor: '#17191b', show: false,
+    ...(process.platform === 'win32' ? { titleBarStyle: 'hidden' as const, titleBarOverlay: { color: '#171819', symbolColor: '#eceeec', height: 35 } } : {}),
     webPreferences: { preload: path.join(app.getAppPath(), 'dist/desktop/preload.cjs'), sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true, allowRunningInsecureContent: false, spellcheck: false, webviewTag: false },
   });
   window = created;

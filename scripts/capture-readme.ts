@@ -85,7 +85,7 @@ try {
       delivery = delivery.then(() => page.evaluate(value => { for (const listener of (window as any).__hostListeners || []) listener(value); }, event)).catch(() => {});
     });
     await page.goto(`http://127.0.0.1:${port}`);
-    await page.getByRole('heading', { name: /기본 그룹|몽글 프로젝트/, exact: true }).waitFor();
+    await page.getByRole('heading', { name: /기본 그룹|몽글 프로젝트/, exact: true }).waitFor({ state: 'attached' });
     return page;
   }
 
@@ -100,7 +100,7 @@ try {
   await desktop.getByRole('button', { name: '저장', exact: true }).click();
   await desktop.getByRole('button', { name: '설정', exact: true }).first().click();
   await desktop.getByRole('button', { name: '어둡게', exact: true }).click();
-  await desktop.getByLabel('터미널 글자 크기', { exact: true }).selectOption('15');
+  await desktop.getByLabel('터미널 글자 크기', { exact: true }).selectOption('13');
   await desktop.getByRole('button', { name: '설정 닫기' }).click();
 
   // Only this disposable sample repository is registered. Use a local identity
@@ -117,7 +117,7 @@ try {
   }
   assert.equal(operation.status,'succeeded');
   const login=host.getState().worktrees!.find(worktree=>worktree.name==='로그인 개선')!;
-  const notesDirectory=path.join(isolated,'notes');
+  const notesDirectory=`${drive}:\\notes`;
   await cp(workspace,notesDirectory,{recursive:true,filter:file=>path.basename(file)!=='.git'});
 
   async function makePane(title: string, split?: { index: number; axis: '좌우 분할' | '상하 분할' }, cwd?:string) {
@@ -179,15 +179,19 @@ try {
     await desktop.getByRole('button', { name: '새 그룹', exact: true }).click();
     await desktop.getByLabel('이름', { exact: true }).fill(name);
     await desktop.getByRole('button', { name: '저장', exact: true }).click();
-    await desktop.getByRole('heading', { name, exact: true }).waitFor();
+    await desktop.getByRole('heading', { name, exact: true }).waitFor({ state: 'attached' });
   }
-  await desktop.getByRole('button', { name: '몽글 프로젝트 터미널 4개', exact: true }).click();
+  await desktop.getByRole('navigation', { name: '작업 공간 전환' }).getByRole('button', { name: '몽글 프로젝트', exact: true }).click();
   await desktop.locator('.pane').first().getByText('여기서 제어 중', { exact: true }).waitFor();
   await desktop.locator(`#terminal-tab-${firstTerminal.id}`).click();
   await desktop.mouse.move(1400, 50);
   await desktop.evaluate(() => document.fonts.ready);
   await mkdir('docs/assets', { recursive: true });
   await desktop.screenshot({ path: 'docs/assets/desktop.png' });
+  await desktop.getByRole('button', { name: '사이드바 접기', exact: true }).click();
+  await expect(desktop.locator('.sidebar')).toHaveCSS('width', '44px');
+  await desktop.screenshot({ path: 'docs/assets/desktop-collapsed.png' });
+  await desktop.getByRole('button', { name: '사이드바 펼치기', exact: true }).click();
 
   const mobile = await openSurface(true);
   await mobile.locator('.workspace-header').getByRole('button', { name: '설정', exact: true }).click();
