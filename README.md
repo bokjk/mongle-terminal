@@ -6,11 +6,13 @@
 
 ### 작업은 그대로. 어디서든, 이어서.
 
-여러 폴더의 터미널을 한곳에 모으고,<br />워크트리로 나눠 작업하고, 휴대폰에서 이어 쓰세요.
+여러 폴더의 터미널을 한곳에.<br />워크트리로 나누고, 휴대폰에서 이어서.
 
 [![Windows 11 x64 · Preview · Tailscale](docs/assets/status.svg)](docs/IMPLEMENTATION-STATUS.md)
 
-**[Windows 다운로드](https://github.com/bokjk/mongle-terminal-releases/releases/latest)** · [사용 안내](docs/USER-GUIDE.md) · [변경 이력](CHANGELOG.md) · [기여하기](CONTRIBUTING.md)
+**[Windows 다운로드](https://github.com/bokjk/mongle-terminal-releases/releases/latest)**
+
+[사용 안내](docs/USER-GUIDE.md) · [변경 이력](CHANGELOG.md) · [기여하기](CONTRIBUTING.md)
 
 </div>
 

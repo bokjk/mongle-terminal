@@ -119,13 +119,13 @@ test('worktree UI with real Git and shells: optional opening, focus, tabs, owner
     await page.getByRole('button',{name:'터미널 열기',exact:true}).click();
     const backendTerminal=host.getState().terminals.at(-1)!;assert.equal(backendTerminal.cwd,secondRepository);assert.equal(backendTerminal.worktreeId,undefined);
     await pane(backendTerminal.id).getByRole('button',{name:'워크트리',exact:true}).click();
-    await expect(page.getByLabel('대상 저장소')).toHaveText(secondRepository.replaceAll('\\','/'));await expect(page.getByLabel('기준 브랜치',{exact:true})).toHaveValue('server');
+    await expect(page.getByLabel('대상 저장소')).toHaveText((await realpath(secondRepository)).replaceAll('\\','/'));await expect(page.getByLabel('기준 브랜치',{exact:true})).toHaveValue('server');
     await page.getByLabel('워크트리 이름',{exact:true}).fill('백엔드 수정');await page.getByLabel('생성 후 터미널 열기').uncheck();await page.getByRole('button',{name:'워크트리 만들기',exact:true}).click();await expect(page.getByRole('dialog')).toHaveCount(0);
     assert.equal(host.getState().groups.length,1);assert.equal(host.getState().groups[0].repositoryIds?.length,2);assert.equal(terminals(worktree('백엔드 수정').id).length,0);
     await expect(page.getByRole('button',{name:'백엔드 수정 워크트리 열기'})).toContainText('backend');
     await page.screenshot({animations:'disabled',path:path.join(output,'multiple-repositories.png')});
     await page.setViewportSize({width:800,height:900});await pane(backendTerminal.id).getByLabel('터미널 메뉴',{exact:true}).click();
-    await pane(backendTerminal.id).getByRole('button',{name:'워크트리',exact:true}).click();await expect(page.getByLabel('대상 저장소')).toHaveText(secondRepository.replaceAll('\\','/'));await page.getByRole('button',{name:'취소',exact:true}).click();
+    await pane(backendTerminal.id).getByRole('button',{name:'워크트리',exact:true}).click();await expect(page.getByLabel('대상 저장소')).toHaveText((await realpath(secondRepository)).replaceAll('\\','/'));await page.getByRole('button',{name:'취소',exact:true}).click();
     const plainPath=path.join(fixture.root,'plain');await mkdir(plainPath);
     await page.setViewportSize({width:1440,height:900});await pane(backendTerminal.id).getByRole('button',{name:'탭 추가',exact:true}).click();await page.getByLabel('시작 폴더',{exact:true}).fill(plainPath);await page.getByRole('button',{name:'터미널 열기',exact:true}).click();
     const plainTerminal=host.getState().terminals.at(-1)!;await expect(pane(plainTerminal.id).getByRole('button',{name:'워크트리',exact:true})).toBeDisabled();await expect(pane(plainTerminal.id).getByRole('button',{name:'워크트리',exact:true})).toHaveAttribute('title',/Git 저장소가 아닙니다/);

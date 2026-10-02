@@ -30,3 +30,7 @@
 앞선 후보의 CMD + Codex 입력 추가 검사는 1/1 통과했다. GitHub GFM 렌더러의 README도 PC·모바일 이미지 6개와 가로 넘침 없음을 확인했다.
 
 경로 보완 뒤 타입 검사·빌드와 실제 Git·호스트·Chrome 워크트리 회귀 **7/7 통과**. `.test-data/release-037-path-regression.log`.
+
+두 번째 CI는 307 통과·1 실패·13 생략이었다. 기능 회귀는 통과했지만 UI 검사의 두 번째 저장소에도 같은 문자열 기대값이 남아 있었다. 세 곳의 대상 저장소 표시 검사를 모두 실제 위치 기준으로 맞췄다. 최종 패키지를 다시 생성한 뒤 워크트리·PowerShell Codex·완전 종료 3/3, CMD Codex 1/1을 다시 통과했다. `.test-data/release-037-package-final.log`, `.test-data/release-037-packaged-final-e2e.log`, `.test-data/release-037-cmd-final-e2e.log`.
+
+CI 재현으로 TEMP·TMP를 격리 디렉터리 별칭에 연결하고 같은 Git·HostCore·Chrome 검사를 실행해 **7/7 통과**했다. 실제 폴더와 문자열이 달라도 생성·연결·선택·메뉴·모바일 흐름이 통과한다. `.test-data/release-037-ci-alias.log`. 시험 폴더와 별칭은 검증 뒤 정리했다.
