@@ -13,6 +13,7 @@ import { FullExitController, isProcessAlive, readHostReadiness } from './full-ex
 import { writeResumeManifest } from './resume-manifest';
 import { UpdateController } from './updater';
 import { GuardedNsisUpdater } from './updater-driver';
+import { createVerifiedClipboardWriter } from './clipboard';
 
 app.setName('몽글터미널');
 // Match installer and shortcut identity for Windows taskbar grouping.
@@ -42,6 +43,7 @@ let choosingDirectory = false;
 let updater: UpdateController | undefined;
 const connectionAttempts = new Set<Promise<ConnectionInfo>>();
 const pendingHostStarts = new Set<number>();
+const writeClipboard = createVerifiedClipboardWriter(clipboard);
 
 function emitEvent(message: HostEvent) { if (window && !window.isDestroyed()) window.webContents.send('mongle:event', message); }
 function setConnection(info: ConnectionInfo) { connection = info; if (window && !window.isDestroyed()) window.webContents.send('mongle:connection', info); }
@@ -136,7 +138,7 @@ function handlers() {
   ipcMain.handle('mongle:update-check', event => { trusted(event); return updater!.check(); });
   ipcMain.handle('mongle:update-install', event => { trusted(event); return updater!.install(); });
   ipcMain.handle('mongle:clipboard-read', async event => { trusted(event); return z.string().max(16 * 1024 * 1024).parse(await clipboard.readText()); });
-  ipcMain.handle('mongle:clipboard-write', async (event, text) => { trusted(event); await clipboard.writeText(z.string().max(16 * 1024 * 1024).parse(text)); });
+  ipcMain.handle('mongle:clipboard-write', async (event, text) => { trusted(event); await writeClipboard(z.string().max(16 * 1024 * 1024).parse(text)); });
   ipcMain.handle('mongle:select-directory', async (event, currentPath) => {
     trusted(event); allowConnectionChanges();
     const canChoose = () => !quitting && !fullExitCommitted && connection.status === 'connected' && connection.owner && registry.get(registry.selectedId).local;

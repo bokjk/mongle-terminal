@@ -69,7 +69,9 @@ Mobbin 앱 갤러리는 로그인 안내로 연결되어 개별 유료 앱 흐�
 
 전체 검사에서 선택 실행한 네이티브 항목은 기본 실행 시 생략되므로 위 실제 앱·패키지 결과를 별도로 기록했다. 별도 읽기 전용 리뷰에서 초기 로딩 중 컴퓨터 추가 정상 완료의 누락, 미리보기 닫기에서 읽기 취소 누락을 찾아 수정한 뒤 재검토에서 남은 수정 요청이 없었다.
 
-## 네이티브 클립보드: 실패·제약
+## 네이티브 클립보드: 최초 실패·후속 조사
+
+아래는 최초 점검에서 남긴 실패 기록이다. 후속 조사에서 Windows `OpenClipboard`의 접근 거부(오류 5)를 확인했고, Electron의 조용한 쓰기 실패를 복사 성공으로 표시하던 제품 결함과 설정 화면의 데스크톱 복사 경로 누락을 수정했다. [후속 원인·변경·검증 경계](clipboard-followup.md)를 현재 상태로 함께 읽는다.
 
 `MONGLE_E2E_CLIPBOARD=1`과 새 패키지로 실행한 `tests/e2e/clipboard.test.ts`는 첫 선택 자동복사 후 Windows 클립보드에서 시험 문자열을 읽는 검사에 **실패**했다. 다른 Electron 시험과 분리하고 제한 밖에서 단독 실행해도 동일했다. 제한 환경의 별도 실행 시작 실패와도 구분한다.
 
@@ -80,7 +82,7 @@ Mobbin 앱 갤러리는 로그인 안내로 연결되어 개별 유료 앱 흐�
 - 같은 시험 앱에서 실행한 PowerShell의 읽기 전용 `Get-Clipboard`도 길이 0, 시험 문자열 일치 false였다. `ClipboardItem` 쓰기 경로에서도 읽은 내용은 비어 있었다.
 - 시험 앱·호스트 정상 종료(`cleanedUp: true`)와 화면 예외 0개를 확인했다. 제품의 클립보드 구현, OS 설정, 인증·권한을 우회하는 변경은 하지 않았다.
 
-이 도구 실행 환경에서 **Electron→Windows 네이티브 클립보드 왕복 자체가 성공하지 않았다.** 선택 처리와 API 전달은 별도로 검증했으나 OS와 런타임 중 근본 원인은 미확정이다. 실제 사용자 데스크톱에서의 선택 자동복사·붙여넣기를 완료로 간주하지 않는다. 원시 실패·분리 진단 로그는 `test-results/quality-clipboard.log`, `test-results/quality-clipboard-sequential.log`, `test-results/quality-clipboard-probe.log`에 있다.
+이 도구 실행 환경에서 **Electron→Windows 네이티브 클립보드 왕복 자체가 성공하지 않았다.** 최초에는 OS와 런타임 중 원인을 미확정으로 남겼으나, 후속 읽기 전용 진단에서 네이티브 접근 거부를 확인했다. 실제 사용자 데스크톱에서의 최신 패키지 선택 자동복사·붙여넣기 성공은 여전히 완료로 간주하지 않는다. 원시 최초 실패·분리 진단 로그는 `test-results/quality-clipboard.log`, `test-results/quality-clipboard-sequential.log`, `test-results/quality-clipboard-probe.log`에 있다.
 
 ## 남은 범위
 

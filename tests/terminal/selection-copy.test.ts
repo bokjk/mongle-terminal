@@ -4,7 +4,7 @@ import { createServer } from 'node:http';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { build } from 'esbuild';
-import { chromium } from '@playwright/test';
+import { chromium, expect } from '@playwright/test';
 import { TerminalEngine } from '../../packages/terminal/engine.js';
 
 const chrome = process.platform === 'win32' && existsSync('C:/Program Files/Google/Chrome/Application/chrome.exe');
@@ -26,7 +26,7 @@ test('real TerminalPane: deferred selection copies once and respects a newer ges
       let info={id:'terminal',groupId:'group',title:'Selection test',profileId:'pwsh',cwd:'C:/test',generation:'generation',status:'running',cols:40,rows:8};
       const state=()=>({hostId:'host',bootId:'boot',name:'Test host',version:'0.1.0',protocolVersion:1,capabilities:['control.acquire-if-free'],groups:[],terminals:[info],profiles:[],settings:{name:'Test host',recordHistory:true,scrollback:5000}});
       const frame=()=>({type:'snapshot',terminalId:info.id,generation:info.generation,bootId:'boot',seq:++seq,snapshot:{...${JSON.stringify(snapshot)},cols:info.cols,rows:info.rows}});
-      const h=window.selectionCopyTest={copies:[],calls:[],errors:[],holdWrite:false,release:null,ackedSeq:0,terminal:null,
+      const h=window.selectionCopyTest={copies:[],calls:[],errors:[],failCopy:false,holdCopy:false,copyReleases:[],holdWrite:false,release:null,ackedSeq:0,terminal:null,
         emit:()=>{const next=frame();listeners.forEach(fn=>fn(next));return next.seq;}};
       const open=Terminal.prototype.open;
       Terminal.prototype.open=function(...args){h.terminal=this;return open.apply(this,args);};
@@ -48,7 +48,7 @@ test('real TerminalPane: deferred selection copies once and respects a newer ges
         if(method==='terminal.ack'){h.ackedSeq=params.seq;return {acknowledged:true};}
         return {ok:true};
       };
-      window.mongle={writeClipboard:async text=>{h.copies.push(text);}};
+      window.mongle={writeClipboard:async text=>{h.copies.push(text);const fails=h.failCopy;if(h.holdCopy)await new Promise(resolve=>h.copyReleases.push(resolve));if(fails)throw Error('Clipboard write failed');}};
       const client={request,subscribe:fn=>{listeners.add(fn);return()=>listeners.delete(fn);}};
       const noop=()=>{};
       createRoot(document.getElementById('root')).render(<TerminalPane client={client} state={state()} info={info}
@@ -113,6 +113,66 @@ test('real TerminalPane: deferred selection copies once and respects a newer ges
           } finally { await page.close(); }
         });
       }
+      await t.test('a failed copy clears recent success feedback and never sends terminal input', async () => {
+        const page = await browser.newPage({ viewport: { width: 1000, height: 700 } });
+        const errors: string[] = [];
+        page.on('pageerror', error => errors.push(error.message));
+        page.setDefaultTimeout(5000);
+        await page.addInitScript('window.__name=function(fn){return fn;};');
+        try {
+          await page.goto(`http://127.0.0.1:${address.port}`);
+          await page.getByText('여기서 제어 중', { exact: true }).waitFor();
+          await page.evaluate(() => {
+            const terminal = (window as any).selectionCopyTest.terminal;
+            terminal.focus(); terminal.select(0, 0, 5);
+          });
+          await page.keyboard.press('Control+c');
+          const success = page.getByRole('status').filter({ hasText: '선택한 내용을 복사했습니다.' });
+          await expect(success).toBeVisible();
+          await page.evaluate(() => { (window as any).selectionCopyTest.failCopy = true; });
+          await page.keyboard.press('Control+c');
+          await page.waitForFunction(() => (window as any).selectionCopyTest.errors.length === 1);
+          // The previous success expires after two seconds. A long retry here
+          // would incorrectly pass when the failed attempt leaves it visible.
+          await expect(success).toHaveCount(0, { timeout: 250 });
+          assert.deepEqual(await page.evaluate(() => {
+            const h = (window as any).selectionCopyTest;
+            return { copies: h.copies, inputs: h.calls.filter((call: any) => call.method === 'terminal.input'), errors: h.errors };
+          }), { copies: ['abcde', 'abcde'], inputs: [], errors: ['복사하지 못했습니다. 내용을 선택한 뒤 Ctrl+C를 사용해 주세요.'] });
+          assert.deepEqual(errors, []);
+        } finally { await page.close(); }
+      });
+      await t.test('an older copy completion cannot show success while the newest copy is pending or failed', async () => {
+        const page = await browser.newPage({ viewport: { width: 1000, height: 700 } });
+        const errors: string[] = [];
+        page.on('pageerror', error => errors.push(error.message));
+        page.setDefaultTimeout(5000);
+        await page.addInitScript('window.__name=function(fn){return fn;};');
+        try {
+          await page.goto(`http://127.0.0.1:${address.port}`);
+          await page.getByText('여기서 제어 중', { exact: true }).waitFor();
+          await page.evaluate(() => {
+            const h = (window as any).selectionCopyTest;
+            h.terminal.focus(); h.terminal.select(0, 0, 5); h.holdCopy = true;
+          });
+          await page.keyboard.press('Control+c');
+          await page.waitForFunction(() => (window as any).selectionCopyTest.copyReleases.length === 1);
+          await page.evaluate(() => { (window as any).selectionCopyTest.failCopy = true; });
+          await page.keyboard.press('Control+c');
+          await page.waitForFunction(() => (window as any).selectionCopyTest.copyReleases.length === 2);
+          await page.evaluate(() => (window as any).selectionCopyTest.copyReleases[0]());
+          const success = page.getByRole('status').filter({ hasText: '선택한 내용을 복사했습니다.' });
+          await expect(success).toHaveCount(0, { timeout: 250 });
+          await page.evaluate(() => (window as any).selectionCopyTest.copyReleases[1]());
+          await page.waitForFunction(() => (window as any).selectionCopyTest.errors.length === 1);
+          await expect(success).toHaveCount(0, { timeout: 250 });
+          assert.deepEqual(await page.evaluate(() => {
+            const h = (window as any).selectionCopyTest;
+            return { copies: h.copies, inputs: h.calls.filter((call: any) => call.method === 'terminal.input'), errors: h.errors };
+          }), { copies: ['abcde', 'abcde'], inputs: [], errors: ['복사하지 못했습니다. 내용을 선택한 뒤 Ctrl+C를 사용해 주세요.'] });
+          assert.deepEqual(errors, []);
+        } finally { await page.close(); }
+      });
     } finally {
       await browser.close();
       await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));

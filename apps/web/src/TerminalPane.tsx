@@ -61,6 +61,8 @@ export function TerminalPane(props:PaneProps) {
   const [historyTruncated,setHistoryTruncated] = useState(false);
   const [clipboardMenu,setClipboardMenu] = useState<{x:number;y:number}|null>(null);
   const [copied,setCopied] = useState(false);
+  // A slower earlier copy must not overwrite the latest attempt's feedback.
+  const copyRequest = useRef(0);
   const connectionId = useRef<string | undefined>(undefined);
   const target = () => ({id:info.id,hostId:state.hostId,bootId:state.bootId,generation:info.generation});
   const targetRef = useRef(target); targetRef.current = target;
@@ -295,7 +297,7 @@ export function TerminalPane(props:PaneProps) {
     document.addEventListener('pointerdown',dismiss);document.addEventListener('keydown',escape,true);window.addEventListener('blur',close);window.addEventListener('resize',close);
     return()=>{document.removeEventListener('pointerdown',dismiss);document.removeEventListener('keydown',escape,true);window.removeEventListener('blur',close);window.removeEventListener('resize',close);};
   },[clipboardMenu]);
-  async function copy(){const text=termRef.current?.getSelection();setClipboardMenu(null);if(!text){current.current.onError('복사할 내용을 먼저 드래그로 선택해 주세요.');return;}try{if(window.mongle?.writeClipboard)await window.mongle.writeClipboard(text);else await navigator.clipboard.writeText(text);setCopied(true);}catch{current.current.onError('복사하지 못했습니다. 내용을 선택한 뒤 Ctrl+C를 사용해 주세요.');}}
+  async function copy(){const request=++copyRequest.current;setCopied(false);const text=termRef.current?.getSelection();setClipboardMenu(null);if(!text){current.current.onError('복사할 내용을 먼저 드래그로 선택해 주세요.');return;}try{if(window.mongle?.writeClipboard)await window.mongle.writeClipboard(text);else await navigator.clipboard.writeText(text);if(request===copyRequest.current)setCopied(true);}catch{if(request===copyRequest.current){setCopied(false);current.current.onError('복사하지 못했습니다. 내용을 선택한 뒤 Ctrl+C를 사용해 주세요.');}}}
   async function paste(){const input=pasteInputRef.current;setClipboardMenu(null);try{const text=window.mongle?.readClipboard?await window.mongle.readClipboard():await navigator.clipboard.readText();if(await current.current.confirmPaste(text)&&input===pasteInputRef.current&&await input(text))termRef.current?.focus();}catch{current.current.onError('클립보드를 읽을 수 없습니다. 터미널을 선택한 뒤 Ctrl+V를 사용해 주세요.');}}
   function doSearch(backward=false){if(!query){searchRef.current?.clearDecorations();setSearchMatch(true);return;}setSearchMatch(Boolean(backward ? searchRef.current?.findPrevious(query) : searchRef.current?.findNext(query)));}
   function focusTitle(){if(props.dragClickAllowed?.()===false)return;props.onSelect();startInputRef.current();}
