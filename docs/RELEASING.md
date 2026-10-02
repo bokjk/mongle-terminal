@@ -1,6 +1,6 @@
 # 배포와 자동 업데이트
 
-기준 버전: **0.3.8 Windows 미리보기**. 소스는 비공개로 유지하고 [배포 전용 공개 저장소](https://github.com/bokjk/mongle-terminal-releases/releases/latest)에 설치 파일과 업데이트 메타데이터를 게시한다. 상단 통합·사이드바 접기·PC 기본 13px 변경의 배포 상태는 [0.3.8 검증](validation/public-release-0.3.8.md)에 기록한다. 코드 서명과 프로젝트의 오픈소스 라이선스는 추가하지 않았다. 이전 공개 배포는 [0.3.7 검증](validation/public-release-0.3.7.md), 공개 주소 전환은 [0.3.1 검증](validation/public-release-0.3.1.md)을 확인한다.
+기준 버전: **0.3.8 Windows 미리보기**. 소스는 비공개로 유지하고 [배포 전용 공개 저장소](https://github.com/bokjk/mongle-terminal-releases/releases/latest)에 설치 파일과 업데이트 메타데이터를 게시한다. 상단 통합·사이드바 접기·PC 기본 13px 변경을 공개하고 익명 설치본 전체 다운로드·해시 검증을 마쳤다. 상세 결과는 [0.3.8 검증](validation/public-release-0.3.8.md)에 기록한다. 코드 서명과 프로젝트의 오픈소스 라이선스는 추가하지 않았다. 이전 공개 배포는 [0.3.7 검증](validation/public-release-0.3.7.md), 공개 주소 전환은 [0.3.1 검증](validation/public-release-0.3.1.md)을 확인한다.
 
 ## 배포 경로와 기존 사용자 전환
 
