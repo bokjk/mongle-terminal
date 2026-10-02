@@ -1,8 +1,23 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { appendTab, findLeaf, leafIds, removeLeaf, splitLeaf, type LayoutNode } from '../../packages/protocol/index.js';
-import { dockLeaf, dockTab, paneDropPosition, swapLeaves, transformInput, updateRatio, type PaneDropPosition } from '../../packages/ui/layout.js';
+import { dockLeaf, dockTab, moveTab, paneDropPosition, swapLeaves, transformInput, updateRatio, type PaneDropPosition } from '../../packages/ui/layout.js';
 const tree:LayoutNode={type:'split',axis:'horizontal',ratio:.5,first:{type:'leaf',terminalId:'a'},second:{type:'split',axis:'vertical',ratio:.4,first:{type:'leaf',terminalId:'b'},second:{type:'leaf',terminalId:'c'}}};
+
+test('tab strip insertion reorders before and after tabs and rejoins detached live sessions',()=>{
+  const node=appendTab(appendTab(tree,'a','a2'),'a','a3'),before=structuredClone(node);
+  assert.deepEqual(leafIds(findLeaf(moveTab(node,'a3',{id:'a',side:'before'}),'a')!),['a3','a','a2']);
+  assert.deepEqual(leafIds(findLeaf(moveTab(node,'a',{id:'a3',side:'after'}),'a')!),['a2','a3','a']);
+  assert.equal(moveTab(node,'a2',{id:'a',side:'after'}),node);
+  const detached=dockTab(node,'a2','c','right'),merged=moveTab(detached,'a2',{id:'a3',side:'before'});
+  assert.deepEqual(merged,node);assert.deepEqual(node,before);
+  for(const source of leafIds(node))for(const id of leafIds(node))for(const side of ['before','after'] as const){
+    const moved=moveTab(node,source,{id,side});assert.deepEqual(leafIds(moved).sort(),leafIds(node).sort());
+  }
+  assert.equal(moveTab(node,'a',{id:'missing',side:'after'}),node);
+  const full:LayoutNode={type:'split',axis:'horizontal',ratio:.4,first:{type:'leaf',terminalId:'source'},second:{type:'leaf',terminalId:'0',tabs:Array.from({length:15},(_,i)=>String(i+1))}};
+  assert.equal(moveTab(full,'source',{id:'0',side:'before'}),full);
+});
 test('nested resize preserves every terminal and parent ratio; clamps unusable sizes',()=>{const changed=updateRatio(tree,'1',.99);assert.deepEqual(leafIds(changed),['a','b','c']);assert.equal(changed.type==='split'&&changed.ratio,.5);assert.equal(changed.type==='split'&&changed.second.type==='split'&&changed.second.ratio,.85);assert.equal(tree.second.type==='split'&&tree.second.ratio,.4);});
 test('swapping distant leaves preserves split topology and all sessions',()=>{const changed=swapLeaves(tree,'a','c');assert.deepEqual(leafIds(changed),['c','b','a']);assert.equal(changed.type==='split'&&changed.second.type==='split'&&changed.second.axis,'vertical');assert.deepEqual(leafIds(tree),['a','b','c']);});
 test('mobile Ctrl and Alt encode terminal bytes without mangling Korean input',()=>{assert.equal(transformInput('c',true,false),'\x03');assert.equal(transformInput('[',true,false),'\x1b');assert.equal(transformInput('x',false,true),'\x1bx');assert.equal(transformInput('몽글',true,false),'몽글');assert.equal(transformInput('\x1b[A',false,false),'\x1b[A');});

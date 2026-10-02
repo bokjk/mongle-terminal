@@ -6,12 +6,17 @@ export const APP_VERSION = version;
 /** A leaf is one split region. `tabs` holds its additional sessions in display order. */
 export type LayoutLeaf = { type: 'leaf'; terminalId: string; tabs?: string[] };
 export type LayoutNode = LayoutLeaf | { type: 'split'; axis: 'horizontal' | 'vertical'; ratio: number; first: LayoutNode; second: LayoutNode };
-export interface Group { id: string; name: string; cwd: string; profileId: string; revision: number; layout: LayoutNode | null; }
+export interface Group { id: string; name: string; cwd: string; profileId: string; revision: number; layout: LayoutNode | null; repositoryIds?: string[]; /** Legacy single-repository association. */ repositoryId?: string; }
+export function groupRepositoryIds(group: Group): string[] { return [...new Set([...(group.repositoryIds || []), ...(group.repositoryId ? [group.repositoryId] : [])])]; }
+export interface Repository { id: string; commonDir: string; root: string; baseRef: string; worktreeRoot: string; checkedAt: number; error?: string; }
+export interface Worktree { id: string; repositoryId: string; name: string; path: string; branch: string; head: string; main: boolean; managed: boolean; status: 'ready' | 'missing' | 'unsupported' | 'removing'; locked?: string; reason?: string; }
+export interface ProjectInspection { commonDir: string; root: string; selectedPath: string; baseRef: string; branches: string[]; worktrees: Omit<Worktree, 'id' | 'repositoryId' | 'name' | 'managed'>[]; }
+export interface WorktreeOperation { id: string; requestId: string; fingerprint: string; kind: 'create' | 'remove'; repositoryId: string; groupId: string; worktreeId: string; status: 'pending' | 'running' | 'succeeded' | 'failed' | 'attention'; createdAt: number; name?: string; path?: string; branch?: string; head?: string; terminalId?: string; message?: string; }
 export interface ShellProfile { id: string; name: string; executable: string; args: string[]; kind: 'powershell' | 'cmd' | 'wsl' | 'bash'; }
 export interface Controller { connectionId: string; deviceName: string; epoch: number; ready: boolean; }
-export interface TerminalInfo { id: string; groupId: string; title: string; profileId: string; cwd: string; currentCwd?: string; generation: string; status: 'running' | 'exited' | 'interrupted'; cols: number; rows: number; pid?: number; exitCode?: number; controller?: Controller; historyAvailable?: boolean; resumeOnBoot?: boolean; restoreError?: string; }
+export interface TerminalInfo { id: string; groupId: string; title: string; profileId: string; cwd: string; currentCwd?: string; generation: string; status: 'running' | 'exited' | 'interrupted'; cols: number; rows: number; pid?: number; exitCode?: number; controller?: Controller; historyAvailable?: boolean; resumeOnBoot?: boolean; restoreError?: string; worktreeId?: string; }
 export interface HostSettings { name: string; recordHistory: boolean; scrollback: number; }
-export interface HostState { hostId: string; bootId: string; name: string; version: string; protocolVersion: number; capabilities?: string[]; groups: Group[]; terminals: TerminalInfo[]; profiles: ShellProfile[]; settings: HostSettings; storageError?: string; }
+export interface HostState { hostId: string; bootId: string; name: string; version: string; protocolVersion: number; capabilities?: string[]; groups: Group[]; terminals: TerminalInfo[]; profiles: ShellProfile[]; settings: HostSettings; storageError?: string; repositories?: Repository[]; worktrees?: Worktree[]; worktreeOperations?: WorktreeOperation[]; }
 export interface ConnectionContext { id: string; deviceId: string; deviceName: string; owner: boolean; }
 export interface FileEntry { name: string; path: string; kind: 'directory' | 'file' | 'link' | 'other'; }
 export interface DirectoryListing { root: string; path: string; absolutePath: string; entries: FileEntry[]; truncated: boolean; }

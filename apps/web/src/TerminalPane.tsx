@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { SearchAddon } from '@xterm/addon-search';
-import { Columns2, Rows2, Maximize2, Minimize2, X, Search, Copy, ClipboardPaste, RotateCcw, Pencil, Keyboard, Eye, SquareTerminal, GripVertical } from 'lucide-react';
+import { Columns2, Rows2, Maximize2, Minimize2, X, Search, Copy, ClipboardPaste, RotateCcw, Pencil, Keyboard, Eye, SquareTerminal, GripVertical, Plus } from 'lucide-react';
 import { BrowserPresentationAdapter } from '../../../packages/terminal/browser';
 import type { AppClient } from '../../../packages/client/index';
 import type { HostState, SnapshotEvent, TerminalInfo } from '../../../packages/protocol/index';
@@ -11,9 +11,12 @@ import { transformInput } from '../../../packages/ui/layout';
 import type { PaneDropPreview } from './use-pane-drag';
 import { attachTerminalTap } from './terminal-tap';
 import { terminalThemes as themes, terminalMinimumContrast } from './terminal-theme';
+import { terminalLabel, outsideWorktree } from './worktree-labels';
+import { useTerminalWorktree, type TerminalWorktreeActions } from './use-terminal-worktree';
 
 export interface PaneActions { key(data:string):void; paste(text:string):void; focus():void; search():void; }
 export interface PaneProps {
+  worktreeActions?:TerminalWorktreeActions;
   client: AppClient; state: HostState; info: TerminalInfo; connected: boolean; owner:boolean; connectionId?:string; selected:boolean; maximized:boolean; tabbed?:boolean; tabs?:ReactNode; onNewTab?:()=>void; canAddTab?:boolean; fontSize:number; theme:'dark'|'light'; ctrl:boolean; alt:boolean;
   onSelect():void; onSplit(axis:'horizontal'|'vertical'):void; onMaximize():void; onClose():void; onRename():void; onRestart():void; onMove():void; onClearHistory():void; onTerminate():void;
   dragEnabled?:boolean;dropPreview?:PaneDropPreview;onPaneDragStart?(event:DragEvent<HTMLElement>):void;onPaneDragEnd?():void;onPaneDragOver?(event:DragEvent<HTMLElement>):void;onPaneDrop?(event:DragEvent<HTMLElement>):void;onPanePointerStart?():void;dragClickAllowed?():boolean;
@@ -26,7 +29,11 @@ type AcquireMode = 'background'|'intent'|'recover';
 function inputLatch(client:AppClient,state:HostState,info:TerminalInfo){let sessions=inputSafety.get(client);if(!sessions){sessions=new Map();inputSafety.set(client,sessions);}const key=`${state.hostId}:${state.bootId}:${info.id}:${info.generation}`;let latch=sessions.get(key);if(!latch){latch={blocked:false};sessions.set(key,latch);}return latch;}
 export function TerminalPane(props:PaneProps) {
   const {client,state,info} = props;
+  const worktreeLauncher=useTerminalWorktree(state,info,props.connected,props.worktreeActions);
+  const [narrow,setNarrow]=useState(false);
   const displayedCwd = info.currentCwd || info.cwd;
+  const worktree=state.worktrees?.find(item=>item.id===info.worktreeId);
+  const label=terminalLabel(info,state.worktrees);
   const mount = useRef<HTMLDivElement>(null);
   const toolbarDrag = useRef(false);
   const contextPointer = useRef('mouse');
@@ -114,7 +121,7 @@ export function TerminalPane(props:PaneProps) {
     const handlePaste=(event:ClipboardEvent)=>{const text=event.clipboardData?.getData('text/plain');if(text===undefined)return;event.preventDefault();event.stopImmediatePropagation();void current.current.confirmPaste(text).then(approved=>{if(approved&&!disposed)void runInputIntent(()=>adapter.paste(text));});};
     mount.current.addEventListener('paste',handlePaste,true);
     terminal.attachCustomKeyEventHandler(event => {
-      if (event.type !== 'keydown') return true;
+      if (event.type !== 'keydown') return adapter.handleKeyEvent(event);
       if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 'c' && (event.shiftKey || terminal.hasSelection())) { event.preventDefault(); void copy(); return false; }
       if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 'v') {
         // Plain Ctrl+V uses the native paste event, including browser permission
@@ -122,7 +129,7 @@ export function TerminalPane(props:PaneProps) {
         if(event.shiftKey){event.preventDefault();void paste();} return false;
       }
       if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'f') {setSearchOpen(true);return false;}
-      return true;
+      return adapter.handleKeyEvent(event);
     });
     lastSeq.current = -1; setControlled(false); setFrameError('');setControlError(false);
     // Only one frame is being rendered and one latest complete frame waits.
@@ -256,7 +263,7 @@ export function TerminalPane(props:PaneProps) {
       finally{if(resizeInput.current===pending)resizeInput.current=undefined;synchronizing=false;if(!disposed&&ready.current)void resizeRef.current();}
     };
     let resizeTimer:ReturnType<typeof setTimeout>;
-    const observer = new ResizeObserver(()=>{clearTimeout(resizeTimer);resizeTimer=setTimeout(()=>void resizeRef.current(),120);});observer.observe(mount.current);
+    const observer = new ResizeObserver(()=>{setNarrow((mount.current?.closest('.pane')?.getBoundingClientRect().width||0)<=600);clearTimeout(resizeTimer);resizeTimer=setTimeout(()=>void resizeRef.current(),120);});observer.observe(mount.current);
     const keyMap:Record<string,'ArrowUp'|'ArrowDown'|'ArrowLeft'|'ArrowRight'>={'\x1b[A':'ArrowUp','\x1b[B':'ArrowDown','\x1b[C':'ArrowRight','\x1b[D':'ArrowLeft'};
     current.current.register(info.id,{key:data=>{void runInputIntent(()=>keyMap[data]?adapter.sendKey(keyMap[data]):adapter.sendInput(data));},paste:text=>{void current.current.confirmPaste(text).then(approved=>{if(approved&&!disposed)void runInputIntent(()=>adapter.paste(text));});},focus:()=>startInputRef.current(),search:()=>setSearchOpen(true)});
     const pasteTarget=mount.current;
@@ -286,15 +293,17 @@ export function TerminalPane(props:PaneProps) {
   function focusTitle(){if(props.dragClickAllowed?.()===false)return;props.onSelect();startInputRef.current();}
   // A leftover lease of this same window is not another device; a tap re-acquires it.
   const otherOwner=controlOwner&&controlOwner.connectionId!==props.connectionId?controlOwner:undefined;
-  return <section className={`pane ${props.selected?'active':''} ${props.maximized?'maximized':''}`} id={`terminal-panel-${info.id}`} role={props.tabbed?'tabpanel':undefined} aria-labelledby={props.tabbed?`terminal-tab-${info.id}`:undefined} data-terminal-id={info.id} aria-label={props.tabbed?undefined:`${info.title} 패널`} onFocusCapture={()=>props.onSelect()} onPointerDown={event=>{contextPointer.current=event.pointerType;const target=event.target as Element;if(props.dragEnabled&&target.closest('.pane-header')&&!target.closest('.pane-toolbar'))return;props.onSelect();}} onDragOverCapture={event=>{event.preventDefault();event.stopPropagation();props.onPaneDragOver?.(event);}} onDropCapture={event=>{event.preventDefault();event.stopPropagation();props.onPaneDrop?.(event);}}>
+  return <section className={`pane ${props.selected?'active':''} ${props.maximized?'maximized':''}`} id={`terminal-panel-${info.id}`} role={props.tabbed?'tabpanel':undefined} aria-labelledby={props.tabbed?`terminal-tab-${info.id}`:undefined} data-terminal-id={info.id} aria-label={props.tabbed?undefined:`${info.title} 패널`} onFocusCapture={()=>props.onSelect()} onPointerDown={event=>{contextPointer.current=event.pointerType;const target=event.target as Element;if(props.dragEnabled&&target.closest('.pane-header')&&!target.closest('.pane-toolbar'))return;props.onSelect();}} onDragEnterCapture={event=>{event.preventDefault();event.stopPropagation();props.onPaneDragOver?.(event);}} onDragOverCapture={event=>{event.preventDefault();event.stopPropagation();props.onPaneDragOver?.(event);}} onDropCapture={event=>{event.preventDefault();event.stopPropagation();props.onPaneDrop?.(event);}}>
     <header className={`pane-header ${props.tabs?'pane-tab-header':''}`} draggable={Boolean(props.dragEnabled)} onPointerDown={event=>{toolbarDrag.current=Boolean((event.target as Element).closest('.pane-toolbar,.new-tab,.terminal-tab-close'));props.onPanePointerStart?.();}} onDragStart={event=>{if(!props.dragEnabled||toolbarDrag.current||(event.target as Element).closest('.pane-toolbar,.new-tab,.terminal-tab-close')){event.preventDefault();return;}props.onPaneDragStart?.(event);}} onDragEnd={props.onPaneDragEnd}>
-      {props.tabs?<>{props.dragEnabled&&<span className="pane-drag-handle" title="끌어서 영역과 모든 탭 배치" aria-label="패널 끌어서 배치"><GripVertical size={15}/></span>}{props.tabs}<button className="icon-button new-tab" aria-label="탭 추가" title={props.canAddTab?'이 영역에 새 탭 (Ctrl+Shift+T)':'탭 추가는 호스트 업데이트가 필요합니다'} disabled={!props.connected||!props.canAddTab} onClick={props.onNewTab}><span aria-hidden="true">+</span></button></>:props.dragEnabled?<><span className="pane-drag-handle" title="끌어서 패널 배치" aria-label="패널 끌어서 배치"><GripVertical size={15}/></span><span className="pane-title" onDoubleClick={props.onRename} onClick={focusTitle} title={`${displayedCwd} · 끌어서 패널 배치`}>{info.title}</span></>:<><SquareTerminal size={14}/><button className="pane-title" onPointerDown={event=>event.preventDefault()} onDoubleClick={props.onRename} onClick={focusTitle} title={displayedCwd}>{info.title}</button></>}
+      {props.tabs?<>{props.dragEnabled&&<span className="pane-drag-handle" title="끌어서 영역과 모든 탭 배치" aria-label="패널 끌어서 배치"><GripVertical size={15}/></span>}{props.tabs}<button className="icon-button new-tab" aria-label="탭 추가" title={props.canAddTab?'이 영역에 새 탭 (Ctrl+Shift+T)':'탭 추가는 호스트 업데이트가 필요합니다'} disabled={!props.connected||!props.canAddTab} onClick={props.onNewTab}><span aria-hidden="true">+</span></button></>:props.dragEnabled?<><span className="pane-drag-handle" title="끌어서 패널 배치" aria-label="패널 끌어서 배치"><GripVertical size={15}/></span><span className="pane-title" onDoubleClick={props.onRename} onClick={focusTitle} title={`${displayedCwd} · 끌어서 패널 배치`}>{label}</span></>:<><SquareTerminal size={14}/><button className="pane-title" onPointerDown={event=>event.preventDefault()} onDoubleClick={props.onRename} onClick={focusTitle} title={displayedCwd}>{label}</button></>}
       {!props.tabs&&<span className="pane-meta">{info.status==='running'?(controlled?'제어 중':'보기 전용'):info.status==='interrupted'?'중단됨':'종료됨'}</span>}
-      <div className="pane-toolbar">
+      <div className="pane-toolbar" onPointerEnter={()=>worktreeLauncher.recheck()} onFocusCapture={()=>worktreeLauncher.recheck()}>
+        {props.worktreeActions&&!narrow&&<button className="pane-worktree-add" title={worktreeLauncher.title} disabled={worktreeLauncher.disabled} onClick={()=>void worktreeLauncher.open()}><Plus size={13}/>워크트리</button>}
         <button className="icon-button" title="터미널 검색" aria-label="터미널 검색" onClick={()=>setSearchOpen(!searchOpen)}><Search size={14}/></button>
         <button className="icon-button" title="좌우 분할" aria-label="좌우 분할" disabled={!props.connected} onClick={()=>props.onSplit('horizontal')}><Columns2 size={14}/></button>
         <button className="icon-button" title="상하 분할" aria-label="상하 분할" disabled={!props.connected} onClick={()=>props.onSplit('vertical')}><Rows2 size={14}/></button>
         <details className="command-menu"><summary className="icon-button" aria-label="터미널 메뉴">···</summary><div>
+          {props.worktreeActions&&narrow&&<button className="menu-item" title={worktreeLauncher.title} disabled={worktreeLauncher.disabled} onClick={event=>{event.currentTarget.closest('details')?.removeAttribute('open');void worktreeLauncher.open();}}><Plus size={14}/>워크트리</button>}
           <button className="menu-item" onClick={props.onRename}><Pencil size={14}/>이름 변경</button>
           <button className="menu-item" onClick={props.onMove}>다른 그룹으로 이동</button>
           <button className="menu-item" title="드래그로 선택한 뒤 Ctrl+C · Ctrl+Shift+C" onClick={()=>void copy()}><Copy size={14}/>선택 내용 복사 <kbd className="shortcut-key">Ctrl+C</kbd></button>
@@ -307,6 +316,7 @@ export function TerminalPane(props:PaneProps) {
         {!props.tabs&&<button className="icon-button" title="터미널 종료 및 패널 닫기" aria-label="터미널 닫기" onClick={props.onClose}><X size={14}/></button>}
       </div>
     </header>
+    {worktreeLauncher.dialog}
     {searchOpen&&<form className="searchbar" onSubmit={e=>{e.preventDefault();doSearch();}}><Search size={14}/><input autoFocus className="input" placeholder="출력에서 찾기" aria-label="출력 검색" value={query} onChange={e=>setQuery(e.target.value)} onKeyDown={e=>{if(e.key==='Escape'){setSearchOpen(false);termRef.current?.focus();}if(e.key==='Enter'&&e.shiftKey){e.preventDefault();doSearch(true);}}}/><span>{!searchMatch?'결과 없음':''}</span><button className="button subtle" type="button" onClick={()=>doSearch(true)}>이전</button><button className="button subtle">다음</button><button className="icon-button" type="button" aria-label="검색 닫기" onClick={()=>setSearchOpen(false)}><X size={14}/></button></form>}
     <div className="pane-body"><div className="terminal-canvas" ref={mount} onContextMenuCapture={event=>{
       if(termRef.current?.modes.mouseTrackingMode!=='none'&&!event.shiftKey)return;
@@ -324,7 +334,7 @@ export function TerminalPane(props:PaneProps) {
     {(frameError||inputUncertain)&&<div className="connection-banner warning">{inputUncertain?'마지막 입력의 전달 여부를 확인해 주세요. 확인 후 제어권을 다시 가져올 수 있습니다.':frameError}</div>}
     {info.restoreError&&<div className="connection-banner warning">{info.restoreError}{info.historyAvailable?' 이전 기록은 그대로 남아 있습니다.':''}</div>}
     {historyTruncated&&<div className="history-notice">오래된 출력 일부를 생략하고 최근 기록을 표시합니다.</div>}
-    <footer className="pane-footer"><span title={`${info.currentCwd?'현재 폴더':'시작 폴더 · 현재 경로 보고 없음'}: ${displayedCwd}`}>{displayedCwd}</span>{info.status==='running'?
+    <footer className="pane-footer"><span title={`${info.currentCwd?'현재 폴더':'시작 폴더 · 현재 경로 보고 없음'}: ${displayedCwd}`}>{displayedCwd}</span>{outsideWorktree(info,worktree)&&<span className="worktree-location">다른 폴더에서 작업 중</span>}{info.status==='running'?
       busy?<span className="control-chip" role="status">연결 중…</span>:
       controlled&&!inputUncertain&&!frameError?<span className="control-chip controlled"><Keyboard size={12}/>여기서 제어 중</span>:
       otherOwner||inputUncertain||controlError||frameError?<button className="control-chip" disabled={!props.connected} onPointerDown={e=>e.preventDefault()} onClick={()=>void acquireRef.current(true)}><Eye size={12}/>{inputUncertain?'입력 확인 후 다시 제어':controlError||frameError?'제어 다시 시도':otherOwner?`${otherOwner.deviceName}에서 제어 · 가져오기`:'여기서 제어'}</button>:

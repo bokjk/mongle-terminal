@@ -11,6 +11,75 @@ const chrome = process.platform === 'win32' && existsSync('C:/Program Files/Goog
 
 const browserOptions = { skip: chrome ? false : 'Requires installed Windows Chrome for the real DOM check.', timeout: 30000 };
 
+test('real Chrome: composing Korean commits before one modified Enter and never replays after gate loss',browserOptions,async()=>withTerminalBrowser(async(page,engine)=>{
+  await engine.write('\x1b[?9001h');
+  await page.evaluate(async snapshot=>{const h=(window as any).mongleTerminalTest;await h.adapter.applySnapshot(snapshot);h.adapter.setInputEnabled(true);h.terminal.focus();},await engine.snapshot());
+  const cdp=await page.context().newCDPSession(page);
+  const compose=async()=>{
+    await cdp.send('Input.imeSetComposition',{text:'한',selectionStart:1,selectionEnd:1});
+    await cdp.send('Input.dispatchKeyEvent',{type:'keyDown',key:'Process',code:'Enter',windowsVirtualKeyCode:229,nativeVirtualKeyCode:13,modifiers:8});
+  };
+  await compose();
+  assert.deepEqual(await page.evaluate(()=>(window as any).mongleTerminalTest.inputs),[],'no input before composition commits');
+  await cdp.send('Input.insertText',{text:'한'});
+  await page.waitForTimeout(50);
+  const expected='한\x1b[13;28;13;1;16;1_\x1b[13;28;13;0;16;1_';
+  assert.equal(await page.evaluate(()=>(window as any).mongleTerminalTest.inputs.map((v:string[])=>v[0]).join('')),expected);
+  await page.evaluate(()=>{const h=(window as any).mongleTerminalTest;h.inputs.length=0;});
+  await compose();
+  await page.evaluate(()=>{const h=(window as any).mongleTerminalTest;h.adapter.setInputEnabled(false);h.adapter.setInputEnabled(true);});
+  await cdp.send('Input.insertText',{text:'한'});await page.waitForTimeout(50);
+  assert.deepEqual(await page.evaluate(()=>(window as any).mongleTerminalTest.inputs),[],'gate loss cancels both composition and queued Enter');
+  await compose();
+  await page.evaluate(()=>(window as any).mongleTerminalTest.adapter.setFocused(false));
+  await cdp.send('Input.insertText',{text:'한'});await page.waitForTimeout(50);
+  assert.equal(await page.evaluate(()=>(window as any).mongleTerminalTest.inputs.map((v:string[])=>v[0]).join('')),'한','selection loss cancels the deferred Enter');
+  await page.evaluate(()=>{const h=(window as any).mongleTerminalTest;h.inputs.length=0;h.adapter.setFocused(true);});
+  await cdp.send('Input.imeSetComposition',{text:'글',selectionStart:1,selectionEnd:1});
+  await cdp.send('Input.insertText',{text:'글'});
+  await page.keyboard.press('Shift+Enter');await page.waitForTimeout(50);
+  assert.equal(await page.evaluate(()=>(window as any).mongleTerminalTest.inputs.map((v:string[])=>v[0]).join('')),expected.replace('한','글'),'post-composition Shift+Enter remains one newline');
+  // A following key can arrive before xterm's composition commit timer. Keep
+  // the newline between the committed syllable and that following key.
+  await page.evaluate(()=>{
+    const h=(window as any).mongleTerminalTest,textarea=h.terminal.textarea;
+    h.inputs.length=0;textarea.value='';
+    textarea.dispatchEvent(new CompositionEvent('compositionstart'));
+    textarea.value='한';textarea.dispatchEvent(new CompositionEvent('compositionupdate',{data:'한'}));
+  });
+  await page.waitForTimeout(20);
+  const fastInput=await page.evaluate(async()=>{
+    const h=(window as any).mongleTerminalTest,textarea=h.terminal.textarea;
+    textarea.dispatchEvent(new KeyboardEvent('keydown',{key:'Process',code:'Enter',keyCode:229,shiftKey:true,isComposing:true,bubbles:true}));
+    textarea.dispatchEvent(new CompositionEvent('compositionend',{data:'한'}));
+    textarea.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowLeft',code:'ArrowLeft',keyCode:37,bubbles:true}));
+    await new Promise(resolve=>setTimeout(resolve,20));
+    return h.inputs.map((v:string[])=>v[0]).join('');
+  });
+  assert.equal(fastInput,expected+'\x1b[D','the next key cannot cancel or overtake a committed composition newline');
+  await cdp.detach();
+}));
+
+test('real Chrome: modified Enter preserves ConPTY modifiers across frames and respects input and IME gates',browserOptions,async()=>withTerminalBrowser(async(page,engine)=>{
+  await engine.write('\x1b[?9001h');
+  const frame=await engine.snapshot();
+  await page.evaluate(async snapshot=>{const h=(window as any).mongleTerminalTest;await h.adapter.applySnapshot(snapshot);h.adapter.setInputEnabled(true);h.terminal.focus();},frame);
+  await page.keyboard.press('Shift+Enter');await page.keyboard.press('Enter');
+  assert.deepEqual(await page.evaluate(()=>(window as any).mongleTerminalTest.inputs.map((item:string[])=>item[0])),['\x1b[13;28;13;1;16;1_\x1b[13;28;13;0;16;1_','\r']);
+  await page.evaluate(async snapshot=>{const h=(window as any).mongleTerminalTest;await h.adapter.applySnapshot(snapshot);h.inputs.length=0;h.adapter.setInputEnabled(false);},frame);
+  await page.keyboard.press('Shift+Enter');
+  assert.deepEqual(await page.evaluate(()=>(window as any).mongleTerminalTest.inputs),[]);
+  await page.evaluate(()=>{const h=(window as any).mongleTerminalTest;h.adapter.setInputEnabled(true);h.terminal.textarea.dispatchEvent(new CompositionEvent('compositionstart'));});
+  await page.keyboard.press('Shift+Enter');
+  assert.equal(await page.evaluate(()=>(window as any).mongleTerminalTest.inputs.some((item:string[])=>item[0].includes('[13;'))),false);
+  await page.evaluate(()=>{const h=(window as any).mongleTerminalTest;h.terminal.textarea.dispatchEvent(new CompositionEvent('compositionend'));});
+  await page.waitForTimeout(40);
+  await engine.write('\x1b[?9001l');
+  await page.evaluate(async snapshot=>{const h=(window as any).mongleTerminalTest;await h.adapter.applySnapshot(snapshot);h.inputs.length=0;},await engine.snapshot());
+  await page.keyboard.press('Shift+Enter');
+  assert.deepEqual(await page.evaluate(()=>(window as any).mongleTerminalTest.inputs.map((item:string[])=>item[0])),['\r']);
+}));
+
 test('real Chrome: light theme renders ANSI white, bright colors and true color with readable contrast', browserOptions, async () => withTerminalBrowser(async (page, engine) => {
   await engine.write(Array.from({ length: 16 }, (_, i) => `\x1b[${i < 8 ? 30 + i : 90 + i - 8}mX`).join('') + '\x1b[38;5;255mX\x1b[38;2;250;250;250mX');
   await page.evaluate(async snapshot => {

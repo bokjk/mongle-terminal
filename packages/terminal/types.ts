@@ -28,6 +28,8 @@ export interface TerminalModes {
   cursorHidden: boolean;
   cursorStyle: 'block' | 'underline' | 'bar';
   cursorBlink: boolean;
+  /** Optional for presentation frames from older hosts. */
+  win32InputMode?: boolean;
 }
 
 export type TerminalInputEncoding = 'utf8' | 'binary';

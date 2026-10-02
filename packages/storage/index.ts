@@ -1,14 +1,17 @@
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import type { Group, HostSettings, PresentationSnapshot, TerminalInfo } from '../protocol/index.js';
+import type { Group, HostSettings, PresentationSnapshot, TerminalInfo, Repository, Worktree, WorktreeOperation } from '../protocol/index.js';
 
 export interface PersistedHost {
-  schemaVersion: 1;
+  schemaVersion: 1 | 2;
   hostId: string;
   settings: HostSettings;
   groups: Group[];
   terminals: TerminalInfo[];
+  repositories?: Repository[];
+  worktrees?: Worktree[];
+  worktreeOperations?: WorktreeOperation[];
 }
 
 export interface PersistedSnapshot {
@@ -24,23 +27,33 @@ export class HostStore {
     mkdirSync(dataDir, { recursive: true });
     this.db = new DatabaseSync(join(dataDir, 'sessions.sqlite'));
     const version = (this.db.prepare('PRAGMA user_version').get() as {user_version:number}).user_version;
-    if (version > 1) { this.db.close(); throw new Error('더 새 버전에서 만든 세션 저장소입니다. 앱을 업데이트해 주세요.'); }
+    if (version > 2) { this.db.close(); throw new Error('더 새 버전에서 만든 세션 저장소입니다. 앱을 업데이트해 주세요.'); }
     this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000;
       CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS snapshots (terminal_id TEXT PRIMARY KEY, generation TEXT NOT NULL, payload TEXT NOT NULL, updated_at INTEGER NOT NULL);
-      PRAGMA user_version=1;`);
+      `);
+    try {
+      this.db.exec('BEGIN IMMEDIATE');
+      const row = this.db.prepare('SELECT value FROM metadata WHERE key=?').get('host') as {value:string} | undefined;
+      if (row) {
+        const state = JSON.parse(row.value) as PersistedHost;
+        if ((state.schemaVersion !== 1 && state.schemaVersion !== 2) || !Array.isArray(state.groups) || !Array.isArray(state.terminals)) throw new Error('지원하지 않는 세션 저장 형식입니다.');
+        if (state.schemaVersion === 1) this.db.prepare('UPDATE metadata SET value=? WHERE key=?').run(JSON.stringify({...state,schemaVersion:2,repositories:[],worktrees:[],worktreeOperations:[]}), 'host');
+      }
+      this.db.exec('PRAGMA user_version=2; COMMIT;');
+    } catch (error) { this.db.exec('ROLLBACK'); this.db.close(); throw error; }
   }
   load(): PersistedHost | undefined {
     const row = this.db.prepare('SELECT value FROM metadata WHERE key=?').get('host') as { value: string } | undefined;
     if (!row) return undefined;
     const parsed = JSON.parse(row.value) as PersistedHost;
-    if (parsed.schemaVersion !== 1 || !Array.isArray(parsed.groups) || !Array.isArray(parsed.terminals)) throw new Error('지원하지 않는 세션 저장 형식입니다.');
+    if (parsed.schemaVersion !== 2 || !Array.isArray(parsed.groups) || !Array.isArray(parsed.terminals)) throw new Error('지원하지 않는 세션 저장 형식입니다.');
     return parsed;
   }
   save(state: PersistedHost, clearSnapshots?: 'all' | string[], snapshots: PersistedSnapshot[] = []) {
     this.db.exec('BEGIN IMMEDIATE');
     try {
-      this.db.prepare('INSERT INTO metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run('host', JSON.stringify(state));
+      this.db.prepare('INSERT INTO metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run('host', JSON.stringify({...state,schemaVersion:2,repositories:state.repositories||[],worktrees:state.worktrees||[],worktreeOperations:state.worktreeOperations||[]}));
       if (clearSnapshots === 'all') this.db.exec('DELETE FROM snapshots');
       else if (clearSnapshots) for (const id of clearSnapshots) this.db.prepare('DELETE FROM snapshots WHERE terminal_id=?').run(id);
       // Shutdown commits the current frames and their metadata together. A

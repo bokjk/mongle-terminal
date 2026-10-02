@@ -16,6 +16,7 @@ async function beginTabDrag(page:Page,source:Locator,target:Locator,position:'le
   await page.mouse.move(from.x+from.width/2,from.y+from.height/2);await page.mouse.down();
   await page.mouse.move(from.x+from.width/2+12,from.y+from.height/2+12,{steps:3});
   await page.mouse.move(x,y,{steps:10});await page.mouse.move(x+1,y+1);
+  await page.mouse.move(x+2,y+2);
 }
 
 test('terminal tabs preserve live panes, input and layouts; remember region selection; confirm close; fit narrow screens', {
@@ -77,6 +78,16 @@ test('terminal tabs preserve live panes, input and layouts; remember region sele
     await expect(page.getByRole('tablist',{name:'터미널 탭'})).toHaveCount(2);
     await expect(page.locator('.pane:visible')).toHaveCount(2);
     await expect(page.locator('.workspace-header')).toHaveCount(0);
+    const sidebar=page.locator('.sidebar'),mainGroup=sidebar.locator('.project-group').filter({has:page.locator('.group-main').filter({hasText:'개발'})});
+    await expect(mainGroup.locator('[data-sidebar-terminal-id]')).toHaveCount(4);
+    await sidebar.getByRole('button',{name:'개발 작업 목록 접기',exact:true}).click();await expect(mainGroup.locator('[data-sidebar-terminal-id]')).toHaveCount(0);
+    await sidebar.getByRole('button',{name:'개발 작업 목록 펼치기',exact:true}).click();await expect(mainGroup.locator('[data-sidebar-terminal-id]')).toHaveCount(4);
+    const beforeSidebar=identity(),beforeSidebarLayout=structuredClone(host.getState().groups.find(item=>item.id===group.id)!.layout);
+    await mainGroup.locator(`[data-sidebar-terminal-id="${leftTab.id}"] .worktree-main`).click();await expect(pane(leftTab.id)).toBeVisible();await expect(pane(first.id)).toBeHidden();
+    await sidebar.locator('.project-group').filter({has:page.locator('.group-main').filter({hasText:'로그'})}).locator('[data-sidebar-terminal-id] .worktree-main').click();
+    await expect(page.getByRole('tablist')).toHaveCount(1);
+    await mainGroup.locator(`[data-sidebar-terminal-id="${first.id}"] .worktree-main`).click();await expect(pane(first.id)).toBeVisible();await expect(pane(second.id)).toBeVisible();
+    assert.deepEqual(identity(),beforeSidebar);assert.deepEqual(host.getState().groups.find(item=>item.id===group.id)!.layout,beforeSidebarLayout);
     const header=await pane(first.id).locator('.pane-header').boundingBox();assert.equal(header?.height,32);
     const firstBox=await pane(first.id).boundingBox(),secondBox=await pane(second.id).boundingBox();assert.ok(firstBox&&secondBox);
     assert.ok(firstBox.y<=6&&firstBox.width<650&&secondBox.x>firstBox.x,'split regions start at the top and remain side by side');
@@ -158,6 +169,32 @@ test('terminal tabs preserve live panes, input and layouts; remember region sele
     await expect.poll(()=>currentGroup().revision).toBe(tabRevision+1);await expect(page.getByRole('tablist')).toHaveCount(2);await expect(pane(leftTab.id)).toBeVisible();
     assert.deepEqual(findLeaf(currentGroup().layout,leftTab.id),{type:'leaf',terminalId:second.id,tabs:[rightTab.id,leftTab.id]});
     await assertDragPreservesSessions();await resetLayout();
+    // The visible tab strip, including a single detached tab, accepts exact positions.
+    const tab=(id:string)=>page.locator(`#terminal-tab-${id}`);
+    tabRevision=currentGroup().revision;
+    await beginTabDrag(page,tab(leftTab.id),pane(first.id),'bottom');await page.mouse.up();
+    await expect.poll(()=>currentGroup().revision).toBe(tabRevision+1);await expect(page.getByRole('tablist')).toHaveCount(3);
+    tabRevision=currentGroup().revision;
+    await beginTabDrag(page,tab(leftTab.id),tab(rightTab.id),'left');
+    await expect(page.locator(`[data-tab-id="${rightTab.id}"]`)).toHaveAttribute('data-drop-side','before');
+    await expect(page.locator('.pane-drop-preview')).toHaveText('여기에 탭으로 이동');
+    await page.screenshot({path:path.join(output,'tab-strip-insertion.png')});await page.mouse.up();
+    await expect.poll(()=>currentGroup().revision).toBe(tabRevision+1);await expect(page.getByRole('tablist')).toHaveCount(2);
+    assert.deepEqual(findLeaf(currentGroup().layout,leftTab.id),{type:'leaf',terminalId:second.id,tabs:[leftTab.id,rightTab.id]});
+    await expect(pane(leftTab.id)).toBeVisible();await assertDragPreservesSessions();
+    tabRevision=currentGroup().revision;
+    await beginTabDrag(page,tab(rightTab.id),tab(second.id),'left');await page.mouse.up();
+    await expect.poll(()=>currentGroup().revision).toBe(tabRevision+1);
+    assert.deepEqual(findLeaf(currentGroup().layout,rightTab.id),{type:'leaf',terminalId:rightTab.id,tabs:[second.id,leftTab.id]});
+    tabRevision=currentGroup().revision;
+    await beginTabDrag(page,tab(rightTab.id),pane(rightTab.id).getByRole('button',{name:'탭 추가',exact:true}),'center');await page.mouse.up();
+    await expect.poll(()=>currentGroup().revision).toBe(tabRevision+1);
+    assert.deepEqual(findLeaf(currentGroup().layout,rightTab.id),{type:'leaf',terminalId:second.id,tabs:[leftTab.id,rightTab.id]});
+    await assertDragPreservesSessions();
+    tabRevision=currentGroup().revision;
+    await beginTabDrag(page,tab(rightTab.id),tab(first.id),'right');await page.keyboard.press('Escape');await page.mouse.up();
+    await expect(page.locator('[data-drop-side]')).toHaveCount(0);assert.equal(currentGroup().revision,tabRevision);
+    await resetLayout();
     tabRevision=currentGroup().revision;
     await beginTabDrag(page,page.locator(`#terminal-tab-${leftTab.id}`),pane(second.id),'center');
     await expect(pane(second.id).locator('.pane-drop-preview')).toBeVisible();await page.keyboard.press('Escape');await page.mouse.up();

@@ -12,6 +12,24 @@ export function swapLeaves(node: LayoutNode, first: string, second: string): Lay
 }
 
 export type PaneDropPosition = 'left' | 'right' | 'top' | 'bottom' | 'center';
+export type TabInsertion = {id:string;side:'before'|'after'};
+
+/** Insert a live tab at an exact position, including inside its current region. */
+export function moveTab(node:LayoutNode,source:string,insertion:TabInsertion):LayoutNode {
+  const sourceLeaf=findLeaf(node,source),targetLeaf=findLeaf(node,insertion.id);
+  if(!sourceLeaf||!targetLeaf||source===insertion.id)return node;
+  const ids=leafIds(targetLeaf).filter(id=>id!==source),index=ids.indexOf(insertion.id);
+  ids.splice(index+(insertion.side==='after'?1:0),0,source);
+  if(ids.length>16||sourceLeaf===targetLeaf&&ids.every((id,i)=>id===leafIds(targetLeaf)[i]))return node;
+  const remaining=removeLeaf(node,source);
+  if(!remaining)return node;
+  const insert=(current:LayoutNode):LayoutNode=>{
+    if(current.type==='leaf')return leafIds(current).includes(insertion.id)?{type:'leaf',terminalId:ids[0],...(ids.length>1?{tabs:ids.slice(1)}:{})}:current;
+    const first=insert(current.first),second=insert(current.second);
+    return first===current.first&&second===current.second?current:{...current,first,second};
+  };
+  return insert(remaining);
+}
 
 /** Move a whole split region, including its tabs, without creating a shell. */
 export function dockLeaf(node: LayoutNode, source: string, target: string, position: PaneDropPosition): LayoutNode {
