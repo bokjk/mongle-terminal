@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, readFile, realpath, rm, rmdir, writeFile, unlink } from 'node:fs/promises';
+import { mkdir, readFile, realpath, rm, rmdir, writeFile, unlink, symlink } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
@@ -30,13 +30,14 @@ test('one workspace retains multiple repositories and allows new tabs outside th
   const linked=core.getState().worktrees!.find(w=>w.id===op.worktreeId)!;assert.equal(linked.repositoryId,second.repository.id);
   const terminal:TerminalInfo=await call('worktrees.open',{groupId,worktreeId:linked.id});
   // A real directory report is fed through the same parser as shell OSC output.
-  await (core as any).runtimes.get(terminal.id).engine.write(`\x1b]9;9;${path.join(a.repository,'src')}\x07`);
+  const alias=path.join(a.root,'repository-alias');await symlink(a.repository,alias,process.platform==='win32'?'junction':'dir');
+  await (core as any).runtimes.get(terminal.id).engine.write(`\x1b]9;9;${path.join(alias,'src')}\x07`);
   const extra:TerminalInfo=await core.handle('terminals.create',{groupId,tabTarget:terminal.id,profileId:'cmd'},ctx);
-  assert.equal(extra.cwd,await realpath(path.join(a.repository,'src')));assert.equal(extra.worktreeId,first.worktreeId);
+  assert.equal(await realpath(extra.cwd),await realpath(path.join(a.repository,'src')));assert.equal(extra.worktreeId,first.worktreeId);
   const plain:TerminalInfo=await core.handle('terminals.create',{groupId,tabTarget:terminal.id,profileId:'cmd',cwd:a.root},ctx);
-  assert.equal(plain.cwd,await realpath(a.root));assert.equal(plain.worktreeId,undefined);
+  assert.equal(await realpath(plain.cwd),await realpath(a.root));assert.equal(plain.worktreeId,undefined);
   await core.handle('groups.update',{id:groupId,revision:core.getState().groups[0].revision,cwd:a.root},ctx);
-  assert.equal(core.getState().groups[0].cwd,await realpath(a.root));
+  assert.equal(await realpath(core.getState().groups[0].cwd),await realpath(a.root));
   const other=await core.handle('groups.create',{name:'Shared repository',cwd:a.root,profileId:'cmd'},ctx);
   await call('projects.attach',{path:b.repository,groupId:other.id,revision:other.revision});
   assert.deepEqual(groupRepositoryIds(core.getState().groups.find(g=>g.id===other.id)!),[second.repository.id]);

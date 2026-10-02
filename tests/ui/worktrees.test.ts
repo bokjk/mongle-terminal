@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
@@ -50,7 +50,7 @@ test('worktree UI with real Git and shells: optional opening, focus, tabs, owner
     await expect.poll(()=>host.getState().terminals.length).toBe(1);
     const original=host.getState().terminals[0];await expect(pane(original.id)).toBeVisible();
     await expect(page.locator(`[data-sidebar-terminal-id="${original.id}"]`)).toBeVisible();
-    await pane(original.id).getByRole('button',{name:'워크트리',exact:true}).click();await expect(page.getByLabel('대상 저장소')).toHaveText(fixture.repository.replaceAll('\\','/'));await page.getByRole('button',{name:'취소',exact:true}).click();
+    await pane(original.id).getByRole('button',{name:'워크트리',exact:true}).click();await expect(page.getByLabel('대상 저장소')).toHaveText((await realpath(fixture.repository)).replaceAll('\\','/'));await page.getByRole('button',{name:'취소',exact:true}).click();
     await expect(page.getByRole('button',{name:'작업 프로젝트 열기'})).toBeVisible();
     await expect(page.locator(`[data-sidebar-terminal-id="${original.id}"]`)).toHaveCount(0);
     await expect(page.locator('[data-worktree-kind=main] .worktree-kind')).toHaveText('기본');

@@ -1,6 +1,6 @@
 import { randomUUID, createHash } from 'node:crypto';
 import { hostname, homedir } from 'node:os';
-import { readFile, stat, unlink } from 'node:fs/promises';
+import { readFile, realpath, stat, unlink } from 'node:fs/promises';
 import { join, dirname, basename } from 'node:path';
 import * as pty from 'node-pty';
 import { z } from 'zod';
@@ -245,7 +245,8 @@ export class HostCore {
         group.repositoryIds=[...new Set([...groupRepositoryIds(group),repository.id])];delete group.repositoryId;group.revision++;
         this.mergeProject(repository,inspection);
         for(const terminal of this.terminals.filter(t=>t.groupId===group!.id&&!t.worktreeId)){
-          const match=this.worktrees.find(w=>w.repositoryId===repository!.id&&w.status==='ready'&&within(w.path,terminal.cwd));if(match)terminal.worktreeId=match.id;
+          const directory=await realpath(terminal.cwd).catch(()=>terminal.cwd);
+          const match=this.worktrees.find(w=>w.repositoryId===repository!.id&&w.status==='ready'&&within(w.path,directory));if(match)terminal.worktreeId=match.id;
         }
         this.persist(true);this.broadcastState();
         const worktree=this.worktrees.find(w=>w.repositoryId===repository!.id&&samePath(w.path,inspection.selectedPath))!;
@@ -416,9 +417,12 @@ export class HostCore {
         const profile=this.profile(p.profileId || source?.profileId || group.profileId);
         if(worktree&&profile.kind==='wsl')throw new AppError('WORKTREE_UNSUPPORTED','워크트리 터미널은 PowerShell·CMD·Git Bash로 열어 주세요. WSL 내부 경로는 아직 지원하지 않습니다.');
         const launch=await resolveShellLaunch(profile,p.cwd || worktree?.path || source?.currentCwd || source?.cwd || group.cwd);
-        if(worktree&&!within(worktree.path,launch.cwd))throw new AppError('INVALID_CWD','연결된 워크트리 안의 시작 폴더를 선택해 주세요.');
-        const associated=worktree||(profile.kind!=='wsl'?this.worktrees.filter(w=>w.status==='ready'&&within(w.path,launch.cwd)).sort((a,b)=>b.path.length-a.path.length)[0]:undefined);
-        if(this.worktrees.some(w=>w.status==='removing'&&within(w.path,launch.cwd)))throw new AppError('WORKTREE_BUSY','삭제 중인 워크트리에서는 터미널을 열 수 없습니다.');
+        // Git reports canonical paths; TEMP and user-selected directories may
+        // use an 8.3 alias or junction. Keep the chosen cwd, compare its location.
+        const worktreeCwd=profile.kind==='wsl'?launch.cwd:await realpath(launch.cwd);
+        if(worktree&&!within(worktree.path,worktreeCwd))throw new AppError('INVALID_CWD','연결된 워크트리 안의 시작 폴더를 선택해 주세요.');
+        const associated=worktree||(profile.kind!=='wsl'?this.worktrees.filter(w=>w.status==='ready'&&within(w.path,worktreeCwd)).sort((a,b)=>b.path.length-a.path.length)[0]:undefined);
+        if(this.worktrees.some(w=>w.status==='removing'&&within(w.path,worktreeCwd)))throw new AppError('WORKTREE_BUSY','삭제 중인 워크트리에서는 터미널을 열 수 없습니다.');
         this.requireClient(client);
         const info:TerminalInfo={id:randomUUID(),groupId:group.id,title:profile.name,profileId:profile.id,cwd:launch.cwd,generation:randomUUID(),status:'interrupted',cols:100,rows:30,...(associated?{worktreeId:associated.id}:{})};
         const previousLayout=group.layout,previousRevision=group.revision;
