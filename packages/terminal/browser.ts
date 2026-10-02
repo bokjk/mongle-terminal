@@ -21,7 +21,8 @@ function parseModes(raw: Record<string, unknown>): TerminalModes {
   if (!raw || booleans.some(key => typeof raw[key] !== 'boolean') ||
       !['none', 'x10', 'vt200', 'drag', 'any'].includes(String(raw.mouseTrackingMode)) ||
       !['DEFAULT', 'SGR', 'SGR_PIXELS'].includes(String(raw.mouseEncoding)) ||
-      !['block', 'underline', 'bar'].includes(String(raw.cursorStyle))) {
+      !['block', 'underline', 'bar'].includes(String(raw.cursorStyle)) ||
+      (raw.win32InputMode!==undefined&&typeof raw.win32InputMode!=='boolean')) {
     throw new Error('Unsupported terminal presentation modes.');
   }
   return { ...raw } as TerminalModes;
@@ -110,6 +111,22 @@ export class BrowserPresentationAdapter {
       this.drainTask = this.drain();
     }
     return promise;
+  }
+
+  /** Run after application shortcuts and before xterm's legacy Enter encoder. */
+  handleKeyEvent(event: KeyboardEvent): boolean {
+    if(event.type!=='keydown'||event.key!=='Enter'||event.metaKey||
+      !(event.shiftKey||event.ctrlKey||event.altKey)||!this.modes?.win32InputMode||
+      event.isComposing||event.keyCode===229||this.compositionActive)return true;
+    event.preventDefault();
+    if(this.acceptsTerminalInput()) {
+      // KEY_EVENT_RECORD: virtual key, scan code, character, down, modifiers, repeat.
+      // Send a complete pair so a blur/control transfer cannot leave Enter held down.
+      const modifiers=(event.shiftKey?16:0)|(event.ctrlKey?8:0)|(event.altKey?2:0)|(event.code==='NumpadEnter'?256:0);
+      const character=event.ctrlKey?10:13;
+      this.terminal.input(`\x1b[13;28;${character};1;${modifiers};1_\x1b[13;28;${character};0;${modifiers};1_`,true);
+    }
+    return false;
   }
 
   private async drain(): Promise<void> {

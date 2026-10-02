@@ -4,7 +4,7 @@ import { readFile, stat, unlink } from 'node:fs/promises';
 import { join, dirname, basename } from 'node:path';
 import * as pty from 'node-pty';
 import { z } from 'zod';
-import { APP_VERSION, PROTOCOL_VERSION, AppError, appendTab, dimensionSchema, idSchema, leafIds, removeLeaf, splitLeaf } from '../protocol/index.js';
+import { APP_VERSION, PROTOCOL_VERSION, AppError, appendTab, dimensionSchema, groupRepositoryIds, idSchema, leafIds, removeLeaf, splitLeaf } from '../protocol/index.js';
 import type { ConnectionContext, Group, HostSettings, HostState, LayoutNode, PresentationSnapshot, Send, ShellProfile, SnapshotEvent, TerminalInfo, Repository, Worktree, WorktreeOperation, ProjectInspection } from '../protocol/index.js';
 import { HostStore, type PersistedHost, type PersistedSnapshot } from '../storage/index.js';
 import { detectShellProfiles, resolveShellLaunch, safeShellEnvironment } from '../shell-profiles/index.js';
@@ -110,7 +110,7 @@ export class HostCore {
     return result;
   }
   getState(): HostState {
-    return structuredClone({ hostId:this.hostId, bootId:this.bootId, name:this.settings.name, version:APP_VERSION, protocolVersion:PROTOCOL_VERSION, capabilities:['control.acquire-if-free','files.read','git.read','layout.tabs','worktrees.manage'], groups:this.groups, terminals:this.terminals, repositories:this.repositories,worktrees:this.worktrees,worktreeOperations:this.worktreeOperations,profiles:this.profiles, settings:this.settings, ...(this.storageError ? {storageError:this.storageError} : {}) });
+    return structuredClone({ hostId:this.hostId, bootId:this.bootId, name:this.settings.name, version:APP_VERSION, protocolVersion:PROTOCOL_VERSION, capabilities:['control.acquire-if-free','files.read','git.read','layout.tabs','worktrees.manage','worktrees.terminal-context'], groups:this.groups, terminals:this.terminals, repositories:this.repositories,worktrees:this.worktrees,worktreeOperations:this.worktreeOperations,profiles:this.profiles, settings:this.settings, ...(this.storageError ? {storageError:this.storageError} : {}) });
   }
   connect(ctx: ConnectionContext, send: Send): void {
     if (!this.initialized || this.closing || this.shutdownPrepared) throw new AppError('HOST_UNAVAILABLE','호스트가 준비되지 않았습니다.');
@@ -131,10 +131,11 @@ export class HostCore {
     if (method.startsWith('projects.') || method.startsWith('worktrees.')) return this.projectRequest(method,params,ctx);
     if(method==='terminals.create'||method==='terminals.restart') {
       const client=this.connectedClient(ctx);
-      const p=z.object({worktreeId:idSchema.optional(),tabTarget:idSchema.optional(),splitTarget:idSchema.optional(),id:idSchema.optional()}).passthrough().parse(params);
+      const p=z.object({worktreeId:idSchema.optional(),cwd:cwdSchema.optional(),tabTarget:idSchema.optional(),splitTarget:idSchema.optional(),id:idSchema.optional()}).passthrough().parse(params);
       const source=this.terminals.find(t=>t.id===(method==='terminals.restart'?p.id:p.tabTarget||p.splitTarget));
       const linked=this.worktrees.find(w=>w.id===(p.worktreeId||source?.worktreeId));
-      if(linked)await this.projectRead(()=>validateWorktree(this.repository(linked.repositoryId),linked,this.options.dataDir),client);
+      const directory=p.cwd||source?.currentCwd||source?.cwd;
+      if(linked&&(method==='terminals.restart'||p.worktreeId||(directory&&within(linked.path,directory))))await this.projectRead(()=>validateWorktree(this.repository(linked.repositoryId),linked,this.options.dataDir),client);
     }
     const task = this.queue.then(async () => {
       if (this.closing || this.shutdownPrepared) throw new AppError('HOST_UNAVAILABLE','호스트가 종료 중입니다.');
@@ -209,7 +210,7 @@ export class HostCore {
   private async openWorktree(worktree:Worktree,group:Group,client:Client,preferredId?:string,tabTarget?:string):Promise<TerminalInfo> {
     this.requireClient(client);
     if(this.closing||this.shutdownPrepared)throw new AppError('HOST_UNAVAILABLE','호스트가 종료 중입니다.');
-    if(group.repositoryId!==worktree.repositoryId)throw new AppError('WORKTREE_CHANGED','다른 프로젝트의 워크트리입니다.');
+    if(!groupRepositoryIds(group).includes(worktree.repositoryId))throw new AppError('WORKTREE_CHANGED','이 그룹에 연결되지 않은 저장소의 워크트리입니다.');
     const terminals=this.terminals.filter(t=>t.groupId===group.id&&t.worktreeId===worktree.id);
     const existing=terminals.find(t=>t.id===preferredId)||terminals.find(t=>t.status==='running')||terminals[0];
     if(existing)return structuredClone(existing);
@@ -230,9 +231,8 @@ export class HostCore {
       return this.projectCommit(async()=>{
         check();
         let repository=this.repositories.find(item=>samePath(item.commonDir,inspection.commonDir));
-        let group=repository?this.groups.find(item=>item.repositoryId===repository!.id):undefined;
-        if(p.groupId&&group&&group.id!==p.groupId)throw new AppError('PROJECT_EXISTS','이 저장소는 이미 다른 그룹에 연결되어 있습니다. 기존 프로젝트를 열어 주세요.');
-        if(!group&&p.groupId){group=this.group(p.groupId);this.revision(group,p.revision??-1);if(group.repositoryId)throw new AppError('PROJECT_BOUND','이미 다른 저장소에 연결된 그룹입니다.');}
+        let group=p.groupId?this.group(p.groupId):repository?this.groups.find(item=>groupRepositoryIds(item).includes(repository!.id)):undefined;
+        if(p.groupId)this.revision(group!,p.revision??-1);
         if(!repository){
           if(this.repositories.length>=100)throw new AppError('LIMIT_REACHED','프로젝트는 호스트당 100개까지 등록할 수 있습니다.');
           repository={id:randomUUID(),commonDir:inspection.commonDir,root:inspection.root,baseRef:inspection.baseRef,worktreeRoot:join(dirname(inspection.root),`${basename(inspection.root)}.worktrees`),checkedAt:Date.now()};this.repositories.push(repository);
@@ -242,7 +242,7 @@ export class HostCore {
           const profile=this.profiles.find(p=>p.kind!=='wsl');if(!profile)throw new AppError('PROFILE_NOT_FOUND','프로젝트를 열 로컬 셸이 없습니다.');
           group={id:randomUUID(),name:basename(inspection.root),cwd:inspection.selectedPath,profileId:profile.id,revision:0,layout:null};this.groups.push(group);
         }
-        group.repositoryId=repository.id;group.revision++;
+        group.repositoryIds=[...new Set([...groupRepositoryIds(group),repository.id])];delete group.repositoryId;group.revision++;
         this.mergeProject(repository,inspection);
         for(const terminal of this.terminals.filter(t=>t.groupId===group!.id&&!t.worktreeId)){
           const match=this.worktrees.find(w=>w.repositoryId===repository!.id&&w.status==='ready'&&within(w.path,terminal.cwd));if(match)terminal.worktreeId=match.id;
@@ -251,7 +251,7 @@ export class HostCore {
         const worktree=this.worktrees.find(w=>w.repositoryId===repository!.id&&samePath(w.path,inspection.selectedPath))!;
         let terminalId:string|undefined,warning:string|undefined;
         if(!p.groupId){try{terminalId=(await this.openWorktree(worktree,group,client)).id;}catch(error){warning=error instanceof AppError?error.message:'프로젝트는 연결했지만 터미널을 열지 못했습니다.';}}
-        return {groupId:group.id,worktreeId:worktree.id,terminalId,warning};
+        return {groupId:group.id,repository:structuredClone(repository),inspection,worktreeId:worktree.id,terminalId,warning};
       });
     }
     if(method==='worktrees.refresh'){
@@ -277,15 +277,17 @@ export class HostCore {
       const p=hostRef.extend({id:idSchema}).strict().parse(params);return structuredClone(this.operation(p.id));
     }
     if(method==='worktrees.create'||method==='worktrees.remove'){
-      const createSchema=hostRef.extend({requestId:idSchema,groupId:idSchema,name:nameSchema,baseRef:z.string().min(1).max(300),branch:z.string().min(1).max(200).optional(),path:cwdSchema.optional(),existingBranch:z.boolean().default(false),openTerminal:z.boolean(),tabTarget:idSchema.optional()}).strict();
+      const createSchema=hostRef.extend({requestId:idSchema,groupId:idSchema,repositoryId:idSchema.optional(),name:nameSchema,baseRef:z.string().min(1).max(300),branch:z.string().min(1).max(200).optional(),path:cwdSchema.optional(),existingBranch:z.boolean().default(false),openTerminal:z.boolean(),tabTarget:idSchema.optional()}).strict();
       const removeSchema=hostRef.extend({requestId:idSchema,groupId:idSchema,worktreeId:idSchema,confirmed:z.literal(true)}).strict();
       const p=method==='worktrees.create'?createSchema.parse(params):removeSchema.parse(params);
       const fingerprint=createHash('sha256').update(JSON.stringify({...p,hostId:undefined,bootId:undefined,requestId:undefined})).digest('hex');
       return this.projectCommit(()=>{
         check();const old=this.worktreeOperations.find(op=>op.requestId===p.requestId);
         if(old){if(old.fingerprint!==fingerprint)throw new AppError('REQUEST_CHANGED','같은 요청으로 다른 작업을 보낼 수 없습니다. 새로 시도해 주세요.');return structuredClone(old);}
-        const group=this.group(p.groupId);if(!group.repositoryId)throw new AppError('PROJECT_NOT_FOUND','먼저 프로젝트 폴더를 연결해 주세요.');
-        const repository=this.repository(group.repositoryId);
+        const group=this.group(p.groupId),repositoryIds=groupRepositoryIds(group);
+        const repositoryId='worktreeId' in p?this.worktree(p.worktreeId).repositoryId:p.repositoryId||(repositoryIds.length===1?repositoryIds[0]:undefined);
+        if(!repositoryId||!repositoryIds.includes(repositoryId))throw new AppError('PROJECT_NOT_FOUND','워크트리를 만들 저장소를 터미널에서 선택해 주세요.');
+        const repository=this.repository(repositoryId);
         if(this.worktreeOperations.filter(op=>op.status==='pending'||op.status==='running').length>=8)throw new AppError('WORKTREE_BUSY','진행 중인 워크트리 작업이 많습니다. 완료 후 다시 시도해 주세요.');
         const worktreeId='worktreeId' in p?p.worktreeId:randomUUID();
         if('worktreeId' in p){const target=this.worktree(worktreeId);if(target.repositoryId!==repository.id||target.main||!target.managed)throw new AppError('WORKTREE_PROTECTED','이 프로젝트에서 앱이 만든 연결 워크트리만 삭제할 수 있습니다.');this.assertNoWorktreeTerminals(target);if(target.status!=='ready')throw new AppError('WORKTREE_UNAVAILABLE','먼저 목록을 새로고침해 폴더 상태를 확인해 주세요.');target.status='removing';}
@@ -373,7 +375,6 @@ export class HostCore {
       case 'groups.update': {
         const p = z.object({id:idSchema,name:nameSchema.optional(),cwd:cwdSchema.optional(),profileId:z.string().max(300).optional(),revision:z.number().int().nonnegative()}).strict().parse(params);
         const group = this.group(p.id); this.revision(group,p.revision);
-        if(group.repositoryId && p.cwd && !samePath(p.cwd,group.cwd))throw new AppError('PROJECT_BOUND','프로젝트에 연결된 그룹의 시작 폴더는 바꿀 수 없습니다.');
         const profile = this.profile(p.profileId || group.profileId);
         const launch = await resolveShellLaunch(profile,p.cwd || group.cwd);
         this.requireClient(client);
@@ -410,18 +411,18 @@ export class HostCore {
         if (p.tabTarget && (p.splitTarget || p.axis || !leafIds(group.layout).includes(p.tabTarget))) throw new AppError('INVALID_TARGET','탭을 추가할 분할 영역을 찾을 수 없습니다.');
         const target=p.tabTarget || p.splitTarget;
         const source=target ? this.terminal(target) : undefined;
-        const linked=p.worktreeId||source?.worktreeId;
-        const worktree=linked?this.worktree(linked):undefined;
+        const worktree=p.worktreeId?this.worktree(p.worktreeId):undefined;
         if(worktree&&worktree.status!=='ready')throw new AppError('WORKTREE_UNAVAILABLE','워크트리 폴더를 사용할 수 없습니다. 목록을 새로고침해 주세요.');
         const profile=this.profile(p.profileId || source?.profileId || group.profileId);
         if(worktree&&profile.kind==='wsl')throw new AppError('WORKTREE_UNSUPPORTED','워크트리 터미널은 PowerShell·CMD·Git Bash로 열어 주세요. WSL 내부 경로는 아직 지원하지 않습니다.');
-        const launch=await resolveShellLaunch(profile,p.cwd || worktree?.path || source?.cwd || group.cwd);
+        const launch=await resolveShellLaunch(profile,p.cwd || worktree?.path || source?.currentCwd || source?.cwd || group.cwd);
         if(worktree&&!within(worktree.path,launch.cwd))throw new AppError('INVALID_CWD','연결된 워크트리 안의 시작 폴더를 선택해 주세요.');
-        const associated=worktree||this.worktrees.find(w=>w.status==='ready'&&within(w.path,launch.cwd));
+        const associated=worktree||(profile.kind!=='wsl'?this.worktrees.filter(w=>w.status==='ready'&&within(w.path,launch.cwd)).sort((a,b)=>b.path.length-a.path.length)[0]:undefined);
         if(this.worktrees.some(w=>w.status==='removing'&&within(w.path,launch.cwd)))throw new AppError('WORKTREE_BUSY','삭제 중인 워크트리에서는 터미널을 열 수 없습니다.');
         this.requireClient(client);
         const info:TerminalInfo={id:randomUUID(),groupId:group.id,title:profile.name,profileId:profile.id,cwd:launch.cwd,generation:randomUUID(),status:'interrupted',cols:100,rows:30,...(associated?{worktreeId:associated.id}:{})};
         const previousLayout=group.layout,previousRevision=group.revision;
+        if(associated)group.repositoryIds=[...new Set([...groupRepositoryIds(group),associated.repositoryId])];
         this.terminals.push(info);group.layout=p.tabTarget?appendTab(group.layout!,p.tabTarget,info.id):splitLeaf(group.layout,p.splitTarget,info.id,p.axis || 'horizontal');group.revision++;
         try{this.persist(true);}catch(error){this.terminals=this.terminals.filter(t=>t.id!==info.id);group.layout=previousLayout;group.revision=previousRevision;throw error;}
         try {await this.startTerminal(info,profile,launch);} finally {this.persist();this.broadcastState();}
@@ -438,6 +439,7 @@ export class HostCore {
         if(p.splitTarget&&!leafIds(destination.layout).includes(p.splitTarget))throw new AppError('INVALID_TARGET','대상 그룹의 분할 위치를 찾을 수 없습니다.');
         source.layout=removeLeaf(source.layout,info.id);source.revision++;
         destination.layout=splitLeaf(destination.layout,p.splitTarget,info.id,p.axis || 'horizontal');destination.revision++;
+        if(info.worktreeId)destination.repositoryIds=[...new Set([...groupRepositoryIds(destination),this.worktree(info.worktreeId).repositoryId])];
         info.groupId=destination.id;this.persist(true);this.broadcastState();return structuredClone(info);
       }
       case 'terminals.terminate': {

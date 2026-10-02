@@ -18,6 +18,7 @@ export class TerminalEngine {
   private hasOutput = false;
   private historyRestored = false;
   private restoringHistory = false;
+  private win32InputMode = false;
 
   constructor(options: TerminalEngineOptions) {
     assertGeometry(options.cols, options.rows);
@@ -43,6 +44,17 @@ export class TerminalEngine {
     this.terminal.onData(reply);
     this.terminal.onTitleChange(title => { this.title = title.slice(0, 512); });
     this.installHostQueries(reply);
+    // ConPTY requests native modifier reporting. xterm 6 does not track 9001.
+    // Return false so bundled DECSET/DECRST modes still reach xterm's parser.
+    for(const final of ['h','l'])this.terminal.parser.registerCsiHandler({prefix:'?',final},params=>{
+      if(params.includes(9001))this.win32InputMode=final==='h';
+      return false;
+    });
+    this.terminal.parser.registerCsiHandler({prefix:'?',intermediates:'$',final:'p'},params=>{
+      if(params.length!==1||params[0]!==9001)return false;
+      reply(`\x1b[?9001;${this.win32InputMode?1:2}$y`);return true;
+    });
+    this.terminal.parser.registerEscHandler({final:'c'},()=>{this.win32InputMode=false;return false;});
     for (const osc of [7, 9] as const) {
       this.terminal.parser.registerOscHandler(osc, data => {
         const directory = reportedDirectory(data, osc);
@@ -103,6 +115,7 @@ export class TerminalEngine {
       this.restoringHistory = true;
       try {
         this.terminal.reset();
+        this.win32InputMode = false;
         this.title = '';
         // Move the record into scrollback before the new shell's initial ED2 /
         // cursor-home. Those startup sequences must not erase previous output.
@@ -138,7 +151,7 @@ export class TerminalEngine {
     for (;;) {
       const snapshot = await this.enqueue(() => {
         if (isPresentationPending(this.terminal) && Date.now() < deadline) return undefined;
-        const modes: TerminalModes = { ...this.terminal.modes, ...presentationExtras(this.terminal) };
+        const modes: TerminalModes = { ...this.terminal.modes, ...presentationExtras(this.terminal), win32InputMode:this.win32InputMode };
         // Exclude serializer modes: origin-mode changes move the cursor. The client
         // handles input modes separately and never consumes future raw VT output.
         const available = this.terminal.buffer.normal.baseY;

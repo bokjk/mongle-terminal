@@ -6,7 +6,8 @@ export const APP_VERSION = version;
 /** A leaf is one split region. `tabs` holds its additional sessions in display order. */
 export type LayoutLeaf = { type: 'leaf'; terminalId: string; tabs?: string[] };
 export type LayoutNode = LayoutLeaf | { type: 'split'; axis: 'horizontal' | 'vertical'; ratio: number; first: LayoutNode; second: LayoutNode };
-export interface Group { id: string; name: string; cwd: string; profileId: string; revision: number; layout: LayoutNode | null; repositoryId?: string; }
+export interface Group { id: string; name: string; cwd: string; profileId: string; revision: number; layout: LayoutNode | null; repositoryIds?: string[]; /** Legacy single-repository association. */ repositoryId?: string; }
+export function groupRepositoryIds(group: Group): string[] { return [...new Set([...(group.repositoryIds || []), ...(group.repositoryId ? [group.repositoryId] : [])])]; }
 export interface Repository { id: string; commonDir: string; root: string; baseRef: string; worktreeRoot: string; checkedAt: number; error?: string; }
 export interface Worktree { id: string; repositoryId: string; name: string; path: string; branch: string; head: string; main: boolean; managed: boolean; status: 'ready' | 'missing' | 'unsupported' | 'removing'; locked?: string; reason?: string; }
 export interface ProjectInspection { commonDir: string; root: string; selectedPath: string; baseRef: string; branches: string[]; worktrees: Omit<Worktree, 'id' | 'repositoryId' | 'name' | 'managed'>[]; }

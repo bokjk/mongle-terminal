@@ -10,10 +10,40 @@ import { inspectProject, prepareWorktree, addWorktree, removeWorktree } from '..
 import { HostCore } from '../../packages/host/core';
 import { HostStore } from '../../packages/storage';
 import type { ConnectionContext, Repository, Worktree, WorktreeOperation, TerminalInfo } from '../../packages/protocol';
+import { groupRepositoryIds } from '../../packages/protocol';
 
 async function cleanup(root:string){assert.equal(path.dirname(root),tmpdir());assert.ok(path.basename(root).startsWith('mongle-git-'));await rm(root,{recursive:true,force:true});}
 async function fixture(t:test.TestContext,autoClean=true){const f=await gitFixture();if(autoClean)t.after(()=>cleanup(f.root));return f;}
 const hostRef=(core:HostCore)=>({hostId:core.getState().hostId,bootId:core.getState().bootId});
+
+test('one workspace retains multiple repositories and allows new tabs outside their source worktree', {timeout:60000},async t=>{
+  const a=await fixture(t,false),b=await fixture(t,false),core=new HostCore({dataDir:a.data});await core.init();
+  t.after(async()=>{await core.close();await cleanup(a.root);await cleanup(b.root);});
+  const ctx:ConnectionContext={id:randomUUID(),deviceId:'context',deviceName:'Test',owner:true};core.connect(ctx,()=>{});
+  const call=(method:string,params:object)=>core.handle(method,{...hostRef(core),...params},ctx),groupId=core.getState().groups[0].id;
+  const attach=(directory:string)=>call('projects.attach',{path:directory,groupId,revision:core.getState().groups[0].revision});
+  const first=await attach(a.repository),second=await attach(b.repository);
+  assert.deepEqual(groupRepositoryIds(core.getState().groups[0]),[first.repository.id,second.repository.id]);
+  await assert.rejects(call('worktrees.create',{requestId:randomUUID(),groupId,name:'ambiguous',baseRef:'main',openTerminal:false}),{code:'PROJECT_NOT_FOUND'});
+  const op=await call('worktrees.create',{requestId:randomUUID(),groupId,repositoryId:second.repository.id,name:'B only',baseRef:'main',openTerminal:false});
+  assert.equal((await finish(core,op.id)).status,'succeeded');
+  const linked=core.getState().worktrees!.find(w=>w.id===op.worktreeId)!;assert.equal(linked.repositoryId,second.repository.id);
+  const terminal:TerminalInfo=await call('worktrees.open',{groupId,worktreeId:linked.id});
+  // A real directory report is fed through the same parser as shell OSC output.
+  await (core as any).runtimes.get(terminal.id).engine.write(`\x1b]9;9;${path.join(a.repository,'src')}\x07`);
+  const extra:TerminalInfo=await core.handle('terminals.create',{groupId,tabTarget:terminal.id,profileId:'cmd'},ctx);
+  assert.equal(extra.cwd,await realpath(path.join(a.repository,'src')));assert.equal(extra.worktreeId,first.worktreeId);
+  const plain:TerminalInfo=await core.handle('terminals.create',{groupId,tabTarget:terminal.id,profileId:'cmd',cwd:a.root},ctx);
+  assert.equal(plain.cwd,await realpath(a.root));assert.equal(plain.worktreeId,undefined);
+  await core.handle('groups.update',{id:groupId,revision:core.getState().groups[0].revision,cwd:a.root},ctx);
+  assert.equal(core.getState().groups[0].cwd,await realpath(a.root));
+  const other=await core.handle('groups.create',{name:'Shared repository',cwd:a.root,profileId:'cmd'},ctx);
+  await call('projects.attach',{path:b.repository,groupId:other.id,revision:other.revision});
+  assert.deepEqual(groupRepositoryIds(core.getState().groups.find(g=>g.id===other.id)!),[second.repository.id]);
+  for(const item of core.getState().terminals)await core.handle('terminals.remove',{...hostRef(core),id:item.id,generation:item.generation,terminate:true},ctx);
+  await core.close();const restored=new HostCore({dataDir:a.data});await restored.init();
+  try{assert.deepEqual(groupRepositoryIds(restored.getState().groups[0]),[first.repository.id,second.repository.id]);assert.ok(restored.getState().worktrees?.some(w=>w.id===linked.id));}finally{await restored.close();}
+});
 async function finish(core:HostCore,id:string){const until=Date.now()+20000;while(Date.now()<until){const op=core.getState().worktreeOperations!.find(op=>op.id===id)!;if(!['pending','running'].includes(op.status))return op;await new Promise(resolve=>setTimeout(resolve,35));}throw new Error('worktree operation did not finish');}
 
 test('real Git creates Unicode worktrees outside the source, disables hooks, preserves branches and rejects dirty removal',async t=>{

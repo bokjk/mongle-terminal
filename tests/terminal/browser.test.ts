@@ -11,6 +11,26 @@ const chrome = process.platform === 'win32' && existsSync('C:/Program Files/Goog
 
 const browserOptions = { skip: chrome ? false : 'Requires installed Windows Chrome for the real DOM check.', timeout: 30000 };
 
+test('real Chrome: modified Enter preserves ConPTY modifiers across frames and respects input and IME gates',browserOptions,async()=>withTerminalBrowser(async(page,engine)=>{
+  await engine.write('\x1b[?9001h');
+  const frame=await engine.snapshot();
+  await page.evaluate(async snapshot=>{const h=(window as any).mongleTerminalTest;await h.adapter.applySnapshot(snapshot);h.adapter.setInputEnabled(true);h.terminal.focus();},frame);
+  await page.keyboard.press('Shift+Enter');await page.keyboard.press('Enter');
+  assert.deepEqual(await page.evaluate(()=>(window as any).mongleTerminalTest.inputs.map((item:string[])=>item[0])),['\x1b[13;28;13;1;16;1_\x1b[13;28;13;0;16;1_','\r']);
+  await page.evaluate(async snapshot=>{const h=(window as any).mongleTerminalTest;await h.adapter.applySnapshot(snapshot);h.inputs.length=0;h.adapter.setInputEnabled(false);},frame);
+  await page.keyboard.press('Shift+Enter');
+  assert.deepEqual(await page.evaluate(()=>(window as any).mongleTerminalTest.inputs),[]);
+  await page.evaluate(()=>{const h=(window as any).mongleTerminalTest;h.adapter.setInputEnabled(true);h.terminal.textarea.dispatchEvent(new CompositionEvent('compositionstart'));});
+  await page.keyboard.press('Shift+Enter');
+  assert.equal(await page.evaluate(()=>(window as any).mongleTerminalTest.inputs.some((item:string[])=>item[0].includes('[13;'))),false);
+  await page.evaluate(()=>{const h=(window as any).mongleTerminalTest;h.terminal.textarea.dispatchEvent(new CompositionEvent('compositionend'));});
+  await page.waitForTimeout(40);
+  await engine.write('\x1b[?9001l');
+  await page.evaluate(async snapshot=>{const h=(window as any).mongleTerminalTest;await h.adapter.applySnapshot(snapshot);h.inputs.length=0;},await engine.snapshot());
+  await page.keyboard.press('Shift+Enter');
+  assert.deepEqual(await page.evaluate(()=>(window as any).mongleTerminalTest.inputs.map((item:string[])=>item[0])),['\r']);
+}));
+
 test('real Chrome: light theme renders ANSI white, bright colors and true color with readable contrast', browserOptions, async () => withTerminalBrowser(async (page, engine) => {
   await engine.write(Array.from({ length: 16 }, (_, i) => `\x1b[${i < 8 ? 30 + i : 90 + i - 8}mX`).join('') + '\x1b[38;5;255mX\x1b[38;2;250;250;250mX');
   await page.evaluate(async snapshot => {
