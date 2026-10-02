@@ -67,6 +67,23 @@ Windows Job/HostLauncher와 개발 Electron 실행은 Codex 샌드박스에서 �
 
 논의 과정에서 직접 확인한 Mobbin [Front 사이드바](https://mobbin.com/explore/screens/3e29dd35-0c1d-4f71-831b-af35c13bf1ec)와 [Notion 워크스페이스](https://mobbin.com/explore/screens/cbf7d1f7-7603-405e-ba9e-dc7573bc71e4)의 계층형 목록·작업 영역 구분·절제된 선택 표시를 참고했다. 프로젝트의 기존 색·여백·모달·테마 토큰에 맞췄고, 워크트리 생성은 프로젝트 아래 한 개의 **+ 워크트리**에 모았다. 해당 Mobbin 화면에서 이 워크트리 기능 자체를 확인했다는 뜻은 아니다. 실제 UI 조작·캡처로 PC와 모바일 크기에서 확인했다.
 
+## 워크트리 메뉴 위치 후속 수정(2026-10-02)
+
+워크트리 메뉴에 공통 `position: fixed`와 `right: 0`이 함께 적용되어, 작업 행이 아닌 화면 오른쪽 끝에 메뉴가 나타났다. [WorktreeActions](../../apps/web/src/WorktreeActions.tsx)에서 버튼의 실제 위치를 기준으로 오른쪽 끝을 맞추고 4px 아래에 표시한다. 아래 공간이 부족하면 위로 열고 화면 가장자리에 8px 여백을 둔다. 메뉴는 `body`에 표시해 스크롤 컨테이너와 모바일 사이드바의 transform에 잘리지 않는다. 스크롤 중에는 버튼을 따라가며 작업 행이 목록 밖으로 벗어나면 닫는다. 바깥 클릭·Esc·Tab과 방향키·Home·End 조작을 지원한다.
+
+Mobbin의 [Notion 워크스페이스](https://mobbin.com/explore/screens/cbf7d1f7-7603-405e-ba9e-dc7573bc71e4)를 이번 수정에서도 직접 열어 사이드바와 작업 영역의 관계를 확인했다. 기존 목록 구조·색·메뉴 크기를 유지하고 눌렀던 작업에 가까이 메뉴를 표시하도록 판단했다. 이 참고 화면에는 펼쳐진 작업 메뉴가 없으므로 팝업 배치나 키보드 동작까지 확인한 것으로 표현하지 않는다.
+
+| 후속 검사 | 실제 결과 |
+|---|---|
+| `npm run typecheck`, `npm run build` | 통과. 기존 번들 크기 안내는 유지된다. |
+| 워크트리·터미널 탭·패널 드래그 UI | **3/3 통과**, 실패·생략 0. 원래 작업/연결 작업 메뉴, 1440·1024·390·320px 화면, 아래/위 배치, 창 크기 변경, 모바일 전환, 목록 스크롤, 바깥 클릭, Esc 초점 복귀, 방향키, 메뉴 항목 실행을 확인했다. 버튼·메뉴 좌표와 `elementFromPoint`로 인접 배치와 클릭 가능 영역을 검사한다. |
+| 격리 개발 Electron + OwnerPipe + ConPTY + 승인된 웹 | **1/1 통과**, 정리 오류 없음. 실제 데스크톱에서도 버튼 아래 4px·오른쪽 정렬, 메뉴 Esc 초점 복귀·이름 변경 창 열기를 확인했다. 기존 워크트리/GUI 재실행/셸 PID 유지 검사도 통과했다. |
+| 문서·공백 검사와 미리보기 | `release-check.ts`, `git diff --check` 통과. 수정 빌드의 별도 미리보기 창을 열고 창 제목·응답 상태를 확인했다. 기존 미리보기와 실사용 터미널은 종료하지 않았다. |
+
+실행 명령은 `node --import tsx --test --test-concurrency=1 tests/ui/worktrees.test.ts tests/ui/terminal-tabs.test.ts tests/ui/pane-drag.test.ts`와 위의 `MONGLE_E2E_WORKTREES=1` 데스크톱 검사다. 개발 데이터는 명시적인 격리 `MONGLE_DATA_DIR`, OwnerPipe 데이터는 `%TEMP%/mongle-worktree-menu-e2e`를 사용했다. 로컬 증거는 `test-results/worktrees/desktop-menu.png`, `mobile-menu.png`, `mobile-menu-above.png`와 `test-results/e2e/worktrees/desktop-worktree-menu.png`, `result.json`에 있다.
+
+첫 화면 검사는 자동 스크롤 직후 지연된 scroll 이벤트로 메뉴가 닫히는 문제를 찾아 버튼이 보이는 동안 위치를 갱신하도록 보완한 뒤 통과했다. 최초 데스크톱 검사의 공용 이름 변경 모달 종료 후 초점 복귀 기대값은 통과하지 않았다. 기존 모달의 자동 초점 동작은 이번 위치 수정 범위에 넣지 않았으며, 최종 검사는 작업 메뉴 자체의 Esc 초점 복귀와 이름 변경 창의 열기·닫기를 구분해 검증했다. 전체 회귀·패키지 설치·공개 배포를 다시 수행한 것은 아니다.
+
 ## 남은 범위
 
 - 개발 빌드 검증이다. 워크트리 변경을 담은 NSIS/ZIP 패키지 생성·설치·공개 배포, 실사용 앱 교체, 사용자 확인은 수행하지 않았다.

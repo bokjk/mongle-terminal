@@ -31,6 +31,15 @@ test('worktree UI with real Git and shells: optional opening, focus, tabs, owner
   const pane=(id:string)=>page.locator(`[data-terminal-id="${id}"]`);
   const worktree=(name:string)=>host.getState().worktrees!.find(w=>w.name===name)!;
   const terminals=(id:string)=>host.getState().terminals.filter(t=>t.worktreeId===id);
+  async function expectAnchoredMenu(name:string,placement:'below'|'above'='below'){
+    const trigger=page.getByLabel(`${name} 워크트리 메뉴`,{exact:true}),menu=page.getByRole('menu',{name:`${name} 워크트리 작업`});
+    await expect(menu).toBeVisible();await expect(trigger).toHaveAttribute('aria-expanded','true');
+    await expect.poll(async()=>{
+      const anchor=(await trigger.boundingBox())!,popup=(await menu.boundingBox())!,viewport=page.viewportSize()!;
+      return Math.abs(popup.x+popup.width-anchor.x-anchor.width)<2 && popup.x>=8 && popup.x+popup.width<=viewport.width-8 && popup.y>=8 && popup.y+popup.height<=viewport.height-8 && Math.abs(placement==='below'?popup.y-anchor.y-anchor.height-4:anchor.y-popup.y-popup.height-4)<2;
+    }).toBe(true);
+    assert.equal(await menu.evaluate(element=>{const bounds=element.getBoundingClientRect();return element.contains(document.elementFromPoint(bounds.x+bounds.width/2,bounds.y+bounds.height-12));}),true,'menu must not be clipped or covered by the sidebar');
+  }
   try{
     await page.goto(`http://127.0.0.1:${address.port}`);
     await page.getByLabel('워크트리 프로젝트 그룹 메뉴').click();await page.getByRole('button',{name:'프로젝트 연결',exact:true}).click();await page.getByRole('dialog').getByRole('button',{name:'연결',exact:true}).click();
@@ -38,6 +47,12 @@ test('worktree UI with real Git and shells: optional opening, focus, tabs, owner
     await page.getByRole('button',{name:'프로젝트 열기',exact:true}).click();await page.getByLabel('프로젝트 폴더').fill(fixture.repository);await page.getByRole('dialog').getByRole('button',{name:'프로젝트 열기',exact:true}).click();
     await expect(page.getByRole('dialog')).toHaveCount(0);await expect.poll(()=>host.getState().terminals.length).toBe(1);
     const original=host.getState().terminals[0];await expect(pane(original.id)).toBeVisible();
+    await page.getByLabel('원래 작업 워크트리 메뉴').click();await expectAnchoredMenu('원래 작업');
+    await expect(page.getByRole('menuitem')).toHaveCount(2);await expect(page.getByRole('menuitem',{name:'이름 변경',exact:true})).toBeFocused();
+    await page.keyboard.press('End');await expect(page.getByRole('menuitem',{name:'목록 새로고침'})).toBeFocused();
+    await page.keyboard.press('Escape');await expect(page.getByRole('menu')).toHaveCount(0);await expect(page.getByLabel('원래 작업 워크트리 메뉴')).toBeFocused();
+    await page.getByLabel('원래 작업 워크트리 메뉴').press('ArrowUp');await expect(page.getByRole('menuitem',{name:'목록 새로고침'})).toBeFocused();
+    await page.setViewportSize({width:390,height:844});await expect(page.getByRole('menu')).toHaveCount(0);await page.setViewportSize({width:1440,height:900});
     await page.getByRole('button',{name:'워크트리',exact:true}).click();await page.keyboard.press('Escape');await expect(page.getByRole('dialog')).toHaveCount(0);
     await page.getByRole('button',{name:'워크트리',exact:true}).click();await page.getByLabel('워크트리 이름',{exact:true}).fill('로그인 수정');await page.getByLabel('생성 후 터미널 열기').uncheck();
     await page.screenshot({animations:'disabled',path:path.join(output,'create-without-terminal.png')});
@@ -62,7 +77,11 @@ test('worktree UI with real Git and shells: optional opening, focus, tabs, owner
     let releaseOpen!:()=>void;delayedOpen={entered:false,release:new Promise<void>(resolve=>releaseOpen=resolve)};
     await page.getByRole('button',{name:'디자인 변경 워크트리 열기'}).click();await expect.poll(()=>delayedOpen?.entered).toBe(true);
     await page.getByRole('tab',{name:/원래 작업 ·/}).click();await expect(pane(original.id)).toBeVisible();releaseOpen();await expect(page.getByRole('button',{name:'디자인 변경 워크트리 열기'})).toBeEnabled();await expect(pane(original.id)).toBeVisible();
-    await page.getByLabel('로그인 수정 워크트리 메뉴').click();await page.getByRole('button',{name:'워크트리 삭제…',exact:true}).click();await page.getByRole('dialog').getByRole('button',{name:'워크트리 삭제',exact:true}).click();await expect(page.getByRole('dialog').getByRole('alert')).toContainText('터미널');await page.getByRole('dialog').getByRole('button',{name:'취소',exact:true}).click();
+    await page.getByLabel('로그인 수정 워크트리 메뉴').click();await expectAnchoredMenu('로그인 수정');
+    await page.screenshot({animations:'disabled',path:path.join(output,'desktop-menu.png')});
+    await page.setViewportSize({width:1024,height:768});await expectAnchoredMenu('로그인 수정');
+    await page.getByRole('menuitem',{name:'워크트리 삭제…',exact:true}).click();await expect(page.getByRole('menu')).toHaveCount(0);await page.getByRole('dialog').getByRole('button',{name:'워크트리 삭제',exact:true}).click();await expect(page.getByRole('dialog').getByRole('alert')).toContainText('터미널');await page.getByRole('dialog').getByRole('button',{name:'취소',exact:true}).click();
+    await page.setViewportSize({width:1440,height:900});
     for(const terminal of terminals(login.id)){
       await page.getByRole('button',{name:`로그인 수정 · ${terminal.title} 탭 닫기`,exact:true}).click();await page.getByRole('dialog').getByRole('button',{name:'종료하고 닫기',exact:true}).click();await expect.poll(()=>host.getState().terminals.some(t=>t.id===terminal.id)).toBe(false);
     }
@@ -72,7 +91,13 @@ test('worktree UI with real Git and shells: optional opening, focus, tabs, owner
     await page.getByText('고급 설정',{exact:true}).click();await page.getByLabel('기존 브랜치 연결').check();await expect(page.getByLabel('연결할 브랜치').locator('option[value="main"]')).toHaveJSProperty('disabled',true);await page.getByLabel('기존 브랜치 연결').uncheck();
     loseCreateResponse=true;await page.getByRole('button',{name:'워크트리 만들기',exact:true}).click();await expect(page.getByRole('alert')).toContainText('응답 유실');await expect(page.getByLabel('워크트리 이름',{exact:true})).toBeDisabled();
     await page.getByRole('button',{name:'결과 확인',exact:true}).click();await expect(page.getByRole('dialog')).toHaveCount(0);assert.equal(host.getState().worktrees!.filter(w=>w.name==='응답 복구').length,1);assert.equal(terminals(worktree('응답 복구').id).length,0);
-    await page.setViewportSize({width:390,height:844});await page.getByRole('button',{name:'그룹 메뉴 열기'}).click();await expect(page.getByRole('button',{name:'디자인 변경 워크트리 열기'})).toBeVisible();await page.screenshot({animations:'disabled',path:path.join(output,'mobile-sidebar.png')});await page.getByRole('button',{name:'디자인 변경 워크트리 열기'}).click();await expect(pane(designTerminal.id)).toBeVisible();await expect(page.locator('.sidebar.open')).toHaveCount(0);await page.screenshot({animations:'disabled',path:path.join(output,'mobile-terminal.png')});
+    await page.setViewportSize({width:390,height:844});await page.getByRole('button',{name:'그룹 메뉴 열기'}).click();await expect(page.getByRole('button',{name:'디자인 변경 워크트리 열기'})).toBeVisible();await page.screenshot({animations:'disabled',path:path.join(output,'mobile-sidebar.png')});
+    await page.getByLabel('디자인 변경 워크트리 메뉴').click();await expectAnchoredMenu('디자인 변경');await page.screenshot({animations:'disabled',path:path.join(output,'mobile-menu.png')});
+    await page.keyboard.press('Escape');await expect(page.getByRole('menu')).toHaveCount(0);await expect(page.locator('.sidebar.open')).toHaveCount(1);
+    await page.setViewportSize({width:320,height:480});await page.getByLabel('응답 복구 워크트리 메뉴').click();await expectAnchoredMenu('응답 복구','above');await page.screenshot({animations:'disabled',path:path.join(output,'mobile-menu-above.png')});
+    await page.locator('.group-list').evaluate(element=>element.scrollTop=0);await expect(page.getByRole('menu')).toHaveCount(0);
+    await page.setViewportSize({width:390,height:844});await page.getByLabel('디자인 변경 워크트리 메뉴').click();await expectAnchoredMenu('디자인 변경');
+    await page.getByRole('button',{name:'디자인 변경 워크트리 열기'}).click();await expect(page.getByRole('menu')).toHaveCount(0);await expect(pane(designTerminal.id)).toBeVisible();await expect(page.locator('.sidebar.open')).toHaveCount(0);await page.screenshot({animations:'disabled',path:path.join(output,'mobile-terminal.png')});
     assert.deepEqual(errors,[]);
   }catch(error){await page.screenshot({animations:'disabled',path:path.join(output,'failure.png')}).catch(()=>{});throw error;}
 });

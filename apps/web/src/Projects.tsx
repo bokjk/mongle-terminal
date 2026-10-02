@@ -3,6 +3,7 @@ import { FolderOpen, GitBranch, Plus, SquareTerminal, RefreshCw, LoaderCircle } 
 import type { Group, HostState, ProjectInspection, Repository, TerminalInfo, Worktree, WorktreeOperation } from '../../../packages/protocol/index';
 import { Modal } from './App';
 import { terminalLabel } from './worktree-labels';
+import { WorktreeActions } from './WorktreeActions';
 
 type Request=<T=any>(method:string,params:Record<string,unknown>)=>Promise<T>;
 type Navigation=(groupId:string)=>(terminalId?:string)=>void;
@@ -55,11 +56,11 @@ export function ProjectWorktrees({group,state,activeId,connected,request,beginNa
           {opening===worktree.id?<LoaderCircle size={15} className="spin"/>:<GitBranch size={15}/>}<span><strong>{worktree.name}</strong><small>{worktree.status==='ready'?(worktree.branch||`커밋 ${worktree.head.slice(0,7)}`):worktree.status==='removing'?'삭제 중…':'폴더 확인 필요'}</small></span>
         </button>
         {terminals.length>0?<button className="worktree-count" aria-label={`${worktree.name} 터미널 ${terminals.length}개 선택`} title={`열려 있는 터미널 ${terminals.length}개`} onClick={()=>setChoosing(worktree.id)}><SquareTerminal size={12}/>{terminals.length}</button>:<span className="worktree-empty" title="이름을 누르면 터미널이 열립니다">없음</span>}
-        <details className="command-menu worktree-actions"><summary className="icon-button" aria-label={`${worktree.name} 워크트리 메뉴`}>···</summary><div>
-          <button className="menu-item" disabled={!connected} onClick={()=>{setError('');setName(worktree.name);setRenaming(worktree);}}>이름 변경</button>
-          <button className="menu-item" disabled={!connected} onClick={()=>void refresh().catch(error=>onError(message(error)))}>목록 새로고침</button>
-          {!worktree.main&&worktree.managed&&<button className="menu-item danger" disabled={!connected||worktree.status==='removing'} onClick={()=>{setError('');setDeleting(worktree);}}>워크트리 삭제…</button>}
-        </div></details>
+        <WorktreeActions name={worktree.name} actions={[
+          {label:'이름 변경',disabled:!connected,onSelect:()=>{setError('');setName(worktree.name);setRenaming(worktree);}},
+          {label:'목록 새로고침',disabled:!connected,onSelect:()=>void refresh().catch(error=>onError(message(error)))},
+          ...(!worktree.main&&worktree.managed?[{label:'워크트리 삭제…',danger:true,disabled:!connected||worktree.status==='removing',onSelect:()=>{setError('');setDeleting(worktree);}}]:[]),
+        ]}/>
       </div>;
     })}
     <button className="worktree-add" disabled={!connected} onClick={()=>setCreating(true)}><Plus size={14}/>워크트리</button>

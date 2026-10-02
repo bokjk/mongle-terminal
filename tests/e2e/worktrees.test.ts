@@ -42,6 +42,16 @@ test('real Electron and approved web client share worktrees and preserve lazy te
     steps.push('A real ConPTY shell writes only in the linked worktree and reports the expected branch.');
     await page.getByRole('button',{name:'워크트리',exact:true}).click();await page.getByLabel('워크트리 이름').fill('나중에 시작');await page.getByLabel('생성 후 터미널 열기').uncheck();await page.getByRole('button',{name:'워크트리 만들기',exact:true}).click();await expect(page.getByRole('dialog')).toHaveCount(0);
     const before=await state(),unopened=before.worktrees!.find(w=>w.name==='나중에 시작')!;
+    await page.getByLabel('로그인 수정 워크트리 메뉴').click();
+    const menu=page.getByRole('menu',{name:'로그인 수정 워크트리 작업'});await expect(menu).toBeVisible();
+    const anchor=(await page.getByLabel('로그인 수정 워크트리 메뉴').boundingBox())!,popup=(await menu.boundingBox())!;
+    assert.ok(Math.abs(popup.x+popup.width-anchor.x-anchor.width)<2);assert.ok(Math.abs(popup.y-anchor.y-anchor.height-4)<2);
+    await page.screenshot({animations:'disabled',path:path.join(output,'desktop-worktree-menu.png')});
+    await page.keyboard.press('Escape');await expect(menu).toHaveCount(0);await expect(page.getByLabel('로그인 수정 워크트리 메뉴')).toBeFocused();
+    await page.getByLabel('로그인 수정 워크트리 메뉴').click();
+    await menu.getByRole('menuitem',{name:'이름 변경',exact:true}).click();await expect(page.getByRole('dialog',{name:'워크트리 이름 변경',exact:true})).toBeVisible();
+    await page.keyboard.press('Escape');await expect(page.getByRole('dialog')).toHaveCount(0);await expect(page.getByRole('menu')).toHaveCount(0);
+    steps.push('The real Electron worktree menu opens 4px below its trigger, aligns to its right edge, restores focus on Escape, and opens the rename dialog.');
     await page.screenshot({animations:'disabled',path:path.join(output,'desktop.png')});await app!.close();app=undefined;page=await start();await expect(page.getByRole('button',{name:'나중에 시작 워크트리 열기'})).toBeVisible();
     const after=await state();assert.equal(after.bootId,before.bootId);assert.equal(after.terminals.find(t=>t.id===terminal.id)?.pid,terminal.pid);assert.equal(after.terminals.filter(t=>t.worktreeId===unopened.id).length,0);
     steps.push('Closing and reopening Electron retains the live host/PID and keeps an unopened worktree at zero terminals.');
