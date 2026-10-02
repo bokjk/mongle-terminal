@@ -45,6 +45,7 @@ export class BrowserPresentationAdapter {
   private compositionEndTimer: ReturnType<typeof setTimeout> | undefined;
   private compositionActive = false;
   private compositionBlocked = false;
+  private pendingModifiedEnter: string | undefined;
   private deferredKeyTimer: ReturnType<typeof setTimeout> | undefined;
   private deferredKeyBlocked = false;
   private readonly composing = () => this.beginComposition();
@@ -77,7 +78,14 @@ export class BrowserPresentationAdapter {
     terminal.options.disableStdin = true;
     this.subscriptions.push(
       attachTouchScrollback(terminal),
-      terminal.onData(data => { if (this.acceptsTerminalInput()) onInput(data, 'utf8'); }),
+      terminal.onData(data => {
+        if (!this.acceptsTerminalInput()) return;
+        onInput(data, 'utf8');
+        // A following key can force xterm's deferred composition to commit
+        // before our timer. Emit the queued Enter immediately after that text,
+        // before xterm proceeds with the following key.
+        if (this.compositionEndTimer !== undefined) this.flushModifiedEnter();
+      }),
       terminal.onBinary(data => { if (this.acceptsTerminalInput()) onInput(data, 'binary'); }),
     );
     terminal.textarea?.addEventListener('compositionstart', this.composing);
@@ -115,16 +123,28 @@ export class BrowserPresentationAdapter {
 
   /** Run after application shortcuts and before xterm's legacy Enter encoder. */
   handleKeyEvent(event: KeyboardEvent): boolean {
-    if(event.type!=='keydown'||event.key!=='Enter'||event.metaKey||
-      !(event.shiftKey||event.ctrlKey||event.altKey)||!this.modes?.win32InputMode||
-      event.isComposing||event.keyCode===229||this.compositionActive)return true;
+    const enter=event.key==='Enter'||event.code==='Enter'||event.code==='NumpadEnter';
+    if(event.type!=='keydown'){
+      if(event.type==='keypress'&&enter&&this.pendingModifiedEnter){event.preventDefault();return false;}
+      return true;
+    }
+    if(!enter&&!['Shift','Control','Alt'].includes(event.key)&&this.compositionEndTimer===undefined)this.pendingModifiedEnter=undefined;
+    if(!enter||event.metaKey||!(event.shiftKey||event.ctrlKey||event.altKey)||!this.modes?.win32InputMode)return true;
+    const modifiers=(event.shiftKey?16:0)|(event.ctrlKey?8:0)|(event.altKey?2:0)|(event.code==='NumpadEnter'?256:0);
+    const character=event.ctrlKey?10:13;
+    const input=`\x1b[13;28;${character};1;${modifiers};1_\x1b[13;28;${character};0;${modifiers};1_`;
+    if(event.isComposing||this.compositionActive){
+      // Windows Korean IME reports Process/229, with physical code Enter.
+      // Keep native composition commit, but bypass xterm's unmodified Enter.
+      // Its compositionend listener commits text before our completion timer.
+      this.pendingModifiedEnter=this.acceptsTerminalInput()?input:undefined;
+      return false;
+    }
     event.preventDefault();
     if(this.acceptsTerminalInput()) {
       // KEY_EVENT_RECORD: virtual key, scan code, character, down, modifiers, repeat.
       // Send a complete pair so a blur/control transfer cannot leave Enter held down.
-      const modifiers=(event.shiftKey?16:0)|(event.ctrlKey?8:0)|(event.altKey?2:0)|(event.code==='NumpadEnter'?256:0);
-      const character=event.ctrlKey?10:13;
-      this.terminal.input(`\x1b[13;28;${character};1;${modifiers};1_\x1b[13;28;${character};0;${modifiers};1_`,true);
+      this.terminal.input(input,true);
     }
     return false;
   }
@@ -204,6 +224,7 @@ export class BrowserPresentationAdapter {
   setInputEnabled(enabled: boolean, options: { preserveKeyboard?: boolean } = {}): void {
     this.enabled = enabled && !this.disposed;
     if (!this.enabled) {
+      this.pendingModifiedEnter=undefined;
       this.compositionBlocked ||= this.compositionActive;
       this.deferredKeyBlocked ||= this.deferredKeyTimer !== undefined;
     }
@@ -234,12 +255,14 @@ export class BrowserPresentationAdapter {
   }
 
   setFocused(focused: boolean): void {
+    if(!focused)this.pendingModifiedEnter=undefined;
     if (this.enabled && !this.disposed && this.modes?.sendFocusMode) {
       this.onInput(focused ? '\x1b[I' : '\x1b[O', 'utf8');
     }
   }
 
   beginComposition(): void {
+    this.pendingModifiedEnter=undefined;
     if (this.compositionEndTimer) clearTimeout(this.compositionEndTimer);
     this.compositionEndTimer = undefined;
     this.compositionActive = true;
@@ -249,8 +272,15 @@ export class BrowserPresentationAdapter {
   endComposition(): void {
     if (this.compositionEndTimer) clearTimeout(this.compositionEndTimer);
     this.compositionEndTimer = undefined;
+    this.flushModifiedEnter();
     this.compositionActive = false;
     this.compositionBlocked = false;
+  }
+
+  private flushModifiedEnter(): void {
+    const input=this.pendingModifiedEnter;
+    this.pendingModifiedEnter=undefined;
+    if(input&&this.acceptsTerminalInput()&&this.modes?.win32InputMode)this.terminal.input(input,true);
   }
 
   dispose(): void {

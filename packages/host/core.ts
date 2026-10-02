@@ -195,7 +195,7 @@ export class HostCore {
     const next=inspection.worktrees.map(item=>{
       const old=previous.find(old=>samePath(old.path,item.path));
       const recovered=this.worktreeOperations.find(op=>op.repositoryId===repository.id&&op.kind==='create'&&op.path&&samePath(op.path,item.path)&&op.head===item.head&&op.branch===item.branch);
-      return {...old,...item,id:old?.id||recovered?.worktreeId||randomUUID(),repositoryId:repository.id,name:old?.name||recovered?.name||(item.main?'원래 작업':item.branch||basename(item.path)),managed:old?.managed||Boolean(recovered),...(old?.status==='removing'?{status:'removing' as const}:{})};
+      return {...old,...item,id:old?.id||recovered?.worktreeId||randomUUID(),repositoryId:repository.id,name:old?.name||recovered?.name||(item.main?basename(item.path)||'기본 작업':item.branch||basename(item.path)),managed:old?.managed||Boolean(recovered),...(old?.status==='removing'?{status:'removing' as const}:{})};
     });
     for(const old of previous)if(!next.some(item=>item.id===old.id))next.push({...old,status:'missing',reason:'폴더 확인 필요'});
     this.worktrees=[...this.worktrees.filter(item=>item.repositoryId!==repository.id),...next];

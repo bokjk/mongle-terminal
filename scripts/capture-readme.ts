@@ -6,16 +6,16 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile, rm, cp } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import path from 'node:path';
 import { chromium, expect, type Browser, type Page } from '@playwright/test';
 import { HostCore } from '../packages/host/core.js';
-import type { ConnectionContext } from '../packages/protocol/index.js';
+import type { ConnectionContext, WorktreeOperation } from '../packages/protocol/index.js';
 
 assert.equal(process.platform, 'win32', 'This capture uses real Windows shells.');
 assert.ok(existsSync('dist/web/index.html'), 'Run npm run build first.');
-const root = path.resolve('.test-data/readme-demo');
+const root = path.resolve(process.env.MONGLE_README_DATA_ROOT||'.test-data/readme-demo');
 await mkdir(root, { recursive: true });
 const isolated = await mkdtemp(path.join(root, 'capture-'));
 const workspace = path.join(isolated, 'workspace');
@@ -103,19 +103,39 @@ try {
   await desktop.getByLabel('터미널 글자 크기', { exact: true }).selectOption('15');
   await desktop.getByRole('button', { name: '설정 닫기' }).click();
 
-  async function makePane(title: string, split?: { index: number; axis: '좌우 분할' | '상하 분할' }) {
+  // Only this disposable sample repository is registered. Use a local identity
+  // and disable hooks so the capture cannot run a contributor's Git hooks.
+  const demoGit=(...args:string[])=>execFileSync('git',['-c','user.name=Mongle Demo','-c','user.email=demo@example.invalid','-c','core.hooksPath=NUL',...args],{cwd:demoCwd,windowsHide:true});
+  demoGit('init','-q','--initial-branch=main');demoGit('add','.');demoGit('commit','-qm','README demo');
+  const initial=host.getState(),group=initial.groups[0];
+  await host.handle('projects.attach',{hostId:initial.hostId,bootId:initial.bootId,path:demoCwd,groupId:group.id,revision:group.revision},contexts[0]);
+  const repository=host.getState().repositories![0];
+  let operation=await host.handle('worktrees.create',{hostId:initial.hostId,bootId:initial.bootId,requestId:randomUUID(),groupId:group.id,repositoryId:repository.id,name:'로그인 개선',baseRef:'main',branch:'feat/login',path:`${drive}:\\login-worktree`,existingBranch:false,openTerminal:false},contexts[0]) as WorktreeOperation;
+  for(let attempt=0;attempt<200&&['pending','running'].includes(operation.status);attempt++){
+    await new Promise(resolve=>setTimeout(resolve,100));
+    operation=await host.handle('worktrees.operation',{hostId:initial.hostId,bootId:initial.bootId,id:operation.id},contexts[0]) as WorktreeOperation;
+  }
+  assert.equal(operation.status,'succeeded');
+  const login=host.getState().worktrees!.find(worktree=>worktree.name==='로그인 개선')!;
+  const notesDirectory=path.join(isolated,'notes');
+  await cp(workspace,notesDirectory,{recursive:true,filter:file=>path.basename(file)!=='.git'});
+
+  async function makePane(title: string, split?: { index: number; axis: '좌우 분할' | '상하 분할' }, cwd?:string) {
+    const before=new Set(host.getState().terminals.map(terminal=>terminal.id));
     if (split) await desktop.locator('.pane').nth(split.index).getByRole('button', { name: split.axis, exact: true }).click();
     else await desktop.getByRole('button', { name: '새 터미널', exact: true }).click();
+    if(cwd)await desktop.getByLabel('시작 폴더',{exact:true}).fill(cwd);
     await desktop.getByRole('button', { name: '터미널 열기', exact: true }).click();
-    const pane = desktop.locator('.pane').last();
+    const created=host.getState().terminals.find(terminal=>!before.has(terminal.id))!;
+    const pane = desktop.locator(`.pane[data-terminal-id="${created.id}"]`);
     await pane.getByText('여기서 제어 중', { exact: true }).waitFor();
     await pane.locator('.pane-title').dblclick();
     await desktop.getByLabel('이름', { exact: true }).fill(title);
     await desktop.getByRole('button', { name: '저장', exact: true }).click();
   }
-  await makePane('웹 · PowerShell');
-  await makePane('테스트', { index: 0, axis: '좌우 분할' });
-  await makePane('작업 노트', { index: 1, axis: '상하 분할' });
+  await makePane('웹 · PowerShell',undefined,repository.root);
+  await makePane('테스트', { index: 0, axis: '좌우 분할' },login.path);
+  await makePane('작업 노트', { index: 1, axis: '상하 분할' },notesDirectory);
   const divider = desktop.getByRole('separator', { name: '좌우 분할 크기', exact: true });
   await divider.focus();
   await desktop.keyboard.press('ArrowRight');
@@ -130,7 +150,8 @@ try {
     await pane.locator('.xterm-screen').click();
     await pane.getByText('여기서 제어 중', { exact: true }).waitFor();
     await pane.locator('.xterm-helper-textarea').focus();
-    const command = initial ? `"${powershell!.executable}" -NoLogo -NoProfile -NoExit -File .\\demo.ps1 ${view}` : `.\\demo.ps1 ${view}`;
+    const folder=index===1?login.path:index===2?notesDirectory:repository.root;
+    const command = initial ? `cd /d "${folder}" && "${powershell!.executable}" -NoLogo -NoProfile -NoExit -File .\\demo.ps1 ${view}` : `.\\demo.ps1 ${view}`;
     await page.keyboard.insertText(command);
     await page.keyboard.press('Enter');
     const marker = view === 'web' ? 'Ready for your next command.' : view === 'tests' ? 'fail 0' : 'This is an isolated example workspace.';
@@ -142,6 +163,7 @@ try {
   // Show a real additional session inside the first split region.
   const firstTerminal=host.getState().terminals[0],beforeTab=new Set(host.getState().terminals.map(terminal=>terminal.id));
   await desktop.locator('.pane').first().getByRole('button',{name:'탭 추가',exact:true}).click();
+  await desktop.getByLabel('시작 폴더',{exact:true}).fill(repository.root);
   await desktop.getByRole('button',{name:'터미널 열기',exact:true}).click();
   await expect(desktop.locator('.pane')).toHaveCount(4);
   const extraTab=host.getState().terminals.find(terminal=>!beforeTab.has(terminal.id));assert.ok(extraTab);
@@ -179,7 +201,7 @@ try {
   assert.deepEqual(errors, []);
   for (const page of [desktop, mobile]) {
     const visibleText = await page.locator('body').innerText();
-    assert.ok(!/C:\\Users\\|tail[\w-]*\.ts\.net|권한.*거부|Access.*denied/i.test(visibleText), 'Capture must not contain personal paths, real remote hosts, or shell errors');
+    assert.ok(!/C:\\Users\\(?!Public\\)|other_dev|tail[\w-]*\.ts\.net|권한.*거부|Access.*denied/i.test(visibleText), 'Capture must not contain personal paths, real remote hosts, or shell errors');
   }
   await mobile.screenshot({ path: 'docs/assets/mobile.png' });
   console.log('Captured real UI: docs/assets/desktop.png (1440×900), docs/assets/mobile.png (390×844).');

@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 
 type Action = { label: string; disabled?: boolean; danger?: boolean; onSelect: () => void };
 
-export function WorktreeActions({ name, actions }: { name: string; actions: Action[] }) {
+export function WorktreeActions({ name, kind='워크트리', actions }: { name: string; kind?:string; actions: Action[] }) {
   const id = useId(), trigger = useRef<HTMLButtonElement>(null), menu = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
   const firstFocus = useRef<'first' | 'last'>('first');
@@ -52,14 +52,14 @@ export function WorktreeActions({ name, actions }: { name: string; actions: Acti
   }, [open]);
 
   return <>
-    <button ref={trigger} type="button" className="icon-button worktree-actions" aria-label={`${name} 워크트리 메뉴`} aria-haspopup="menu" aria-expanded={open} aria-controls={open ? id : undefined}
+    <button ref={trigger} type="button" className="icon-button worktree-actions" aria-label={`${name}${kind?` ${kind}`:''} 메뉴`} aria-haspopup="menu" aria-expanded={open} aria-controls={open ? id : undefined}
       onClick={() => { firstFocus.current = 'first'; setOpen(value => !value); }}
       onKeyDown={event => {
         if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
           event.preventDefault(); firstFocus.current = event.key === 'ArrowUp' ? 'last' : 'first'; setOpen(true);
         }
       }}>···</button>
-    {open && createPortal(<div ref={menu} id={id} className="worktree-menu" role="menu" tabIndex={-1} aria-label={`${name} 워크트리 작업`}
+    {open && createPortal(<div ref={menu} id={id} className="worktree-menu" role="menu" tabIndex={-1} aria-label={`${name}${kind?` ${kind}`:''} 작업`}
       onKeyDown={event => {
         if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close(); }
         if (event.key === 'Tab') close();
