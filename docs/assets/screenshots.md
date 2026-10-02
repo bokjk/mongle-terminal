@@ -1,6 +1,6 @@
 # README 화면 캡처
 
-`desktop.png`와 `mobile.png`는 몽글터미널 v0.3.6의 실제 웹 UI와 실제 Windows PowerShell을 사용해 촬영한 화면입니다. 픽셀 편집, 앱 화면의 DOM 교체, 상태 응답 조작은 하지 않았습니다.
+`desktop.png`·`desktop-collapsed.png`와 `mobile.png`는 몽글터미널 v0.3.8의 실제 웹 UI와 실제 Windows PowerShell을 사용해 촬영한 화면입니다. 픽셀 편집, 앱 화면의 DOM 교체, 상태 응답 조작은 하지 않았습니다.
 
 | 이미지 | 캡처 조건 |
 | --- | --- |
@@ -33,3 +33,7 @@ PowerShell은 `-NoProfile`로 실행하고 명령 기록 저장을 끕니다. �
 `capture-readme.ts`로 1440×900 데스크톱과 390×844 모바일 화면을 다시 촬영했다. 격리한 예제 Git 저장소, `기본` 작업과 `로그인 개선` 워크트리, 일반 터미널을 실제 HostCore·Windows 셸에 연결했다. 네 개 터미널과 세 개 분할 영역을 사용한다. 화면은 실제 렌더링 그대로이며 픽셀·앱 DOM을 수정하지 않았다. 공용 임시 폴더와 임시 드라이브 경로만 표시하고 실사용 경로·인증 정보·Tailscale을 포함하지 않는다. 모바일은 Chrome의 터치 화면 에뮬레이션이다. 기존 Git 보기 이미지는 0.3.6 촬영본을 유지한다.
 
 이번 촬영은 `MONGLE_README_DATA_ROOT=C:\Users\Public\Documents\ESTsoft\CreatorTemp\MongleDemo`로 실행했다. Git이 임시 드라이브를 실제 경로로 정규화하므로 사용자별 개발 경로 대신 공용 폴더에 격리 예제를 생성하고 종료 후 삭제했다.
+
+## 0.3.8 재촬영 · 2026-10-02
+
+얇은 상단·사이드바 맨 위 접기 버튼·13px 터미널을 반영해 데스크톱 펼침/접힘과 모바일 화면을 재촬영했다. 캡처 명령은 `MONGLE_README_DATA_ROOT=C:\Users\Public\Documents\ESTsoft\CreatorTemp\MongleDemo038`에서 실행했고 기존과 동일한 예제 Git 저장소·워크트리·실제 셸 네 개를 사용했다. Git이 경로 별칭을 실제 경로로 정규화하므로 공용 격리 폴더만 표시된다. 일반 폴더는 임시 드라이브의 notes 경로를 사용한다. 초기 개인 TEMP 경로 캡처는 개인정보 검사에서 거부되어 폐기했고 최종 공용 폴더 캡처만 게시한다. 이미지에 개인 경로·인증 정보·사용자 명령 출력이 없는 것을 확인했다.

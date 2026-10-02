@@ -6,6 +6,7 @@ README에는 몽글 캐릭터와 실제 앱의 데모 화면을 사용합니다.
 |---|---|
 | `apps/web/public/icon-512.png` | 기존 몽글터미널 아이콘. 원본과 캐릭터 권리는 [브랜딩 기록](../branding/README.md)에 보존 |
 | `desktop.png` | 격리된 HostCore·Windows 셸·공통 웹 UI로 촬영한 데스크톱 크기 화면 |
+| `desktop-collapsed.png` | 같은 데스크톱 화면에서 사이드바를 접은 실제 상태 |
 | `mobile.png` | 같은 데모의 모바일 크기 브라우저 화면. 실물 휴대폰 캡처가 아님 |
 | `status.svg` | 외부 이미지 서비스 없이 표시하는 플랫폼·미리보기·원격 연결 배지 |
 

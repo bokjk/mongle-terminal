@@ -477,6 +477,64 @@ button.pane-title { background: transparent; border: 0; text-align: left; paddin
 .screen-reader-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 [hidden] { display: none !important; }
 
+/* Compact desktop workbench. Mobile keeps its touch-sized drawer and controls. */
+@media (min-width: 701px) {
+  .app-shell { --titlebar-height: 36px; --workspace-inset: 3px; --pane-inset: 6px; display: grid; grid-template-columns: var(--sidebar-width) minmax(0, 1fr); grid-template-rows: var(--titlebar-height) minmax(0, 1fr); }
+  .desktop-header { grid-column: 1 / -1; grid-row: 1; z-index: 40; display: flex; align-items: center; gap: 6px; min-width: 0; height: var(--titlebar-height); padding: 0 8px; border-bottom: 1px solid var(--border-subtle); background: var(--bg); }
+  .desktop-header.native-titlebar { app-region: drag; padding-left: max(8px, env(titlebar-area-x, 0px)); padding-right: max(144px, calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw))); }
+  .desktop-header button, .desktop-header nav, .desktop-header .host-picker, .desktop-header .connection-status { app-region: no-drag; }
+  .desktop-brand { display: flex; align-items: center; gap: 8px; flex-shrink: 0; padding-right: 10px; font-size: 13px; white-space: nowrap; }
+  .desktop-brand img { width: 27px; height: 27px; object-fit: contain; }
+  .desktop-brand > span > span { margin-left: 3px; color: var(--text-secondary); }
+  .desktop-header .host-picker { flex: 0 1 150px; min-width: 85px; margin: 0; }
+  .desktop-header .host-select { min-height: 28px; height: 28px; gap: 6px; padding: 0 7px; border-radius: var(--radius-sm); background: transparent; }
+  .desktop-header .host-select .host-device-icon { width: 16px; height: 16px; border: 0; background: transparent; }
+  .desktop-header .host-select .host-label small { display: none; }
+  .desktop-header .connection-status { flex-shrink: 0; min-height: 28px; margin: 0; gap: 3px; font-size: 0; }
+  .desktop-header .connection-status .connection-dot { margin-right: 3px; }
+  .desktop-header .icon-button { width: 28px; height: 28px; min-height: 28px; padding: 5px; }
+  .workspace-switcher { display: flex; align-self: stretch; min-width: 0; flex: 0 1 auto; overflow-x: auto; scrollbar-width: none; }
+  .workspace-switch { display: flex; align-items: center; justify-content: flex-start; gap: 7px; flex: 0 0 auto; max-width: 190px; min-width: 80px; padding: 0 12px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--text-secondary); font-size: 12px; }
+  .workspace-switch > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .workspace-switch:hover { background: var(--surface-hover); color: var(--text); }
+  .workspace-switch[aria-current] { border-bottom-color: var(--accent); color: var(--text); background: var(--surface); }
+  .workspace-switch:focus-visible { outline-offset: -3px; }
+  .titlebar-drag-space { flex: 1 0 36px; align-self: stretch; }
+  .sidebar { grid-column: 1; grid-row: 2; min-height: 0; }
+  .sidebar-mobile-chrome { display: none; }
+  .sidebar-toggle-row { flex-shrink: 0; padding: 5px 6px; border-bottom: 1px solid var(--border-subtle); }
+  .sidebar-collapse-toggle { display: flex; align-items: center; gap: 8px; width: 100%; height: 28px; padding: 0 6px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-secondary); font-size: 12px; white-space: nowrap; }
+  .sidebar-collapse-toggle:hover { background: var(--surface-hover); color: var(--text); }
+  .sidebar-section { padding-top: 8px; }
+  .sidebar .project-open { margin-bottom: 4px; }
+  .sidebar-section-label { margin-top: 4px; margin-bottom: 4px; padding-bottom: 4px; }
+  .sidebar .group-row { min-height: 34px; }
+  .sidebar .group-main { gap: 7px; }
+  .sidebar .group-meta { display: none; }
+  .sidebar-footer { flex-direction: row; gap: 4px; padding: 6px 8px; min-height: 42px; }
+  .sidebar-footer .button { justify-content: center; width: 30px; min-height: 28px; padding: 5px; }
+  .sidebar-footer .sidebar-action-label, .sidebar-footer .version, .sidebar-note { display: none; }
+  .sidebar-rail { display: flex; flex-direction: column; align-items: center; gap: 5px; padding-top: 7px; }
+  .sidebar-collapsed .sidebar-footer { flex-direction: column; padding: 6px; }
+  .main-area { grid-column: 2; grid-row: 2; min-width: 0; min-height: 0; }
+  .terminal-workspace { padding: var(--workspace-inset); }
+  .pane { border-radius: var(--radius-sm); }
+  .pane-body { padding: var(--pane-inset); }
+  .pane-footer { min-height: 20px; padding: 1px 6px; }
+  .status-bar { height: 22px; padding: 0 10px; gap: 10px; }
+  .settings-content { padding: 18px; }
+  .settings-tabs { width: 144px; padding: 12px 8px; }
+  .settings-section + .settings-section { margin-top: 20px; padding-top: 16px; }
+  .settings-description { margin-bottom: 14px; }
+  .pairing-page { min-height: 0; }
+}
+@media (min-width: 701px) and (max-width: 980px) {
+  .desktop-brand { padding-right: 0; }
+  .desktop-brand > span { display: none; }
+  .desktop-header .host-picker { flex-basis: 112px; }
+  .workspace-switch { max-width: 130px; padding: 0 8px; }
+}
+
 @keyframes connection-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
 @keyframes toast-in { from { opacity: 0; translate: 0 6px; } to { opacity: 1; translate: 0 0; } }
 
