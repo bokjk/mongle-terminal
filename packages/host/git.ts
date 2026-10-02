@@ -39,7 +39,7 @@ export function parseGitStatus(output: string) {
   return { branch, detached, changes };
 }
 
-async function safeMetadata(directory: string, protectedRoot: string) {
+export async function safeMetadata(directory: string, protectedRoot: string) {
   if (!localPath(directory)) throw new AppError('GIT_UNAVAILABLE', '로컬 Git 저장소만 확인할 수 있습니다.');
   if ((await lstat(directory)).isSymbolicLink() && /^[\\/]{2}/.test(await readlink(directory))) throw new AppError('GIT_UNAVAILABLE', '로컬 Git 저장소만 확인할 수 있습니다.');
   const resolved = await realpath(directory);
@@ -47,7 +47,7 @@ async function safeMetadata(directory: string, protectedRoot: string) {
   return resolved;
 }
 
-async function repositoryAt(base: string, protectedRoot: string): Promise<string | undefined> {
+export async function repositoryAt(base: string, protectedRoot: string): Promise<string | undefined> {
   for (let current = base;; current = path.dirname(current)) {
     const marker = path.join(current, '.git');
     try {

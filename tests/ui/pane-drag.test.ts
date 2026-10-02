@@ -226,7 +226,7 @@ test('native pane drag: dock, swap, create once, cancel, lease/input continuity 
     assert.notEqual(await page.locator('.new-terminal-drag').getAttribute('draggable'), 'true');
     for (const source of await page.locator('.pane:visible .pane-header').all()) assert.notEqual(await source.getAttribute('draggable'), 'true');
     const mobileStart = observeMutation().length; const mobilePane = page.locator('.pane:visible').first(); await beginDrag(page, mobilePane.locator('.pane-title'), mobilePane, 'left'); await page.mouse.up(); await settle(); await expect(page.locator('.pane-drop-preview')).toHaveCount(0); assert.equal(observeMutation().length, mobileStart);
-    await expect(page.locator('.mobile-keys')).toBeVisible(); await page.locator('.mobile-panel-switcher').click(); await expect(page.getByRole('dialog', { name: '터미널 전환' }).locator('.device-row')).toHaveCount(3); await page.keyboard.press('Escape');
+    await expect(page.locator('.mobile-keys')).toBeVisible(); await page.locator('.mobile-panel-switcher').click(); await expect(page.getByRole('dialog', { name: '터미널 전환' }).locator('.device-row')).toHaveCount(3); await page.keyboard.press('Escape'); await expect(page.getByRole('dialog', { name: '터미널 전환' })).toHaveCount(0);
     await page.setViewportSize({ width: 1600, height: 1000 }); await expect(page.locator('.pane:visible')).toHaveCount(3);
     steps.push('maximized drag is inert and mobile single-pane controls remain available without drag sources');
 

@@ -10,7 +10,7 @@
 
 현재 앱의 실행 방법은 [사용자 안내](USER-GUIDE.md), 구현과 실제 검증 결과는 [구현·검증 상태](IMPLEMENTATION-STATUS.md)를 기준으로 확인한다. 아래 01–06 문서는 구현 전에 작성한 설계 기준이며 미실행 표시를 최종 검증 결과로 해석하지 않는다.
 
-버전별 변경은 [변경 이력](../CHANGELOG.md), 설치본·자동 업데이트와 Release 절차는 [배포 안내](RELEASING.md), 현재 파일/Git 보기의 공개 게시·패키지·실제 다운로드 결과는 [0.3.6 배포 검증](validation/public-release-0.3.6.md)에 기록한다. 초기 업데이트 구현 검증은 [자동 업데이트 검증](validation/auto-update.md)을 확인한다.
+버전별 변경은 [변경 이력](../CHANGELOG.md), 설치본·자동 업데이트와 Release 절차는 [배포 안내](RELEASING.md), 0.3.7 워크트리·입력·탭 개선의 준비 및 배포 결과는 [0.3.7 배포 검증](validation/public-release-0.3.7.md), 이전 파일/Git 보기 배포는 [0.3.6 배포 검증](validation/public-release-0.3.6.md)에 기록한다. 초기 업데이트 구현 검증은 [자동 업데이트 검증](validation/auto-update.md)을 확인한다.
 
 ## 문서 읽는 순서
 
@@ -22,6 +22,7 @@
 | [04. 구현 순서와 검증](04-implementation-and-validation.md) | P0 실험 4개, 작업 의존성, 기능 24개·보안/복구 12개 시나리오 |
 | [05. 오픈소스 비교](05-open-source-comparison.md) | Herdr·Paseo·Orca·Wave·Tabby·WezTerm 비교와 적용 결정 |
 | [06. 검토 및 현재 검증 상태](06-review-and-status.md) | 설계 검토에서 발견한 사항, 수정 결과, 미검증 범위 |
+| [07. 워크트리 기능 설계안](07-worktrees-design.md) | 워크트리 기능의 설계 기준: 프로젝트 등록, 선택적 터미널 생성, 클릭 시 포커스, 저장·복구·삭제 |
 
 ## 정한 방향
 

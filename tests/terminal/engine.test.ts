@@ -9,6 +9,17 @@ import { PRESENTATION_VERSION } from '../../packages/terminal/types.js';
 
 const geometry = { cols: 40, rows: 8 };
 
+test('ConPTY modifier mode survives frames, shares DEC modes and resets on RIS',async()=>{
+  const replies:string[]=[],engine=new TerminalEngine({...geometry,onResponse:data=>replies.push(data)});
+  try{
+    await engine.write('\x1b[?90');await engine.write('01;1004h');
+    const snapshot=await engine.snapshot();assert.equal(snapshot.modes.win32InputMode,true);assert.equal(snapshot.modes.sendFocusMode,true);
+    await engine.write('\x1b[?9001$p');assert.deepEqual(replies,['\x1b[?9001;1$y']);
+    await engine.write('\x1b[?9001;1004l');assert.equal((await engine.snapshot()).modes.win32InputMode,false);assert.equal((await engine.snapshot()).modes.sendFocusMode,false);
+    await engine.write('\x1b[?9001h\x1bc');assert.equal((await engine.snapshot()).modes.win32InputMode,false);
+  }finally{await engine.dispose();}
+});
+
 test('synchronized output waits across PTY chunks without blocking the parser', async () => {
   const engine = new TerminalEngine({ ...geometry, onResponse() {} });
   try {

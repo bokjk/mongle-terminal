@@ -27,3 +27,9 @@ npx tsx scripts/capture-readme.ts
 PowerShell은 `-NoProfile`로 실행하고 명령 기록 저장을 끕니다. 기존 사용자 호스트·셸·인증 데이터·Tailscale 설정을 사용하지 않습니다. 종료 시 자신이 만든 브라우저와 호스트를 닫고, 소유한 드라이브 매핑과 이번 실행의 격리 폴더만 확인 후 제거합니다.
 
 2026-10-01에 0.3.6으로 재생성했습니다. 영역별 탭·**새 터미널**과 모바일 설정 조작을 사용하며, Git 기능은 [별도 실제 패키지 검증](../validation/git-file-explorer.md)으로 확인합니다. 검증 결과는 [0.3.6 배포 기록](../validation/public-release-0.3.6.md)에 정리합니다.
+
+## 0.3.7 재촬영 · 2026-10-02
+
+`capture-readme.ts`로 1440×900 데스크톱과 390×844 모바일 화면을 다시 촬영했다. 격리한 예제 Git 저장소, `기본` 작업과 `로그인 개선` 워크트리, 일반 터미널을 실제 HostCore·Windows 셸에 연결했다. 네 개 터미널과 세 개 분할 영역을 사용한다. 화면은 실제 렌더링 그대로이며 픽셀·앱 DOM을 수정하지 않았다. 공용 임시 폴더와 임시 드라이브 경로만 표시하고 실사용 경로·인증 정보·Tailscale을 포함하지 않는다. 모바일은 Chrome의 터치 화면 에뮬레이션이다. 기존 Git 보기 이미지는 0.3.6 촬영본을 유지한다.
+
+이번 촬영은 `MONGLE_README_DATA_ROOT=C:\Users\Public\Documents\ESTsoft\CreatorTemp\MongleDemo`로 실행했다. Git이 임시 드라이브를 실제 경로로 정규화하므로 사용자별 개발 경로 대신 공용 폴더에 격리 예제를 생성하고 종료 후 삭제했다.
