@@ -114,8 +114,16 @@ export function TerminalPane(props:PaneProps) {
     // Copy on release, never on every selection event (snapshots restore the
     // same selection repeatedly while output is streaming).
     let selecting = false;
-    const beginSelection=(event:MouseEvent)=>{if(event.button===0)selecting=true;};
-    const finishSelection=(event:MouseEvent)=>{if(event.button!==0||!selecting)return;selecting=false;if(terminal.hasSelection())void copy();};
+    let selectionGesture = 0;
+    const beginSelection=(event:MouseEvent)=>{if(event.button===0){selecting=true;selectionGesture++;}};
+    const finishSelection=(event:MouseEvent)=>{
+      if(event.button!==0||!selecting)return;
+      selecting=false;
+      const gesture=selectionGesture;
+      const copySelection=()=>{if(!disposed&&gesture===selectionGesture&&terminal.hasSelection())void copy();};
+      const pending=adapter.pendingPresentation;
+      if(pending)void pending.then(copySelection,()=>{});else copySelection();
+    };
     mount.current.addEventListener('mousedown',beginSelection);
     window.addEventListener('mouseup',finishSelection);
     const handlePaste=(event:ClipboardEvent)=>{const text=event.clipboardData?.getData('text/plain');if(text===undefined)return;event.preventDefault();event.stopImmediatePropagation();void current.current.confirmPaste(text).then(approved=>{if(approved&&!disposed)void runInputIntent(()=>adapter.paste(text));});};

@@ -2,23 +2,11 @@ import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { ChevronDown, ChevronRight, Copy, FileText, Folder, GitBranch, Link, RefreshCw, X } from 'lucide-react';
 import type { Transport, TerminalInfo, DirectoryListing, FileEntry, FilePreview, GitChange } from '../../../packages/protocol/index';
 import { GitChanges, GitMarker, gitKind, gitLabel, useGitListing } from './GitChanges';
+import { explorerClient, type ExplorerClient } from './explorer-queue';
 
 type Reference = { id: string; hostId: string; bootId: string; generation: string; root: string };
 type Props = { client: Transport; hostId: string; bootId: string; terminal?: TerminalInfo; supported: boolean; gitSupported: boolean; connected: boolean; onClose(): void; onError(message: string): void };
 const message = (error: unknown) => error instanceof Error ? error.message : '파일을 불러오지 못했습니다.';
-
-// Expanded folders, polling and previews share the host's two-read budget.
-function explorerClient(client: Transport): Transport {
-  let active = 0;
-  const waiting: Array<() => void> = [];
-  const pump = () => { while (active < 2 && waiting.length) { active++; waiting.shift()!(); } };
-  return {
-    request: <T,>(method: string, params?: unknown) => new Promise<T>((resolve, reject) => {
-      waiting.push(() => { void client.request<T>(method, params).then(resolve, reject).finally(() => { active--; pump(); }); }); pump();
-    }),
-    subscribe: listener => client.subscribe(listener), close: () => client.close(),
-  };
-}
 
 export function FileExplorer(props: Props) {
   const { terminal } = props;
@@ -49,28 +37,31 @@ function ExplorerHeading({ view, gitSupported, count, onView, onClose }: { view:
   }}><button role="tab" data-view="files" aria-selected={view === 'files'} tabIndex={view === 'files' ? 0 : -1} onClick={() => onView('files')}><Folder size={15}/>파일</button>{gitSupported && <button role="tab" data-view="git" aria-selected={view === 'git'} tabIndex={view === 'git' ? 0 : -1} onClick={() => onView('git')}><GitBranch size={15}/>Git{count > 0 && <span className="git-count" aria-label={`변경 파일 ${count}개`}>{count}</span>}</button>}</div><button className="icon-button" aria-label="파일 탐색기 닫기" onClick={onClose}><X size={16}/></button></header>;
 }
 
-function ExplorerContent({ client, reference, title, reported, gitSupported, view, onView, onClose, onError }: { client: Transport; reference: Reference; title: string; reported: boolean; gitSupported: boolean; view: 'files' | 'git'; onView(value: 'files' | 'git'): void; onClose(): void; onError(message: string): void }) {
+function ExplorerContent({ client, reference, title, reported, gitSupported, view, onView, onClose, onError }: { client: ExplorerClient; reference: Reference; title: string; reported: boolean; gitSupported: boolean; view: 'files' | 'git'; onView(value: 'files' | 'git'): void; onClose(): void; onError(message: string): void }) {
   const [revision, setRevision] = useState(0);
   const [preview, setPreview] = useState<FilePreview>();
   const [selected, setSelected] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const sequence = useRef(0);
+  const previewRequest = useRef<AbortController | undefined>(undefined);
   const git = useGitListing(client, reference, gitSupported, revision);
   const changes = git.listing?.state === 'repository' ? git.listing.changes : [];
   const decorations = useMemo(() => new Map(changes.map(change => [change.path.toLowerCase(), change])), [git.listing]);
   const folderRevision = `${revision}:${JSON.stringify(changes)}`;
-  useEffect(() => () => { sequence.current++; }, []);
+  useEffect(() => () => { sequence.current++; previewRequest.current?.abort(); }, []);
   async function openFile(entry: FileEntry) {
     const current = ++sequence.current;
+    previewRequest.current?.abort();
+    const controller = previewRequest.current = new AbortController();
     setSelected(entry.path); setPreview(undefined); setError(''); setBusy(true);
-    try { const result = await client.request<FilePreview>('files.preview', { ...reference, path: entry.path }); if (sequence.current === current) setPreview(result); }
+    try { const result = await client.request<FilePreview>('files.preview', { ...reference, path: entry.path }, controller.signal); if (sequence.current === current) setPreview(result); }
     catch (error) { if (sequence.current === current) setError(message(error)); }
     finally { if (sequence.current === current) setBusy(false); }
   }
-  function refresh() { sequence.current++; setPreview(undefined); setSelected(''); setError(''); setBusy(false); setRevision(value => value + 1); }
+  function refresh() { sequence.current++; previewRequest.current?.abort(); setPreview(undefined); setSelected(''); setError(''); setBusy(false); setRevision(value => value + 1); }
   function openChange(change: GitChange) {
-    if (!change.untracked && (change.worktree === 'D' || change.index === 'D')) { sequence.current++; setSelected(change.path); setPreview(undefined); setBusy(false); setError('삭제된 파일입니다. 작업 폴더에 미리 볼 내용이 없습니다.'); return; }
+    if (!change.untracked && (change.worktree === 'D' || change.index === 'D')) { sequence.current++; previewRequest.current?.abort(); setSelected(change.path); setPreview(undefined); setBusy(false); setError('삭제된 파일입니다. 작업 폴더에 미리 볼 내용이 없습니다.'); return; }
     void openFile({ name: change.path.split('/').pop()!, path: change.path, kind: 'file' });
   }
   async function copy(value: string) {
@@ -86,21 +77,22 @@ function ExplorerContent({ client, reference, title, reported, gitSupported, vie
       {view === 'git' && <GitChanges listing={git.listing} error={git.error} selected={selected} onFile={openChange} onRetry={refresh}/>}
       {view === 'files' && git.error && <p className="file-message">Git 상태 표시를 갱신하지 못했습니다. 새로고침해 주세요.</p>}
     </div>
-    {selected && <section className="file-preview" aria-label="파일 미리보기"><header><span title={selected}>{selected}</span>{preview && <button className="icon-button" aria-label="파일 경로 복사" onClick={() => void copy(preview.absolutePath)}><Copy size={14}/></button>}<button className="icon-button" aria-label="미리보기 닫기" onClick={() => { sequence.current++; setSelected(''); setPreview(undefined); setBusy(false); setError(''); }}><X size={14}/></button></header>
+    {selected && <section className="file-preview" aria-label="파일 미리보기"><header><span title={selected}>{selected}</span>{preview && <button className="icon-button" aria-label="파일 경로 복사" onClick={() => void copy(preview.absolutePath)}><Copy size={14}/></button>}<button className="icon-button" aria-label="미리보기 닫기" onClick={() => { sequence.current++; previewRequest.current?.abort(); setSelected(''); setPreview(undefined); setBusy(false); setError(''); }}><X size={14}/></button></header>
       {busy ? <p className="file-message" role="status">파일을 읽는 중…</p> : error ? <p className="file-message error-text" role="alert">{error}</p> : preview && <><div className="file-preview-meta">현재 파일 · 읽기 전용 · {preview.encoding}{preview.truncated && ' · 처음 64 KiB만 표시'}</div><pre tabIndex={0}>{preview.text || '(빈 파일)'}</pre></>}
     </section>}
   </>;
 }
 
-type TreeProps = { client: Transport; reference: Reference; revision: string; decorations: Map<string, GitChange>; selected: string; onFile(entry: FileEntry): void };
+type TreeProps = { client: ExplorerClient; reference: Reference; revision: string; decorations: Map<string, GitChange>; selected: string; onFile(entry: FileEntry): void };
 function FolderContents({ client, reference, directory, revision, decorations, selected, onFile }: TreeProps & { directory: string }) {
   const [listing, setListing] = useState<DirectoryListing>();
   const [error, setError] = useState('');
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     let active = true; setError('');
-    void client.request<DirectoryListing>('files.list', { ...reference, path: directory }).then(result => { if (active) setListing(result); }, error => { if (active) setError(message(error)); });
-    return () => { active = false; };
+    const controller = new AbortController();
+    void client.request<DirectoryListing>('files.list', { ...reference, path: directory }, controller.signal).then(result => { if (active) setListing(result); }, error => { if (active) setError(message(error)); });
+    return () => { active = false; controller.abort(); };
   }, [client, reference, directory, attempt, revision]);
   if (error) return <div className="file-message" role="alert">{error}<button className="button subtle" onClick={() => setAttempt(value => value + 1)}>다시 시도</button></div>;
   if (!listing) return <p className="file-message" role="status">폴더를 읽는 중…</p>;

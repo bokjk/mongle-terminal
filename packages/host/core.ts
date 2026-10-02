@@ -28,7 +28,7 @@ const MAX_FRAME_BYTES = 16 * 1024 * 1024;
 type Attachment = { lastSent: number; lastAck: number; pending?: SnapshotEvent };
 type Client = { ctx: ConnectionContext; send: Send; attached: Map<string, Attachment> };
 type Lease = { connectionId: string; deviceName: string; epoch: number; expires: number; ready: boolean; syncSeq: number; inputSeq: number; dedupe: Map<string, {seq:number; hash:string}> };
-type Runtime = { info: TerminalInfo; engine: TerminalEngine; pty?: pty.IPty; stopPty?:()=>Promise<void>; seq: number; epoch: number; lease?: Lease; timer?: ReturnType<typeof setTimeout>; checkpointAt: number; lastFrame?: SnapshotEvent; disposed: boolean; pendingBytes: number; directoryChanged?: boolean };
+type Runtime = { info: TerminalInfo; engine: TerminalEngine; pty?: pty.IPty; stopPty?:()=>Promise<void>; seq: number; epoch: number; lease?: Lease; timer?: ReturnType<typeof setTimeout>; framePending?: boolean; frameDirty?: boolean; checkpointAt: number; lastFrame?: SnapshotEvent; disposed: boolean; pendingBytes: number; directoryChanged?: boolean };
 
 /** Owns the shells, independent of every GUI/browser attachment. */
 export class HostCore {
@@ -126,6 +126,8 @@ export class HostCore {
     if (changed) this.broadcastState();
   }
   async handle(method: string, params: unknown, ctx: ConnectionContext): Promise<any> {
+    // Lease renewal must not wait for a slow snapshot or filesystem mutation.
+    if (method === 'heartbeat') return this.route(method, params ?? {}, this.connectedClient(ctx));
     // Filesystem latency must not block heartbeat, terminal input or shutdown.
     if (method === 'files.list' || method === 'files.preview' || method === 'git.status') return this.readFiles(method, params, ctx);
     if (method.startsWith('projects.') || method.startsWith('worktrees.')) return this.projectRequest(method,params,ctx);
@@ -619,9 +621,16 @@ export class HostCore {
     });
   }
   private scheduleFrame(runtime:Runtime) {
-    if(!this.initialized || runtime.disposed || this.closing || runtime.timer)return;
+    if(!this.initialized || runtime.disposed || this.closing)return;
+    if(runtime.framePending){runtime.frameDirty=true;return;}
+    if(runtime.timer)return;
     const hasViewer=[...this.clients.values()].some(c=>c.attached.has(runtime.info.id));
-    runtime.timer=setTimeout(()=>{runtime.timer=undefined;void this.frame(runtime.info).then(frame=>{if(!runtime.disposed){this.broadcastFrame(frame);if(this.settings.recordHistory && Date.now()-runtime.checkpointAt>1000)this.checkpoint(runtime,frame);}}).catch(()=>this.notice('SNAPSHOT_FAILED','터미널 화면을 동기화하지 못했습니다.'));},hasViewer?60:1000);
+    runtime.timer=setTimeout(()=>{
+      runtime.timer=undefined;runtime.framePending=true;runtime.frameDirty=false;
+      void this.frame(runtime.info).then(frame=>{if(!runtime.disposed){this.broadcastFrame(frame);if(this.settings.recordHistory && Date.now()-runtime.checkpointAt>1000)this.checkpoint(runtime,frame);}})
+        .catch(()=>{if(!runtime.disposed&&!this.closing)this.notice('SNAPSHOT_FAILED','터미널 화면을 동기화하지 못했습니다.');})
+        .finally(()=>{runtime.framePending=false;if(runtime.frameDirty){runtime.frameDirty=false;this.scheduleFrame(runtime);}});
+    },hasViewer?60:1000);
     runtime.timer.unref();
   }
   private async frame(info:TerminalInfo):Promise<SnapshotEvent> {

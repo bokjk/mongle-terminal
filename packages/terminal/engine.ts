@@ -11,6 +11,7 @@ export class TerminalEngine {
   private readonly terminal: Terminal;
   private readonly serializer: SerializeAddon;
   private tail: Promise<unknown> = Promise.resolve();
+  private pendingWrites: { data: Array<string | Uint8Array>; length: number; promise: Promise<void> } | undefined;
   private closing = false;
   private revision = 0;
   private title = '';
@@ -66,18 +67,42 @@ export class TerminalEngine {
 
   private enqueue<T>(operation: () => Promise<T> | T): Promise<T> {
     if (this.closing) return Promise.reject(new Error('Terminal engine is disposed.'));
+    // A snapshot, resize or history operation is a fence: later output must
+    // never be appended to the write batch that precedes it.
+    this.pendingWrites = undefined;
     const result = this.tail.then(operation);
     this.tail = result.catch(() => undefined);
     return result;
   }
 
   write(data: string | Uint8Array): Promise<void> {
+    if (this.closing) return Promise.reject(new Error('Terminal engine is disposed.'));
     // Copy bytes because processing occurs asynchronously; caller may reuse memory.
     const retained = typeof data === 'string' ? data : new Uint8Array(data);
-    return this.enqueue(() => new Promise<void>(resolve => {
+    // Bound each parser submission below xterm's pending-data watermark.
+    // A large queued burst must not throw halfway through a snapshot fence.
+    if (this.pendingWrites && this.pendingWrites.length + retained.length <= 1024 * 1024) {
+      this.pendingWrites.data.push(retained);
+      this.pendingWrites.length += retained.length;
+      return this.pendingWrites.promise;
+    }
+    const batch = [retained];
+    const promise = this.enqueue(() => new Promise<void>(resolve => {
+      if (this.pendingWrites?.data === batch) this.pendingWrites = undefined;
       this.hasOutput = true;
-      this.terminal.write(retained, () => { this.revision += 1; resolve(); });
+      // Let xterm drain adjacent PTY chunks in its existing bounded parser
+      // loop. Waiting for every individual callback adds one timer turn per
+      // chunk (about 15 ms on Windows) and needlessly backs up live output.
+      // Keep byte/string boundaries intact for xterm's incremental decoders.
+      for (let index = 0; index < batch.length; index += 1) {
+        this.terminal.write(batch[index], () => {
+          this.revision += 1;
+          if (index === batch.length - 1) resolve();
+        });
+      }
     }));
+    this.pendingWrites = { data: batch, length: retained.length, promise };
+    return promise;
   }
 
   /**
@@ -196,6 +221,7 @@ export class TerminalEngine {
   dispose(): Promise<void> {
     if (this.closing) return this.tail.then(() => undefined);
     this.closing = true;
+    this.pendingWrites = undefined;
     this.tail = this.tail.then(() => this.terminal.dispose());
     return this.tail.then(() => undefined);
   }

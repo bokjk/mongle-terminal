@@ -58,12 +58,22 @@ export async function inspectProject(directory: string, dataDir: string): Promis
   if (!discovered) throw new AppError('NOT_REPOSITORY', 'Git 저장소가 아닙니다. 일반 그룹으로 열 수 있습니다.');
   const selectedPath = await safeMetadata((await git(base, ['rev-parse','--show-toplevel'])).trim(), protectedRoot);
   if (!samePath(discovered,selectedPath)) throw new AppError('WORKTREE_CHANGED', 'Git 작업 폴더가 바뀌었습니다. 다시 선택해 주세요.');
-  const commonDir = await safeMetadata((await git(base, ['rev-parse','--path-format=absolute','--git-common-dir'])).trim(), protectedRoot);
-  if ((await git(base, ['rev-parse','--show-superproject-working-tree'])).trim()) throw new AppError('WORKTREE_UNSUPPORTED', '하위 모듈 저장소의 워크트리 관리는 아직 지원하지 않습니다.');
-  let head: string;
-  try { head = (await git(base, ['rev-parse','--verify','HEAD^{commit}'])).trim(); }
-  catch (error) { if (error instanceof AppError && error.code==='GIT_FAILED') throw new AppError('NO_COMMIT', '첫 커밋을 만든 뒤 워크트리를 추가할 수 있습니다.'); throw error; }
-  const worktrees = parseWorktreeList(await git(base, ['worktree','list','--porcelain','-z']));
+  // Once the repository boundary is verified, these independent read-only
+  // queries can overlap process startup without caching possibly stale state.
+  const queries = await Promise.allSettled([
+    git(base, ['rev-parse','--path-format=absolute','--git-common-dir']).then(value=>safeMetadata(value.trim(),protectedRoot)),
+    git(base, ['rev-parse','--show-superproject-working-tree']),
+    git(base, ['rev-parse','--verify','HEAD^{commit}']).then(value=>value.trim()).catch(error=>{if(error instanceof AppError&&error.code==='GIT_FAILED')throw new AppError('NO_COMMIT','첫 커밋을 만든 뒤 워크트리를 추가할 수 있습니다.');throw error;}),
+    git(base, ['worktree','list','--porcelain','-z']),
+    // :short adds heads/ when a tag has the same name. These are explicitly
+    // local branches, so always remove exactly refs/heads/ instead.
+    git(base, ['for-each-ref','--format=%(refname:lstrip=2)','refs/heads/']),
+  ]);
+  // Keep the caller's concurrency slot until every child has settled, even if
+  // one query fails, so repeated failures cannot accumulate Git processes.
+  const [commonDir, superproject, head, worktreeOutput, branchOutput] = queries.map(result=>{if(result.status==='rejected')throw result.reason;return result.value;});
+  if (superproject.trim()) throw new AppError('WORKTREE_UNSUPPORTED', '하위 모듈 저장소의 워크트리 관리는 아직 지원하지 않습니다.');
+  const worktrees = parseWorktreeList(worktreeOutput);
   for (const item of worktrees) {
     try {
       const actual = await safeMetadata(item.path,protectedRoot);
@@ -74,7 +84,7 @@ export async function inspectProject(directory: string, dataDir: string): Promis
   }
   const selected = worktrees.find(item=>samePath(item.path,selectedPath));
   if (!selected) throw new AppError('WORKTREE_CHANGED', '워크트리 목록에 선택한 작업 폴더가 없습니다.');
-  const branches = (await git(base, ['for-each-ref','--format=%(refname:short)','refs/heads/'])).split(/\r?\n/).filter(Boolean);
+  const branches = branchOutput.split(/\r?\n/).filter(Boolean);
   if (branches.length>2000) throw new AppError('GIT_LIMIT', '브랜치가 너무 많습니다. 저장소를 정리한 뒤 다시 시도해 주세요.');
   return {commonDir,root:worktrees[0].path,selectedPath,baseRef:selected.branch||head,branches,worktrees};
 }
@@ -128,7 +138,8 @@ export async function prepareWorktree(repository:Repository, input:CreateWorktre
   if(inspection.worktrees.some(item=>item.branch===input.branch))throw new AppError('BRANCH_IN_USE','다른 워크트리에서 사용 중인 브랜치입니다.');
   if(input.existingBranch?!inspection.branches.includes(input.branch):inspection.branches.includes(input.branch))throw new AppError('BRANCH_EXISTS',input.existingBranch?'기존 브랜치를 찾지 못했습니다.':'이미 있는 브랜치 이름입니다. 다른 이름을 쓰거나 기존 브랜치 연결을 선택해 주세요.');
   let head:string;
-  try{head=(await git(repository.root,['rev-parse','--verify','--end-of-options',`${input.existingBranch?'refs/heads/'+input.branch:input.baseRef}^{commit}`])).trim();}catch(error){if(error instanceof AppError&&error.code==='GIT_FAILED')throw new AppError('INVALID_BASE','기준 브랜치 또는 커밋을 찾지 못했습니다.');throw error;}
+  const baseRef=input.existingBranch?'refs/heads/'+input.branch:inspection.branches.includes(input.baseRef)?'refs/heads/'+input.baseRef:input.baseRef;
+  try{head=(await git(repository.root,['rev-parse','--verify','--end-of-options',`${baseRef}^{commit}`])).trim();}catch(error){if(error instanceof AppError&&error.code==='GIT_FAILED')throw new AppError('INVALID_BASE','기준 브랜치 또는 커밋을 찾지 못했습니다.');throw error;}
   if((await git(repository.root,['ls-tree','-r','--format=%(objectmode)',head])).split(/\r?\n/).includes('160000'))throw new AppError('WORKTREE_UNSUPPORTED','하위 모듈이 있는 기준 커밋의 워크트리 생성은 아직 지원하지 않습니다.');
   return {path:await newPath(input.path,inspection,dataDir),branch:input.branch,head,existingBranch:input.existingBranch};
 }
