@@ -53,7 +53,7 @@ test('host picker supports themed options, deliberate selection, keyboard dismis
     await trigger.click(); await page.keyboard.press('Tab'); await expect(list).toHaveCount(0); await expect(page.getByRole('button', { name: '컴퓨터 추가', exact: true })).toBeFocused();
     await trigger.click(); await page.keyboard.press('Home'); await page.keyboard.press('Enter'); await expect(trigger).toContainText('현재 컴퓨터');
     await trigger.click(); await page.keyboard.press('End'); await page.keyboard.press('Enter'); await expect(trigger).toContainText('개발 실험용');
-    await trigger.click(); await page.getByRole('heading', { name: '나의 작업 공간' }).click(); await expect(list).toHaveCount(0);
+    await trigger.click(); await page.locator('.empty-state').click(); await expect(list).toHaveCount(0);
     await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'light'));
     await trigger.click(); await page.screenshot({ path: 'test-results/host-picker/light.png', animations: 'disabled', clip: { x: 0, y: 50, width: 340, height: 340 } });
     await page.keyboard.press('Escape');

@@ -10,6 +10,8 @@ export interface UpdateState {
   message?: string;
 }
 export interface DesktopBridge extends Transport {
+  titleBarOverlay: boolean;
+  setWindowTheme(theme: 'dark' | 'light'): Promise<void>;
   listHosts(): Promise<SavedHost[]>;
   addHost(host: { name: string; url: string }): Promise<SavedHost>;
   removeHost(id: string): Promise<void>;

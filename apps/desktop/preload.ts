@@ -2,6 +2,8 @@ import { contextBridge, ipcRenderer } from 'electron';
 import type { DesktopBridge } from './contracts';
 
 const bridge: DesktopBridge = {
+  titleBarOverlay: process.platform === 'win32',
+  setWindowTheme: theme => ipcRenderer.invoke('mongle:window-theme', theme),
   request: async (method, params) => {
     const response = await ipcRenderer.invoke('mongle:request', method, params);
     if (!response.ok) throw Object.assign(new Error(response.error.message), { code: response.error.code });

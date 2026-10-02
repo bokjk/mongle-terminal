@@ -5,6 +5,8 @@ export type { UpdateState } from '../../apps/desktop/contracts';
 export type ConnectionInfo = { status: 'connecting' | 'connected' | 'pairing' | 'offline'; hostId?: string; connectionId?: string; owner: boolean; error?: string };
 export type SavedHost = { id: string; name: string; url?: string; local: boolean; selected: boolean };
 export interface DesktopBridge {
+  titleBarOverlay?: boolean;
+  setWindowTheme?(theme: 'dark' | 'light'): Promise<void>;
   request<T = any>(method: string, params?: unknown): Promise<T>;
   subscribe(listener: (event: HostEvent) => void): () => void;
   listHosts(): Promise<SavedHost[]>;
