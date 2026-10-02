@@ -55,7 +55,7 @@ async function trayAction(application: ElectronApplication, action: TrayAction) 
           const trays = this.filter(value => { try { return !value.isDestroyed(); } catch { return false; } });
           if (trays.length !== 1) throw new Error('Expected exactly one live Tray, found ' + trays.length);
           const tray = trays[0];
-          const candidates = allMenus.filter(menu => { try { return menu.items[0]?.label === '몽글터미널 열기' && menu.items[1]?.type === 'separator' && menu.items.some(item => item.label === '앱 종료 · 터미널 유지'); } catch { return false; } });
+          const candidates = allMenus.filter(menu => { try { return menu.items[0]?.label === '몽글터미널 열기' && menu.items.some(item => item.type === 'separator') && menu.items.some(item => item.label === '앱 종료 · 터미널 유지'); } catch { return false; } });
           if (candidates.length !== 1) throw new Error('Expected exactly one tray menu, found ' + candidates.length);
           const menu = candidates[0];
           const focused = globalThis.__mongleTrayE2E.BrowserWindow.getFocusedWindow();
