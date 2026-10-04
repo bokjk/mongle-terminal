@@ -9,9 +9,9 @@ type Session={token:string;source?:string;kind:'region'|'tab';hostId:string;boot
 export type PaneDropPreview={target:string;position:PaneDropPosition|'tabs';label:string;insertion?:TabInsertion};
 const labels:Record<PaneDropPosition,string>={left:'왼쪽에 분할',right:'오른쪽에 분할',top:'위쪽에 분할',bottom:'아래쪽에 분할',center:'위치 바꾸기'};
 
-export function usePaneDrag({client,state,group,enabled,hostSelection,queue,onState,onError,onSelect}:{
+export function usePaneDrag({client,state,group,enabled,hostSelection,queue,refreshState,onError,onSelect}:{
   client:AppClient;state?:HostState;group?:Group;enabled:boolean;hostSelection:MutableRefObject<number>;queue:MutableRefObject<Promise<void>>;
-  onState(state:HostState):void;onError(message:string):void;onSelect(id:string):void;
+  refreshState():Promise<void>;onError(message:string):void;onSelect(id:string):void;
 }){
   const context=useRef<Context>({state,group,enabled,selection:hostSelection.current});context.current={state,group,enabled,selection:hostSelection.current};
   const session=useRef<Session | undefined>(undefined);const suppressClick=useRef(false);
@@ -80,7 +80,8 @@ export function usePaneDrag({client,state,group,enabled,hostSelection,queue,onSt
     // Consume the session before scheduling: a duplicate drop cannot create a
     // second shell. Every asynchronous boundary rechecks the selected host.
     queue.current=queue.current.catch(()=>{}).then(async()=>{
-      const refresh=async()=>{if(!same(drag))return;const next=await client.request<HostState>('state.get');if(same(drag)&&next.hostId===drag.hostId&&next.bootId===drag.bootId)onState(next);};
+      // Share the app's event/request ordering fence when publishing state.
+      const refresh=async()=>{if(same(drag))await refreshState();};
       try{
         if(!same(drag,drag.revision))return;
         const latest=await client.request<HostState>('state.get');

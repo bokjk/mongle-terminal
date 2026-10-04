@@ -11,6 +11,9 @@ import { HostCore } from '../../packages/host/core.js';
 import { findLeaf, type ConnectionContext, type TerminalInfo } from '../../packages/protocol/index.js';
 
 async function beginTabDrag(page:Page,source:Locator,target:Locator,position:'left'|'right'|'top'|'bottom'|'center'){
+  // Host revision changes can arrive before React exposes the newly active pane.
+  // Wait for actual drag handles instead of sampling a transient hidden frame.
+  await expect(source).toBeVisible();await expect(target).toBeVisible();
   const from=await source.boundingBox(),to=await target.boundingBox();assert.ok(from&&to);
   const x=to.x+to.width*(position==='left'?.1:position==='right'?.9:.5),y=to.y+to.height*(position==='top'?.1:position==='bottom'?.9:.5);
   await page.mouse.move(from.x+from.width/2,from.y+from.height/2);await page.mouse.down();

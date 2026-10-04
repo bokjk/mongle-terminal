@@ -1,4 +1,4 @@
-import { mkdir, writeFile, unlink, readFile } from 'node:fs/promises';
+import { writeFile, unlink, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { existsSync } from 'node:fs';
@@ -15,7 +15,6 @@ const dataDir = path.resolve(values['data-dir'] ?? process.env.MONGLE_DATA_DIR ?
 const webRoot = path.resolve(values['web-root'] ?? path.join(path.dirname(process.argv[1]), '../web'));
 const bundledHelper = path.resolve(path.dirname(process.argv[1]), '../../platform/windows/OwnerPipe.exe');
 if (!process.env.MONGLE_OWNER_HELPER && existsSync(bundledHelper)) process.env.MONGLE_OWNER_HELPER = bundledHelper;
-await mkdir(dataDir, { recursive:true });
 let core: HostCore | undefined;
 let gateway: Awaited<ReturnType<typeof startGateway>> | undefined;
 let remote: RemoteSetup | undefined;

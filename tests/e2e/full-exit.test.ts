@@ -213,7 +213,10 @@ test('real packaged full exit: cancel, durable shutdown and automatic workspace 
     const info = await start();
     const firstGuiPid = application!.process().pid!;
     const initial = await state(); assert.equal(initial.terminals.length, 0); assert.equal(initial.settings.recordHistory, true);
-    const profile = initial.profiles.find(item => item.kind === 'powershell'); assert.ok(profile);
+    // cmd /d skips user AutoRun commands and has no persisted interactive
+    // history, so this fixture never loads a real PowerShell profile/history.
+    const profile = initial.profiles.find(item => item.kind === 'cmd'); assert.ok(profile);
+    assert.ok(profile.args.some(argument => argument.toLowerCase() === '/d'));
     await page!.getByRole('button', { name: '새 그룹', exact: true }).click();
     const groupDialog = page!.getByRole('dialog', { name: '새 작업 그룹' });
     await groupDialog.getByLabel('이름', { exact: true }).fill('완전 종료 복원 검증');
@@ -232,7 +235,7 @@ test('real packaged full exit: cancel, durable shutdown and automatic workspace 
     const terminals = (await state()).terminals;
     const markers = new Map<string, string>();
     const executionFile = path.join(dataDir, 'command-executions.txt');
-    const quotedExecutionFile = executionFile.replaceAll("'", "''");
+    const variableName = `MONGLE_FULL_EXIT_${Date.now()}`;
     for (const [index, terminal] of terminals.entries()) {
       assert.ok(terminal.pid); shellPids.add(terminal.pid);
       const pane = page!.locator(`.pane[data-terminal-id="${terminal.id}"]`);
@@ -241,12 +244,13 @@ test('real packaged full exit: cancel, durable shutdown and automatic workspace 
       await rename.getByLabel('이름', { exact: true }).fill(`복원할 셸 ${index + 1}`);
       await rename.getByRole('button', { name: '저장', exact: true }).click();
       const marker = `SAVED_OUTPUT_${index}_${Date.now()}`; markers.set(terminal.id, marker);
-      await command(terminal.id, `$mongleExitProof='${marker}'; Add-Content -LiteralPath '${quotedExecutionFile}' -Value '${marker}'; Write-Output ('READY:'+$mongleExitProof)`);
-      await until(() => snapshot(terminal.id), value => value.data.includes(`READY:${marker}`), 'real PowerShell emitted output marker');
+      await command(terminal.id, `set "${variableName}=${marker}"`);
+      await command(terminal.id, `>>"${executionFile}" echo ${marker}& echo READY:%${variableName}%`);
+      await until(() => snapshot(terminal.id), value => value.data.includes(`READY:${marker}`), 'real cmd emitted the evaluated variable');
     }
     const before = await state(), expected = metadata(before);
     const initialExecutions = await readFile(executionFile, 'utf8');
-    assert.equal(initialExecutions.trim().split(/\r?\n/).length, 2);
+    assert.deepEqual(initialExecutions.trim().split(/\r?\n/), [...markers.values()]);
     await page!.locator(`.pane[data-terminal-id="${terminals[1].id}"] .pane-title`).click();
     await expect(page!.locator(`.pane[data-terminal-id="${terminals[1].id}"]`)).toHaveClass(/active/);
     snapshots.before = { guiPid: firstGuiPid, host: info, state: before };
@@ -265,7 +269,7 @@ test('real packaged full exit: cancel, durable shutdown and automatic workspace 
     const afterCancel = await state(); assert.equal(afterCancel.bootId, before.bootId); assert.deepEqual(metadata(afterCancel), expected);
     assert.deepEqual(afterCancel.terminals.map(item => item.pid), before.terminals.map(item => item.pid));
     assert.deepEqual(afterCancel.terminals.map(item => item.generation), before.terminals.map(item => item.generation));
-    await command(terminals[0].id, "Write-Output ('CANCELLED:'+$mongleExitProof)");
+    await command(terminals[0].id, `echo CANCELLED:%${variableName}%`);
     await until(() => snapshot(terminals[0].id), value => value.data.includes(`CANCELLED:${markers.get(terminals[0].id)}`), 'cancel retained in-memory variable and interactive shell');
     await page!.locator(`.pane[data-terminal-id="${terminals[1].id}"] .pane-title`).click();
     steps.push('application-menu full exit opens safe-default confirmation; Cancel preserves GUI, exact host/shell PIDs and live variable');
@@ -296,7 +300,7 @@ test('real packaged full exit: cancel, durable shutdown and automatic workspace 
       assert.ok(savedFrames.get(terminals[0].id)!.data.includes(`CANCELLED:${markers.get(terminals[0].id)}`));
     } finally { db.close(); }
     snapshots.stopped = { guiPid: firstGuiPid, hostPid: info.pid, shellPids: [...shellPids], port: info.port, portOpen: false, sqliteIntegrity: 'ok', metadata: metadata(saved), savedSnapshotBytes: Object.fromEntries([...savedFrames].map(([id, frame]) => [id, Buffer.byteLength(frame.data)])) };
-    steps.push('tray-menu confirmation closes real GUI/tray process, host, both PowerShell processes and loopback listener; SQLite integrity, exact metadata and both saved output markers verified after all processes stopped');
+    steps.push('tray-menu confirmation closes real GUI/tray process, host, both cmd processes and loopback listener; SQLite integrity, exact metadata and both saved output markers verified after all processes stopped');
 
     if (legacyTarget && upgradedHostBytes) {
       assert.ok(saved.terminals.every(terminal => terminal.status === 'exited' && terminal.resumeOnBoot !== true), 'Old host wrote exited terminal records with no new auto-resume flag');
@@ -331,12 +335,13 @@ test('real packaged full exit: cancel, durable shutdown and automatic workspace 
     if (legacyTarget) await assert.rejects(readFile(path.join(dataDir, 'workspace-resume.json')), (error: NodeJS.ErrnoException) => error.code === 'ENOENT');
     snapshots.restored = { host: reopenedInfo, state: restored, childProcesses };
     await page!.screenshot({ path: path.join(output, 'restored-saved-output.png'), fullPage: true });
-    steps.push('same data relaunch restores exact group/name/cwd/layout/selected panel and saved output into two automatic fresh PowerShell processes; original commands were not replayed');
+    steps.push('same data relaunch restores exact group/name/cwd/layout/selected panel and saved output into two automatic fresh cmd processes; original commands were not replayed');
 
     const freshProof: Array<{ id: string; generation: string; pid: number; oldVariableEmpty: boolean }> = [];
     for (const terminal of restored.terminals) {
       const freshMarker = `FRESH_PROCESS_${Date.now()}`;
-      await command(terminal.id, `Write-Output ('${freshMarker}:'+[string]::IsNullOrEmpty($mongleExitProof)); Write-Output ('CWD:'+((Get-Location).Path))`);
+      await command(terminal.id, `set "MONGLE_FRESH_RESULT=False"& if not defined ${variableName} set "MONGLE_FRESH_RESULT=True"`);
+      await command(terminal.id, `echo ${freshMarker}:%MONGLE_FRESH_RESULT%& echo CWD:%CD%`);
       await until(() => snapshot(terminal.id), value => value.data.includes(`${freshMarker}:True`), 'automatic new shell is interactive and does not preserve old in-memory variable');
       await until(() => snapshot(terminal.id), value => value.data.includes(`CWD:${terminal.cwd}`), 'automatic new shell opened in the saved working directory');
       freshProof.push({ id: terminal.id, generation: terminal.generation, pid: terminal.pid!, oldVariableEmpty: true });

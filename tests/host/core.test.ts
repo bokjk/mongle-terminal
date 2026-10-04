@@ -77,6 +77,27 @@ test('revoked connection cannot run its queued mutation',async t=>{
   assert.equal(core.getState().groups.length,count);
 });
 
+test('heartbeat responds and renews control while a terminal snapshot holds the mutation queue',async t=>{
+  const {core,ctx,request}=await harness(t);
+  const info:TerminalInfo=await request('terminals.create',{groupId:core.getState().groups[0].id,profileId:core.getState().profiles.find(p=>p.id==='cmd')?.id});
+  const target=ref(core,info),control=await request('control.acquire',{...target,cols:100,rows:30});
+  await request('terminal.ack',{...target,seq:control.frame.seq,epoch:control.epoch});
+  const runtime=(core as any).runtimes.get(info.id),snapshot=runtime.engine.snapshot.bind(runtime.engine);
+  let markStarted!:()=>void,resume!:()=>void;
+  const started=new Promise<void>(resolve=>{markStarted=resolve;}),release=new Promise<void>(resolve=>{resume=resolve;});
+  const mock=t.mock.method(runtime.engine,'snapshot',async()=>{markStarted();await release;return snapshot();});
+  const pending=request('terminals.attach',target);
+  try{
+    await started;
+    runtime.lease.expires=Date.now()+1000;
+    const heartbeat=await Promise.race([request('heartbeat'),delay(300).then(()=>undefined)]);
+    assert.equal(heartbeat?.connectionId,ctx.id,'heartbeat must not wait for a pending snapshot');
+    assert.ok(runtime.lease.expires>Date.now()+14000,'the active control lease must be renewed promptly');
+  }finally{resume();await pending;mock.mock.restore();}
+  core.disconnect(ctx.id);
+  await assert.rejects(request('heartbeat'),{code:'NOT_CONNECTED'});
+});
+
 test('failed metadata save rolls back the rejected operation without poisoning a later save',async t=>{
   const {core,request}=await harness(t),before=core.getState();
   const store=(core as any).store as HostStore,save=store.save.bind(store);
