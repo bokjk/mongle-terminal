@@ -13,6 +13,7 @@ import { attachTerminalTap } from './terminal-tap';
 import { terminalThemes as themes, terminalMinimumContrast } from './terminal-theme';
 import { terminalLabel, outsideWorktree } from './worktree-labels';
 import { useTerminalWorktree, type TerminalWorktreeActions } from './use-terminal-worktree';
+import { TerminalInputQueue } from './terminal-input-queue';
 
 export interface PaneActions { key(data:string):void; paste(text:string):void; focus():void; search():void; }
 export interface PaneProps {
@@ -46,7 +47,7 @@ export function TerminalPane(props:PaneProps) {
   const ready = useRef(false);
   const lastSeq = useRef(-1);
   const inputSeq = useRef(0);
-  const resizeInput = useRef<{epoch:number;inputs:Array<{data:string;encoding:'utf8'|'binary'}>;bytes:number} | undefined>(undefined);
+  const resizeInput = useRef<{epoch:number} | undefined>(undefined);
   const uncertain = useRef(inputLatch(client,state,info));
   const acknowledgedEpoch = useRef<number | undefined>(undefined);
   const [controlled,setControlled] = useState(false);
@@ -76,6 +77,9 @@ export function TerminalPane(props:PaneProps) {
   useEffect(() => {
     if (!mount.current) return;
     let disposed = false;
+    // React runs the previous scope's cleanup first. Keep its outstanding-input
+    // latch on that old boot, then bind this effect to the exact new session.
+    uncertain.current=inputLatch(client,state,info);
     let observedInfo=info;
     // The desktop bridge can deliver a control.acquire reply before the state
     // events the host broadcast ahead of it. Keep that grant until the ordered
@@ -90,26 +94,39 @@ export function TerminalPane(props:PaneProps) {
     terminal.textarea?.setAttribute('autocapitalize','off'); terminal.textarea?.setAttribute('autocomplete','off'); terminal.textarea?.setAttribute('autocorrect','off'); terminal.textarea?.setAttribute('spellcheck','false'); terminal.textarea?.setAttribute('aria-label',`${info.title} 터미널 입력`);
     // Terminal-generated clipboard writes are never applied to the system clipboard.
     const osc52 = terminal.parser.registerOscHandler(52,() => true);
-    const inputBytes=(data:string,encoding:'utf8'|'binary')=>encoding==='binary'?data.length:new TextEncoder().encode(data).length;
-    const ownsLease=(lease:number)=>!disposed&&epoch.current===lease&&current.current.connected&&observedInfo.status==='running'&&(grant?grant.epoch===lease&&grant.connectionId===connectionId.current:observedInfo.controller?.epoch===lease&&observedInfo.controller.connectionId===connectionId.current);
+    const ownsLease=(lease:number)=>!disposed&&epoch.current===lease&&current.current.connected&&current.current.info.status==='running'&&observedInfo.status==='running'&&(grant?grant.epoch===lease&&grant.connectionId===connectionId.current:observedInfo.controller?.epoch===lease&&observedInfo.controller.connectionId===connectionId.current);
     // Only another connection's lease makes background attachment wait. The host
     // already lets this same connection replace its own leftover lease.
     const otherController=()=>observedInfo.controller&&observedInfo.controller.connectionId!==current.current.connectionId?observedInfo.controller:undefined;
     const leaseActive=(lease:number)=>!uncertain.current.blocked&&ownsLease(lease);
-    const sendInput=(data:string,encoding:'utf8'|'binary',lease:number)=>client.request('terminal.input',{...targetRef.current(),epoch:lease,inputId:crypto.randomUUID(),clientInputSeq:++inputSeq.current,data,encoding});
-    const failInput=(error:unknown)=>{resizeInput.current=undefined;uncertain.current.blocked=true;ready.current=false;if(!disposed){adapter.setInputEnabled(false);setInputUncertain(true);current.current.onError(error instanceof Error?error.message:'입력 전달을 확인하지 못했습니다.');}};
+    let inputQueue:TerminalInputQueue|undefined;
+    const stopInput=(conservative=false)=>{
+      // A scope change cannot establish whether an outstanding write arrived.
+      // Preserve that uncertainty before dropping the old queue; its late reply
+      // must never mutate a newly acquired lease or replay unsent keystrokes.
+      if(conservative&&inputQueue?.hasPendingInput){uncertain.current.blocked=true;if(!disposed)setInputUncertain(true);}
+      inputQueue?.close();inputQueue=undefined;
+    };
+    const failInput=(error:unknown)=>{stopInput();resizeInput.current=undefined;uncertain.current.blocked=true;ready.current=false;if(!disposed){adapter.setInputEnabled(false);setInputUncertain(true);current.current.onError(error instanceof Error?error.message:'입력 전달을 확인하지 못했습니다.');}};
+    const invalidateInput=()=>{
+      if(disposed)return;
+      stopInput(true);resizeInput.current=undefined;ready.current=false;epoch.current=undefined;connectionId.current=undefined;grant=undefined;acquireFailed=true;
+      if(!disposed){setControlled(false);setControlError(true);adapter.setInputEnabled(false);}
+    };
+    const startInputQueue=(lease:number)=>{
+      const reference=targetRef.current();
+      const queue:TerminalInputQueue=new TerminalInputQueue({
+        isCurrent:()=>inputQueue===queue&&leaseActive(lease),
+        send:(data,encoding)=>client.request('terminal.input',{...reference,epoch:lease,inputId:crypto.randomUUID(),clientInputSeq:++inputSeq.current,data,encoding}),
+        failed:error=>{if(inputQueue===queue&&!disposed&&epoch.current===lease)failInput(error);},
+      });
+      inputQueue=queue;
+    };
     const adapter = new BrowserPresentationAdapter(terminal,(data,encoding) => {
       if (epoch.current===undefined||!leaseActive(epoch.current))return;
       const transformed=transformInput(data,current.current.ctrl,current.current.alt);
-      const pending=resizeInput.current;
-      if(pending&&leaseActive(pending.epoch)){
-        const bytes=inputBytes(transformed,encoding);
-        if(pending.bytes+bytes>65536){failInput(new Error('화면 동기화가 지연되어 입력을 멈췄습니다. 내용을 확인하고 제어권을 다시 가져와 주세요.'));return;}
-        const last=pending.inputs.at(-1);if(last?.encoding===encoding)last.data+=transformed;else pending.inputs.push({data:transformed,encoding});
-        pending.bytes+=bytes;return;
-      }
-      if(!ready.current)return;
-      void sendInput(transformed,encoding,epoch.current).catch(failInput);
+      if(!ready.current&&resizeInput.current?.epoch!==epoch.current)return;
+      inputQueue?.enqueue(transformed,encoding);
     });
     adapterRef.current = adapter;
     // Match the Windows console workflow: finish a mouse selection to copy it.
@@ -141,7 +158,7 @@ export function TerminalPane(props:PaneProps) {
       if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'f') {setSearchOpen(true);return false;}
       return adapter.handleKeyEvent(event);
     });
-    lastSeq.current = -1; setControlled(false); setFrameError('');setControlError(false);
+    lastSeq.current = -1; setControlled(false); setFrameError('');setControlError(false);setInputUncertain(uncertain.current.blocked);
     // Only one frame is being rendered and one latest complete frame waits.
     // Slow rendering must not retain an unbounded snapshot chain.
     type PendingFrame={event:SnapshotEvent;lease?:number;waiters:Array<(applied:boolean)=>void>};
@@ -154,11 +171,12 @@ export function TerminalPane(props:PaneProps) {
           if(item.event.seq>=lastSeq.current){await adapter.applySnapshot(item.event.snapshot);if(disposed)break;lastSeq.current=item.event.seq;setHistoryTruncated(Boolean((item.event.snapshot as any).historyTruncated));}
           const ackEpoch=item.lease??epoch.current;
           await client.request('terminal.ack',{...targetRef.current(),seq:lastSeq.current,...(ackEpoch!==undefined?{epoch:ackEpoch}:{})});
+          if(disposed)break;
           if(ackEpoch!==undefined)acknowledgedEpoch.current=ackEpoch;
           applied=true;
           if(!disposed&&!synchronizing&&epoch.current!==undefined&&ackEpoch===epoch.current){ready.current=leaseActive(epoch.current);adapter.setInputEnabled(ready.current);}
           if(!disposed)setFrameError('');
-        }catch(error){resizeInput.current=undefined;if(!disposed){ready.current=false;adapter.setInputEnabled(false);setFrameError(error instanceof Error?error.message:'화면을 동기화하지 못했습니다.');}}
+        }catch(error){invalidateInput();if(!disposed)setFrameError(error instanceof Error?error.message:'화면을 동기화하지 못했습니다.');}
         finally{item.waiters.forEach(resolve=>resolve(applied));}
       }
       processing=false;
@@ -176,6 +194,7 @@ export function TerminalPane(props:PaneProps) {
       if(mode!=='recover'&&(uncertain.current.blocked||acquireFailed))return;
       if(mode==='background'&&(!mount.current?.getClientRects().length||!current.current.state.capabilities?.includes('control.acquire-if-free')||otherController()))return;
       if(synchronizing)return;
+      stopInput(true);
       synchronizing=true;setBusy(true);ready.current=false;epoch.current=undefined;connectionId.current=undefined;grant=undefined;
       // Mobile browsers must see an editable focus inside this click, before
       // the lease request yields. The adapter still blocks all outgoing input.
@@ -190,6 +209,7 @@ export function TerminalPane(props:PaneProps) {
         if(observed?.epoch!==result.epoch)grant={epoch:result.epoch,connectionId:result.connectionId};
         epoch.current=result.epoch;acknowledgedEpoch.current=undefined;connectionId.current=result.connectionId;
         const applied=await applyFrame.current(result.frame,result.epoch,true);
+        if(disposed)return;
         if(!applied||!ownsLease(result.epoch)||acknowledgedEpoch.current!==result.epoch){
           // Give up this grant completely. Releasing a lease the host still holds for
           // it leaves no orphan; later ACKs no longer carry its epoch.
@@ -197,7 +217,7 @@ export function TerminalPane(props:PaneProps) {
           if(!disposed){adapter.setInputEnabled(false);void client.request('control.release',{id:info.id,epoch:result.epoch}).catch(()=>{});}
           return;
         }
-        uncertain.current.blocked=false;setInputUncertain(false);acquireFailed=false;setControlError(false);setControlled(true);ready.current=true;adapter.setInputEnabled(true);
+        uncertain.current.blocked=false;setInputUncertain(false);acquireFailed=false;setControlError(false);setControlled(true);ready.current=true;startInputQueue(result.epoch);adapter.setInputEnabled(true);
         adapter.setFocused(document.activeElement===terminal.textarea);
         return result.epoch as number;
       }catch(error){if(!disposed){
@@ -239,7 +259,7 @@ export function TerminalPane(props:PaneProps) {
           if(grant&&latest.controller&&latest.controller.epoch>=grant.epoch)grant=undefined;
           observedInfo=latest;setControlOwner(latest.controller);
         }
-        if(!latest||(epoch.current!==undefined&&!ownsLease(epoch.current))){grant=undefined;resizeInput.current=undefined;epoch.current=undefined;ready.current=false;setControlled(false);adapter.setInputEnabled(false);}
+        if(!latest||(epoch.current!==undefined&&!ownsLease(epoch.current))){stopInput(true);grant=undefined;resizeInput.current=undefined;epoch.current=undefined;ready.current=false;setControlled(false);adapter.setInputEnabled(false);}
       }
     });
     // A pane unmounted while its first frame was applied has already sent its
@@ -251,25 +271,24 @@ export function TerminalPane(props:PaneProps) {
     resizeRef.current=async()=>{
       if(disposed||synchronizing||!ready.current||epoch.current===undefined||!current.current.connected||!mount.current?.getClientRects().length)return;
       const dims=dimensions();if(dims.cols===terminal.cols&&dims.rows===terminal.rows)return;
-      const lease=epoch.current;synchronizing=true;ready.current=false;
+      const lease=epoch.current,queue=inputQueue;if(!queue)return;synchronizing=true;ready.current=false;
       // Keep native input capture alive while only the transport waits for the
       // resize ACK. These are new keystrokes, scoped to this exact live lease.
-      const pending={epoch:lease,inputs:[] as Array<{data:string;encoding:'utf8'|'binary'}>,bytes:0};resizeInput.current=pending;
+      const pending={epoch:lease};resizeInput.current=pending;
       try{
+        // Pause unsent input and settle only the write already on the wire.
+        // Sending the resize before it completes could close the host's input
+        // gate underneath that write; awaiting the paused queue would deadlock.
+        await queue.pause();
+        if(!leaseActive(lease)||inputQueue!==queue||resizeInput.current!==pending)return;
         const result=await client.request('terminal.resize',{...targetRef.current(),epoch:lease,...dims});
         // Without the lease the frame is still shown: the host holds later frames until it is ACKed.
         if(!leaseActive(lease)||resizeInput.current!==pending){void applyFrame.current(result.frame);return;}
         const applied=await applyFrame.current(result.frame,lease,true);
         if(!applied||!leaseActive(lease)||resizeInput.current!==pending)return;
-        while(pending.inputs.length&&leaseActive(lease)&&resizeInput.current===pending){
-          const input=pending.inputs.shift()!;pending.bytes-=inputBytes(input.data,input.encoding);
-          // Remove before sending and await acceptance. A failed response is
-          // never retried; uncertainty discards every remaining buffered byte.
-          try{await sendInput(input.data,input.encoding,lease);}catch(error){failInput(error);return;}
-        }
-        if(!leaseActive(lease)||resizeInput.current!==pending)return;
-        resizeInput.current=undefined;ready.current=true;adapter.setInputEnabled(true);
-      }catch(error){if(!disposed){adapter.setInputEnabled(false);current.current.onError(error instanceof Error?error.message:'화면 크기를 동기화하지 못했습니다.');}}
+        if(inputQueue!==queue)return;
+        resizeInput.current=undefined;ready.current=true;adapter.setInputEnabled(true);queue.resume();
+      }catch(error){invalidateInput();if(!disposed)current.current.onError(error instanceof Error?error.message:'화면 크기를 동기화하지 못했습니다.');}
       finally{if(resizeInput.current===pending)resizeInput.current=undefined;synchronizing=false;if(!disposed&&ready.current)void resizeRef.current();}
     };
     let resizeTimer:ReturnType<typeof setTimeout>;
@@ -277,8 +296,8 @@ export function TerminalPane(props:PaneProps) {
     const keyMap:Record<string,'ArrowUp'|'ArrowDown'|'ArrowLeft'|'ArrowRight'>={'\x1b[A':'ArrowUp','\x1b[B':'ArrowDown','\x1b[C':'ArrowRight','\x1b[D':'ArrowLeft'};
     current.current.register(info.id,{key:data=>{void runInputIntent(()=>keyMap[data]?adapter.sendKey(keyMap[data]):adapter.sendInput(data));},paste:text=>{void current.current.confirmPaste(text).then(approved=>{if(approved&&!disposed)void runInputIntent(()=>adapter.paste(text));});},focus:()=>startInputRef.current(),search:()=>setSearchOpen(true)});
     const pasteTarget=mount.current;
-    return()=>{disposed=true;removeTap();resizeInput.current=undefined;ready.current=false;epoch.current=undefined;connectionId.current=undefined;pendingFrame?.waiters.forEach(resolve=>resolve(false));pendingFrame=undefined;unsubscribe();observer.disconnect();clearTimeout(resizeTimer);pasteTarget?.removeEventListener('paste',handlePaste,true);pasteTarget?.removeEventListener('mousedown',beginSelection);window.removeEventListener('mouseup',finishSelection);osc52.dispose();adapter.dispose();terminal.dispose();current.current.register(info.id,null);void client.request('terminals.detach',{id:info.id}).catch(()=>{});};
-  },[client,info.id,info.generation,state.bootId,props.connected]);
+    return()=>{disposed=true;stopInput(true);removeTap();resizeInput.current=undefined;ready.current=false;epoch.current=undefined;connectionId.current=undefined;pendingFrame?.waiters.forEach(resolve=>resolve(false));pendingFrame=undefined;unsubscribe();observer.disconnect();clearTimeout(resizeTimer);pasteTarget?.removeEventListener('paste',handlePaste,true);pasteTarget?.removeEventListener('mousedown',beginSelection);window.removeEventListener('mouseup',finishSelection);osc52.dispose();adapter.dispose();terminal.dispose();current.current.register(info.id,null);void client.request('terminals.detach',{id:info.id}).catch(()=>{});};
+  },[client,info.id,info.generation,state.hostId,state.bootId,props.connected]);
 
   useEffect(()=>{if(termRef.current){termRef.current.options.fontSize=props.fontSize;termRef.current.options.theme=themes[props.theme];}const frame=requestAnimationFrame(()=>void resizeRef.current());return()=>cancelAnimationFrame(frame);},[props.fontSize,props.theme]);
   useEffect(()=>{setControlOwner(info.controller);},[info.controller]);

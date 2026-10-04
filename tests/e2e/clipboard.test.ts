@@ -73,6 +73,37 @@ test('desktop clipboard: native roundtrip or real access-denied feedback',
       app.process().stderr?.on('data', chunk => { electronStderr = (electronStderr + String(chunk)).slice(-16 * 1024); });
       page = await app.firstWindow(); page.setDefaultTimeout(15000);
       page.on('pageerror', error => errors.push(error.message));
+      await page.evaluate(startedAt => {
+        const history: Array<{ elapsedMs: number; code: string }> = [];
+        (window as any).__clipboardToastHistory = history;
+        const lastCode = new WeakMap<Element, string>();
+        const known: Record<string, string> = {
+          '처리 중인 요청이 너무 많습니다.': 'ipc-busy',
+          '로컬 요청 응답 시간이 초과되었습니다.': 'ipc-timeout',
+          '로컬 연결 응답 시간이 초과되었습니다.': 'ipc-startup-timeout',
+          '로컬 연결이 종료되었습니다.': 'ipc-closed',
+          '연결이 끊겼습니다. 마지막 입력의 전달 여부를 확인해 주세요.': 'connection-lost',
+          '응답을 기다리는 시간이 초과되었습니다. 입력은 자동으로 다시 보내지 않습니다.': 'request-timeout',
+          '이미 지난 입력 번호입니다. 입력을 자동으로 재전송하지 마세요.': 'stale-input',
+          '입력 식별자를 다른 입력에 사용할 수 없습니다.': 'input-id-reused',
+          '터미널 입력을 전달하지 못했습니다.': 'input-write-failed',
+          '여기서 제어를 눌러 제어권을 가져오세요.': 'not-controller',
+          '화면 동기화가 끝난 뒤 입력할 수 있습니다.': 'control-syncing',
+          '화면 동기화가 지연되어 입력을 멈췄습니다. 내용을 확인하고 제어권을 다시 가져와 주세요.': 'resize-input-overflow',
+        };
+        // Retain only bounded classifications after transient toasts disappear.
+        // Ignore terminal rendering mutations; never retain any message bodies.
+        new MutationObserver(records => {
+          if (!records.some(record => (record.target instanceof Element ? record.target : record.target.parentElement)?.closest('.toast') || Array.from(record.addedNodes).some(node => node instanceof Element && (node.matches('.toast') || node.querySelector('.toast'))))) return;
+          for (const toast of document.querySelectorAll('.toast')) {
+            const text = (toast.querySelector('span')?.textContent || toast.textContent || '').trim();
+            const code = known[text] || (/입력/.test(text) ? 'input-other' : /동기화/.test(text) ? 'synchronization-other' : /연결|호스트/.test(text) ? 'connection-other' : /복사|붙여넣/.test(text) ? 'clipboard-other' : 'other');
+            if (lastCode.get(toast) === code) continue;
+            lastCode.set(toast, code); history.push({ elapsedMs: Date.now() - startedAt, code });
+            if (history.length > 16) history.shift();
+          }
+        }).observe(document, { childList: true, subtree: true, characterData: true });
+      }, startedAt);
       await page.exposeFunction('__recordClipboardConnection', (info: Pick<ConnectionInfo, 'status' | 'owner' | 'error'>) => {
         connectionHistory.push({ elapsedMs: Date.now() - startedAt, status: info.status, owner: info.owner,
           ...(info.error ? { error: redactDiagnostic(info.error).slice(0, 2048) } : {}) });
@@ -221,6 +252,7 @@ test('desktop clipboard: native roundtrip or real access-denied feedback',
                 textareaPresent: !!textarea, textareaFocused: !!textarea && document.activeElement === textarea, textareaReadOnly: textarea?.readOnly ?? null,
                 controlChips: Array.from(document.querySelectorAll('.control-chip')).slice(0, 8).map(element => { const text = element.textContent?.trim(); return text === '여기서 제어 중' ? 'controlled' : text === '연결 중…' ? 'connecting' : text === '입력 확인 후 다시 제어' ? 'input-uncertain' : text === '제어 다시 시도' ? 'retry-control' : text === '화면을 눌러 입력' ? 'awaiting-click' : text === '연결 대기 중' ? 'disconnected' : 'other'; }),
                 toastCategories: Array.from(document.querySelectorAll('.toast')).slice(0, 8).map(element => { const text = element.textContent || ''; return /복사/.test(text) ? 'clipboard-copy' : /붙여넣/.test(text) ? 'clipboard-paste' : /입력/.test(text) ? 'input' : /동기화|화면 크기/.test(text) ? 'synchronization' : /제어/.test(text) ? 'control' : /연결|호스트/.test(text) ? 'connection' : 'other'; }),
+                toastHistory: ((window as any).__clipboardToastHistory || []).slice(-16),
                 markerDOMContains: rows.some(row => row.textContent?.includes('MONGLE_CLIP_COPY')),
                 markerExactRow: rows.some(row => row.textContent?.trim() === 'MONGLE_CLIP_COPY') };
             }),
