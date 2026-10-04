@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, writeFile, access } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile, access, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -26,6 +26,18 @@ const oldVersion = '0.3.8';
 const oldName = `MongleTerminal-Setup-${oldVersion}-x64.exe`;
 const oldInstaller = path.join(root, oldName);
 const sha = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
+async function bundleFingerprint(directory: string) {
+  const entries: Array<[string, string]> = [];
+  async function visit(relative: string) {
+    for (const entry of await readdir(path.join(directory, relative), { withFileTypes: true })) {
+      const name = path.join(relative, entry.name);
+      if (entry.isDirectory()) await visit(name);
+      else { assert.ok(entry.isFile(), 'Unexpected link in installed bundle'); entries.push([name.replaceAll('\\', '/'), sha(await readFile(path.join(directory, name)))]); }
+    }
+  }
+  await visit(''); entries.sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
+  return { files: entries.length, sha256: sha(Buffer.from(JSON.stringify(entries))) };
+}
 const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
 const proof: Record<string, any> = { passed: false, oldVersion, newVersion: version, stages: [] };
 let child: ChildProcess | undefined, endpoint = '', owner: Awaited<ReturnType<typeof connectOwnerPipe>> | undefined;
@@ -99,7 +111,10 @@ try {
   await install(newInstaller);
   const installedAsar = sha(await readFile(path.join(installDir, 'resources/app.asar')));
   assert.equal(installedAsar, sha(await readFile('release/win-unpacked/resources/app.asar')));
-  proof.installedAsarSha256 = installedAsar; proof.stages.push('new real NSIS replaced the installed application with exact candidate bytes');
+  const installedBundle = await bundleFingerprint(path.join(installDir, 'resources/hostbundle'));
+  assert.deepEqual(installedBundle, await bundleFingerprint('release/win-unpacked/resources/hostbundle'));
+  proof.installedAsarSha256 = installedAsar; proof.installedHostBundle = installedBundle;
+  proof.stages.push('new real NSIS replaced desktop archive and complete host/web bundle with exact candidate bytes');
   const newInfo = await start(version);
   const restored = await until(() => owner!.request<HostState>('state.get'), s => s.terminals.length === 2 && s.terminals.every(t => t.status === 'running' && !!t.pid), 'automatic workspace restore');
   assert.deepEqual(metadata(restored), expectedMetadata); assert.equal(restored.hostId, before.hostId); assert.notEqual(newInfo.bootId, oldInfo.bootId);
