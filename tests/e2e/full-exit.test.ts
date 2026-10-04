@@ -245,12 +245,12 @@ test('real packaged full exit: cancel, durable shutdown and automatic workspace 
       await rename.getByRole('button', { name: '저장', exact: true }).click();
       const marker = `SAVED_OUTPUT_${index}_${Date.now()}`; markers.set(terminal.id, marker);
       await command(terminal.id, `set "${variableName}=${marker}"`);
-      await command(terminal.id, `echo ${marker}>>"${executionFile}"& echo READY:%${variableName}%`);
+      await command(terminal.id, `>>"${executionFile}" echo ${marker}& echo READY:%${variableName}%`);
       await until(() => snapshot(terminal.id), value => value.data.includes(`READY:${marker}`), 'real cmd emitted the evaluated variable');
     }
     const before = await state(), expected = metadata(before);
     const initialExecutions = await readFile(executionFile, 'utf8');
-    assert.equal(initialExecutions.trim().split(/\r?\n/).length, 2);
+    assert.deepEqual(initialExecutions.trim().split(/\r?\n/), [...markers.values()]);
     await page!.locator(`.pane[data-terminal-id="${terminals[1].id}"] .pane-title`).click();
     await expect(page!.locator(`.pane[data-terminal-id="${terminals[1].id}"]`)).toHaveClass(/active/);
     snapshots.before = { guiPid: firstGuiPid, host: info, state: before };
