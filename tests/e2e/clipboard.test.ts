@@ -11,6 +11,7 @@ import type { ConnectionInfo } from '../../apps/desktop/contracts';
 import { connectOwnerPipe } from '../../packages/local-ipc/index';
 import type { HostState } from '../../packages/protocol/index';
 import { probeClipboardAccess } from '../helpers/windows-clipboard';
+import { probeHostStartup } from '../helpers/host-startup-probe';
 
 const inside = (parent: string, candidate: string) => {
   const relative = path.relative(parent, candidate);
@@ -45,6 +46,8 @@ test('desktop clipboard: native roundtrip or real access-denied feedback',
     const startedAt = Date.now();
     let electronStderr = '', connectionSubscribed = false;
     let storageDiagnostics: unknown;
+    let hostStartupDiagnostics: unknown;
+    let initialHostReady = false;
     const redactDiagnostic = (value: string) => value
       .split(isolated).join('<isolated-profile>')
       .replace(/((?:authorization|token|password|secret|pairingCode|authKey)["']?\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s,;]+)/gi, '$1<redacted>')
@@ -85,6 +88,7 @@ test('desktop clipboard: native roundtrip or real access-denied feedback',
       // Locator assertions have their own 5s default, independent of the page
       // timeout. A cold CI host may use the app's entire 15s startup window.
       await expect(page.getByRole('button', { name: '새 터미널', exact: true })).toBeEnabled({ timeout: 30000 });
+      initialHostReady = true;
       if (!denied) {
         // Eagerly materialize every format before a write. Its contents stay
         // only in this Electron process, never in test logs or artifacts.
@@ -198,7 +202,7 @@ test('desktop clipboard: native roundtrip or real access-denied feedback',
       if (!passed && launched) {
         try {
           const literal = "'" + dataDir.replaceAll("'", "''") + "'";
-          const script = `$ErrorActionPreference='Stop'; $folder=${literal}; $exists=Test-Path -LiteralPath $folder -PathType Container; $sameOwner=$false; $administrators=$false; if($exists){$owner=(Get-Acl -LiteralPath $folder).GetOwner([System.Security.Principal.SecurityIdentifier]).Value; $sameOwner=$owner -eq [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value; $administrators=$owner -eq 'S-1-5-32-544'}; @{directoryExists=$exists; ownerMatchesCurrentUser=$sameOwner; ownerIsAdministrators=$administrators; ownerSecretExists=(Test-Path -LiteralPath (Join-Path $folder 'owner.secret') -PathType Leaf)} | ConvertTo-Json -Compress`;
+          const script = `$ErrorActionPreference='Stop'; $folder=${literal}; $exists=[System.IO.Directory]::Exists($folder); $sameOwner=$false; $administrators=$false; if($exists){$owner=[System.IO.Directory]::GetAccessControl($folder).GetOwner([System.Security.Principal.SecurityIdentifier]).Value; $sameOwner=$owner -eq [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value; $administrators=$owner -eq 'S-1-5-32-544'}; $secretExists=[System.IO.File]::Exists([System.IO.Path]::Combine($folder,'owner.secret')); [System.Console]::Write(('{{"directoryExists":{0},"ownerMatchesCurrentUser":{1},"ownerIsAdministrators":{2},"ownerSecretExists":{3}}}' -f $exists.ToString().ToLowerInvariant(),$sameOwner.ToString().ToLowerInvariant(),$administrators.ToString().ToLowerInvariant(),$secretExists.ToString().ToLowerInvariant()))`;
           const { stdout } = await promisify(execFile)('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true, timeout: 10000 });
           storageDiagnostics = JSON.parse(stdout);
         } catch (error) { storageDiagnostics = { error: redactDiagnostic(String(error)).slice(0, 2048) }; }
@@ -223,6 +227,11 @@ test('desktop clipboard: native roundtrip or real access-denied feedback',
       // host during cleanup. OwnerPipe cleanup also works after renderer failure.
       if (application) await application.close().catch(error => cleanupErrors.push(`Electron close: ${String(error)}`));
       else if (launched) cleanupErrors.push('Electron launch did not return an application; GUI cleanup could not be verified.');
+      if (!passed && launched && !initialHostReady) {
+        try {
+          hostStartupDiagnostics = await probeHostStartup({ buildRoot: executable ? path.join(path.dirname(executable), 'resources/hostbundle') : root, isolated });
+        } catch (error) { hostStartupDiagnostics = { error: redactDiagnostic(String(error)).slice(0, 2048) }; }
+      }
       try {
         await rememberHost();
         try {
@@ -265,7 +274,7 @@ test('desktop clipboard: native roundtrip or real access-denied feedback',
       if (helper === undefined) delete process.env.MONGLE_OWNER_HELPER; else process.env.MONGLE_OWNER_HELPER = helper;
       const cleanedUp = cleanupErrors.length === 0;
       await writeFile(path.join(output, 'result.json'), JSON.stringify({ passed: passed && cleanedUp, cleanedUp, mode: denied ? 'access denied' : 'native clipboard', preflight, clipboardRestoration, errors, cleanupErrors,
-        ...(!passed ? { startupDiagnostics: { isolatedProfile: true, connectionSubscribed, connectionHistory, storageDiagnostics, electronStderr: redactDiagnostic(electronStderr) } } : {}),
+        ...(!passed ? { startupDiagnostics: { isolatedProfile: true, connectionSubscribed, connectionHistory, storageDiagnostics, hostStartupDiagnostics, electronStderr: redactDiagnostic(electronStderr) } } : {}),
         ...(failure ? { error: failure instanceof Error ? failure.stack : String(failure) } : {}) }, null, 2));
     }
     if (failure) throw failure;
