@@ -60,6 +60,8 @@ powershell.exe -NoProfile -File scripts/publish-release.ps1 -Version 0.3.8 -Outp
 
 공개 패키지에는 빌드된 실행 코드, 필수 Windows 보조 실행 파일, Node 런타임, 네이티브 의존성, 사용자 안내와 `THIRD-PARTY-NOTICES.md`·`docs/licenses`를 포함한다. 내부 검증 문서, 소스맵, 보조 프로그램 C# 소스는 제외한다. 실행 가능한 JavaScript 번들 자체를 비밀로 보호한다는 뜻은 아니다.
 
+아이콘은 `scripts/build-icons.ts`에서 원본 PNG를 읽어 Windows 7개 크기와 웹 3개 크기로 생성한다. `sharp`는 Apache-2.0 라이선스의 빌드 전용 개발 의존성이며, 해당 모듈과 libvips 바이너리는 설치본에 포함하지 않는다. `IconBuilder.exe`는 생성·실행·배포하지 않는다. 기존 체크아웃에 남은 파일의 알약 탐지는 [검사 기록](validation/antivirus-icon-builder.md)을 참고하고 백신 제외로 빌드를 통과시키지 않는다.
+
 ## Release 첨부 파일
 
 | 파일 | 용도 |

@@ -159,6 +159,8 @@ npm.cmd run dev
 
 네이티브 준비 명령은 설치 스크립트가 차단된 환경에서도 잠금 파일에 고정된 런타임을 준비합니다. UI 검사에 필요한 Chrome은 `npx.cmd playwright install chrome`으로 설치할 수 있습니다.
 
+아이콘은 빌드 전용 `sharp`로 원본 PNG에서 생성합니다. 예전 `IconBuilder.exe`를 컴파일하거나 실행하지 않으며 백신 검사 제외가 필요하지 않습니다. 기존 파일의 탐지 재현과 확인 범위는 [알약 검사 기록](docs/validation/antivirus-icon-builder.md)에 정리했습니다.
+
 변경은 **`dev`에서 만든 주제 브랜치 → `dev` PR**로 제출합니다. 배포는 **`dev` → `main` PR**을 거칩니다. 격리 실행, 필수 검사와 문서 기준은 [기여 안내](CONTRIBUTING.md)를 확인하세요.
 
 <details>
