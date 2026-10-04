@@ -63,5 +63,20 @@ jobs:
         run: npm.cmd run build
       - name: Run regression tests sequentially
         run: npx.cmd tsx --test --test-concurrency=1 tests/**/*.test.ts
+      - name: Verify native Windows clipboard
+        shell: pwsh
+        run: |
+          $env:MONGLE_E2E_DATA_ROOT = Join-Path $env:TEMP 'mongle-clipboard-ci'
+          $env:MONGLE_E2E_CLIPBOARD = '1'
+          node --import tsx --test tests/e2e/clipboard.test.ts
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Preserve native clipboard result
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: native-clipboard-result
+          if-no-files-found: ignore
+          retention-days: 14
+          path: test-results/e2e/clipboard/result.json
       - name: Validate release documentation
         run: node --import tsx scripts/release-check.ts
