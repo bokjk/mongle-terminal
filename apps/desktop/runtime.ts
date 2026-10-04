@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { promisify } from 'node:util';
 import { access, copyFile, mkdir, stat } from 'node:fs/promises';
 import path from 'node:path';
@@ -6,6 +6,24 @@ import { createReadStream } from 'node:fs';
 import { createHash } from 'node:crypto';
 const execFileAsync = promisify(execFile);
 async function digest(file: string) { const hash = createHash('sha256'); for await (const chunk of createReadStream(file)) hash.update(chunk); return hash.digest('hex'); }
+
+/** Protect the parent before Electron can create its profile or instance lock. */
+export function prepareDesktopDataDirectory(root: string, dataDir: string): void {
+  if (process.platform !== 'win32') throw new Error('현재 데스크톱 앱은 Windows에서 지원합니다.');
+  const helper = path.resolve(root, 'platform/windows/OwnerPipe.exe');
+  try {
+    const output = execFileSync(helper, ['prepare', path.resolve(dataDir)], {
+      windowsHide: true, timeout: 15_000, maxBuffer: 32_768,
+      encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const result: unknown = JSON.parse(output);
+    if (!result || typeof result !== 'object' || !('kind' in result) || result.kind !== 'prepared') {
+      throw new Error('로컬 보안 구성 요소의 준비 응답을 확인하지 못했습니다.');
+    }
+  } catch (error) {
+    throw new Error('데이터 폴더를 안전하게 준비하지 못했습니다. 폴더 소유자와 접근 권한, 로컬 보안 구성 요소를 확인하세요.', { cause: error });
+  }
+}
 
 export async function prepareRuntime(root: string, nodeExecutable = process.execPath) {
   if (process.platform !== 'win32' || process.arch !== 'x64') throw new Error('현재 배포는 Windows x64에서 빌드해야 합니다.');

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, writeFile, symlink } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { connect, createServer } from 'node:net';
@@ -19,6 +20,59 @@ const eventually = async (predicate: () => boolean, label: string) => {
   }
   assert.fail(label);
 };
+
+async function directorySecurity(dataDir:string){
+  const literal="'"+dataDir.replaceAll("'","''")+"'";
+  const script=`$ErrorActionPreference='Stop';$acl=[System.IO.Directory]::GetAccessControl(${literal});$sid=[System.Security.Principal.WindowsIdentity]::GetCurrent().User;$rules=$acl.GetAccessRules($true,$true,[System.Security.Principal.SecurityIdentifier]);$onlyCurrent=$rules.Count -eq 1 -and $rules[0].IdentityReference.Equals($sid);$json='{"currentOwner":'+$acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Equals($sid).ToString().ToLowerInvariant()+',"protected":'+$acl.AreAccessRulesProtected.ToString().ToLowerInvariant()+',"onlyCurrent":'+$onlyCurrent.ToString().ToLowerInvariant()+'}';[System.Console]::Write($json)`;
+  const result=await run('powershell.exe',['-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(script,'utf16le').toString('base64')],{windowsHide:true,timeout:10000});
+  return JSON.parse(result.stdout.trim()) as {currentOwner:boolean;protected:boolean;onlyCurrent:boolean};
+}
+
+test('Windows owner prepare creates only a protected current-user directory and preserves an active host', {skip:!windows,timeout:20000},async()=>{
+  const root=await mkdtemp(path.join(tmpdir(),'mongle-owner-prepare-')),dataDir=path.join(root,'private'),helper=await ensureHelper();
+  let server:Awaited<ReturnType<typeof startOwnerPipe>>|undefined,client:Awaited<ReturnType<typeof connectOwnerPipe>>|undefined;
+  const prepare=async()=>{const result=await run(helper,['prepare',dataDir],{windowsHide:true,timeout:5000});assert.equal(result.stdout.trim(),'{"kind":"prepared"}');assert.equal(result.stderr,'');};
+  try{
+    await Promise.all([prepare(),prepare()]);assert.deepEqual(await readdir(dataDir),[],'preparation must not create a secret, lock or host state');
+    assert.deepEqual(await directorySecurity(dataDir),{currentOwner:true,protected:true,onlyCurrent:true});
+    await assert.rejects(connectOwnerPipe({dataDir}),{code:'NO_HOST'});
+    await writeFile(path.join(dataDir,'state-fixture.json'),'{"preserved":true}');await prepare();
+    assert.equal(await readFile(path.join(dataDir,'state-fixture.json'),'utf8'),'{"preserved":true}');
+    server=await startOwnerPipe({dataDir,onConnect(){},onRequest(){return 'still connected';},onDisconnect(){}});
+    client=await connectOwnerPipe({dataDir});
+    const digest=async()=>createHash('sha256').update(await readFile(path.join(dataDir,'owner.secret'))).digest('hex'),before=await digest();
+    await prepare();assert.equal(await digest(),before,'preparing an existing profile must preserve its authentication secret');
+    assert.equal(await client.request('echo'),'still connected');
+    assert.deepEqual(await directorySecurity(dataDir),{currentOwner:true,protected:true,onlyCurrent:true});
+  }finally{client?.close();await server?.close();assert.equal(path.dirname(root),tmpdir());assert.ok(path.basename(root).startsWith('mongle-owner-prepare-'));await rm(root,{recursive:true,force:true});}
+});
+
+test('Windows owner prepare refuses reparse-point profiles and invalid existing paths', {skip:!windows,timeout:15000},async()=>{
+  const root=await mkdtemp(path.join(tmpdir(),'mongle-owner-prepare-links-')),target=path.join(root,'target'),helper=await ensureHelper();
+  try{
+    await run(helper,['prepare',target],{windowsHide:true});
+    const alias=path.join(root,'alias');await symlink(target,alias,'junction');
+    for(const directory of [alias,path.join(alias,'child')])await assert.rejects(run(helper,['prepare',directory],{windowsHide:true}),error=>{assert.match((error as {stderr:string}).stderr,/OWNER_IPC_ERROR:AUTH_FAILED:Reparse points/);return true;});
+    const file=path.join(root,'file');await writeFile(file,'preserved');
+    await assert.rejects(run(helper,['prepare',file],{windowsHide:true}));assert.equal(await readFile(file,'utf8'),'preserved');
+    assert.deepEqual(await readdir(target),[]);assert.deepEqual(await directorySecurity(target),{currentOwner:true,protected:true,onlyCurrent:true});
+  }finally{assert.equal(path.dirname(root),tmpdir());assert.ok(path.basename(root).startsWith('mongle-owner-prepare-links-'));await rm(root,{recursive:true,force:true});}
+});
+
+test('Windows owner prepare refuses an isolated profile owned by Administrators', {skip:!windows,timeout:15000},async t=>{
+  const root=await mkdtemp(path.join(tmpdir(),'mongle-owner-prepare-owner-')),dataDir=path.join(root,'foreign'),helper=await ensureHelper();
+  const literal="'"+dataDir.replaceAll("'","''")+"'";
+  try{
+    // Assigning a different owner requires an elevated token. Normal developer
+    // shells explicitly skip this case; the elevated Windows CI runner covers it.
+    const script=`$ErrorActionPreference='Stop';[System.IO.Directory]::CreateDirectory(${literal})|Out-Null;try{$acl=[System.IO.Directory]::GetAccessControl(${literal});$admin=[System.Security.Principal.SecurityIdentifier]::new('S-1-5-32-544');if(-not $acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Equals($admin)){$acl.SetOwner($admin);[System.IO.Directory]::SetAccessControl(${literal},$acl)}}catch{[System.Console]::Write('unavailable');exit 0};[System.Console]::Write('assigned')`;
+    const result=await run('powershell.exe',['-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(script,'utf16le').toString('base64')],{windowsHide:true,timeout:10000});
+    if(result.stdout.trim()==='unavailable'){assert.notEqual(process.env.CI,'true','Windows CI must verify rejection of an Administrators-owned profile.');t.skip('Changing the isolated fixture owner requires an elevated Windows token.');return;}
+    assert.equal(result.stdout.trim(),'assigned');assert.equal((await directorySecurity(dataDir)).currentOwner,false);
+    await assert.rejects(run(helper,['prepare',dataDir],{windowsHide:true}),error=>{assert.match((error as {stderr:string}).stderr,/OWNER_IPC_ERROR:AUTH_FAILED:Owner IPC data directory is owned by another account/);return true;});
+    assert.equal((await directorySecurity(dataDir)).currentOwner,false);assert.deepEqual(await readdir(dataDir),[]);
+  }finally{assert.equal(path.dirname(root),tmpdir());assert.ok(path.basename(root).startsWith('mongle-owner-prepare-owner-'));await rm(root,{recursive:true,force:true});}
+});
 
 test('Windows owner IPC authenticates helper peers and bridges requests/events', { skip: !windows, timeout: 20_000 }, async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'mongle-owner-ipc-'));

@@ -66,6 +66,26 @@ test('real Git creates Unicode worktrees outside the source, disables hooks, pre
   await removeWorktree(repo,worktree,f.data,()=>{});assert.equal(existsSync(worktree.path),false);assert.match(await git(f.repository,'branch','--list','feat/login'),/feat\/login/);
 });
 
+test('worktree branch choices keep exact local names and commits when tags share their names',async t=>{
+  const f=await fixture(t),originalHead=(await git(f.repository,'rev-parse','HEAD')).trim();
+  await git(f.repository,'branch','shared');
+  await writeFile(path.join(f.repository,'README.md'),'new main commit\n');
+  await git(f.repository,'commit','-qam','advance main');
+  const mainHead=(await git(f.repository,'rev-parse','HEAD')).trim();
+  await git(f.repository,'tag','shared',mainHead);await git(f.repository,'tag','main',originalHead);
+  const inspection=await inspectProject(f.repository,f.data);
+  assert.deepEqual(inspection.branches,['main','shared']);assert.equal(inspection.baseRef,'main');
+  const repo:Repository={id:randomUUID(),root:inspection.root,commonDir:inspection.commonDir,baseRef:inspection.baseRef,worktreeRoot:path.join(f.root,'worktrees'),checkedAt:Date.now()};
+  const existing=await prepareWorktree(repo,{name:'shared',branch:'shared',baseRef:'main',path:path.join(f.root,'existing'),existingBranch:true},f.data);
+  assert.equal(existing.head,originalHead,'existing branches must resolve through refs/heads');
+  const connected=await addWorktree(repo,existing,f.data);
+  assert.equal(connected.worktrees.find(item=>item.branch==='shared')?.head,originalHead);
+  const created=await prepareWorktree(repo,{name:'from main',branch:'from-main',baseRef:'main',path:path.join(f.root,'from-main'),existingBranch:false},f.data);
+  assert.equal(created.head,mainHead,'a selected local base branch must not resolve to a same-name tag');
+  const result=await addWorktree(repo,created,f.data);
+  assert.equal(result.worktrees.find(item=>item.branch==='from-main')?.head,mainHead);
+});
+
 test('host lazily opens one terminal, keeps worktree identity across tabs and move, and restores unopened worktrees', {timeout:60000},async t=>{
   const f=await fixture(t,false),core=new HostCore({dataDir:f.data});await core.init();t.after(async()=>{await core.close();await cleanup(f.root);});
   const ctx:ConnectionContext={id:randomUUID(),deviceId:'worktree-test',deviceName:'Test',owner:true};core.connect(ctx,()=>{});

@@ -13,11 +13,16 @@ void app.whenReady().then(async () => {
   let transport: RemoteTransport | undefined;
   let hostId = 'installation-a';
   let protocolVersion = 1;
+  let holdHealth: ((reply: () => void) => void) | undefined;
   const calls: { path: string; cookie: boolean }[] = [];
   const server = https.createServer({key:readFileSync(path.join(directory,'key.pem')),cert:readFileSync(path.join(directory,'cert.pem'))}, (req,res) => {
     const route = req.url!; const cookie = (req.headers.cookie || '').includes('__Host-mongle=probe'); calls.push({path:route,cookie});
     const reply = (data:unknown,status=200) => { res.writeHead(status,{'Content-Type':'application/json'});res.end(JSON.stringify(data)); };
-    if (route === '/health') return reply({hostId,protocolVersion});
+    if (route === '/health') {
+      const health = {hostId,protocolVersion};
+      if (holdHealth) return holdHealth(() => reply(health));
+      return reply(health);
+    }
     if (route === '/v1/session') return reply(cookie?{authenticated:true,hostId,csrf:'csrf-probe'}:{authenticated:false});
     let body=''; req.on('data',chunk=>body+=chunk); req.on('end',()=>{
       assert.equal(req.headers.origin,origin);
@@ -56,8 +61,23 @@ void app.whenReady().then(async () => {
     transport.close();hostId='installation-a';protocolVersion=2;transport=new RemoteTransport(host,bind,()=>{});
     const beforeVersion=calls.length;await assert.rejects(()=>transport!.connect(),(error:any)=>error.code==='VERSION_MISMATCH');
     assert.deepEqual(calls.slice(beforeVersion),[{path:'/health',cookie:false}]);
+    transport.close();protocolVersion=1;
+    let bindingCalls=0;
+    const healthArrived=new Promise<()=>void>(resolve=>{holdHealth=resolve;});
+    transport=new RemoteTransport(host,async()=>{bindingCalls++;},()=>{});
+    const beforeClosed=calls.length;
+    const closingConnection=transport.connect();
+    // Attach a rejection handler before cancelling the in-flight network request.
+    const closedResult=closingConnection.then(()=>false,()=>true);
+    const releaseHealth=await healthArrived;
+    transport.close();holdHealth=undefined;releaseHealth();
+    assert.equal(await closedResult,true,'closing during HTTP preflight must reject the connection');
+    assert.equal(bindingCalls,0,'a closed connection must not bind late installation identity');
+    assert.deepEqual(calls.slice(beforeClosed),[{path:'/health',cookie:false}]);
+    await assert.rejects(()=>transport!.connect());
+    assert.deepEqual(calls.slice(beforeClosed),[{path:'/health',cookie:false}],'closed transports must not start more HTTP requests');
     await transport.forget();
-    writeFileSync(path.join(directory,'result.json'),JSON.stringify({ok:true,cases:['pairing','persisted-cookie','csrf','websocket-cookie-origin','rpc','credential-free-identity-preflight','credential-free-version-gate']}));
+    writeFileSync(path.join(directory,'result.json'),JSON.stringify({ok:true,cases:['pairing','persisted-cookie','csrf','websocket-cookie-origin','rpc','credential-free-identity-preflight','credential-free-version-gate','close-during-http-preflight','no-http-after-close']}));
   } catch(error) { writeFileSync(path.join(directory,'result.json'),JSON.stringify({ok:false,error:error instanceof Error?error.stack:String(error)})); }
   finally {transport?.close();for(const ws of wss.clients)ws.terminate();wss.close();server.close();app.quit();}
 }).catch(error=>{writeFileSync(path.join(directory,'result.json'),JSON.stringify({ok:false,error:String(error)}));app.exit(1);});

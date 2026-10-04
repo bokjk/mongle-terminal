@@ -1,5 +1,5 @@
 import type { Terminal } from '@xterm/xterm';
-import { applyPresentationModes, beginPresentation, setPresentationPending, suppressRendererResponses } from './pinned-xterm.js';
+import { applyPresentationModes, beginPresentation, captureSelectionDrag, setPresentationPending, suppressRendererResponses } from './pinned-xterm.js';
 import { assertGeometry, PRESENTATION_VERSION } from './types.js';
 import { attachTouchScrollback } from './touch-scrollback.js';
 import type { TerminalInputEncoding, TerminalModes } from './types.js';
@@ -36,6 +36,7 @@ function parseModes(raw: Record<string, unknown>): TerminalModes {
 export class BrowserPresentationAdapter {
   private draining = false;
   private drainTask: Promise<void> = Promise.resolve();
+  private renderTask: Promise<void> | undefined;
   private pending: PendingFrame | undefined;
   private enabled = false;
   private disposed = false;
@@ -121,6 +122,10 @@ export class BrowserPresentationAdapter {
     return promise;
   }
 
+  /** A mouse release must read selection after the active frame swap, before
+   * any future frame starts. Undefined keeps the usual copy path immediate. */
+  get pendingPresentation(): Promise<void> | undefined { return this.renderTask; }
+
   /** Run after application shortcuts and before xterm's legacy Enter encoder. */
   handleKeyEvent(event: KeyboardEvent): boolean {
     const enter=event.key==='Enter'||event.code==='Enter'||event.code==='NumpadEnter';
@@ -162,7 +167,10 @@ export class BrowserPresentationAdapter {
         this.pending = undefined;
         try {
           if (this.disposed) throw new Error('Terminal renderer is disposed.');
-          await this.render(pending.frame, pending.modes);
+          const rendering = this.render(pending.frame, pending.modes);
+          this.renderTask = rendering;
+          try { await rendering; }
+          finally { this.renderTask = undefined; }
           pending.resolve();
         } catch (error) { pending.reject(error); }
       }
@@ -180,8 +188,10 @@ export class BrowserPresentationAdapter {
     const selection = sameGeometry ? this.terminal.getSelectionPosition?.() : undefined;
     const selectedText = selection ? this.terminal.getSelection() : '';
     const finishPresentation = beginPresentation(this.terminal);
+    let selectionDrag: ReturnType<typeof captureSelectionDrag>;
     let complete = false;
     try {
+      selectionDrag = captureSelectionDrag(this.terminal);
       this.terminal.reset();
       setPresentationPending(this.terminal, true);
       this.terminal.resize(frame.cols, frame.rows);
@@ -199,7 +209,8 @@ export class BrowserPresentationAdapter {
         this.terminal.scrollToLine(oldViewportY);
       }
       else this.terminal.scrollToLine(Math.max(0, this.terminal.buffer.active.baseY - oldOffset));
-      if (selection && this.terminal.buffer.active.type === old.type) {
+      if (selectionDrag) selectionDrag.finish(sameGeometry && this.terminal.buffer.active.type === old.type);
+      else if (selection && this.terminal.buffer.active.type === old.type) {
         const length = (selection.end.y - selection.start.y) * frame.cols + selection.end.x - selection.start.x;
         if (length > 0) this.terminal.select(selection.start.x, selection.start.y, length);
         // History trimming or a repaint can move different text under identical
@@ -208,6 +219,7 @@ export class BrowserPresentationAdapter {
       }
       complete = true;
     } finally {
+      selectionDrag?.finish(false);
       setPresentationPending(this.terminal, false);
       finishPresentation(complete && !this.disposed, frame.rows, this.terminal.getSelectionPosition?.());
       if (!this.disposed) this.terminal.refresh?.(0, frame.rows - 1);

@@ -194,6 +194,84 @@ test('snapshot fence orders concurrent writes and resize; bounded history stays 
   } finally { await s.dispose(); }
 });
 
+test('a burst of small PTY chunks drains together instead of waiting one timer turn per chunk', async t => {
+  const engine = new TerminalEngine({ ...geometry, onResponse() {} });
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let settled = false;
+  const writes = Promise.all(Array.from({ length: 64 }, () => engine.write('x')))
+    .then(() => { settled = true; });
+  let parserTurns = 0;
+  try {
+    // Let Promise fences run between parser timers. Counting turns is stable
+    // even on slow CI, unlike asserting a platform-dependent elapsed time.
+    while (!settled && parserTurns < 128) {
+      await new Promise<void>(resolve => setImmediate(resolve));
+      t.mock.timers.tick(0);
+      parserTurns += 1;
+    }
+    await writes;
+    assert.ok(parserTurns <= 3, `64 queued chunks needed ${parserTurns} parser timer turns`);
+  } finally {
+    t.mock.timers.reset();
+    await engine.dispose();
+  }
+});
+
+test('batched output retains copied UTF-8 and CSI fragments without crossing snapshot or resize fences', async () => {
+  const s = setup();
+  try {
+    const bytes = new TextEncoder().encode('한');
+    const firstByte = bytes.slice(0, 1);
+    const writes = [s.engine.write('before-'), s.engine.write(firstByte), s.engine.write(bytes.slice(1)),
+      s.engine.write('\x1b['), s.engine.write('31mred')];
+    firstByte[0] = 0;
+    const original = s.engine.snapshot();
+    const resize = s.engine.resize(50, 10);
+    writes.push(s.engine.write('\x1b[0m-after'), s.engine.write('-last'));
+    const latest = s.engine.snapshot();
+    await Promise.all([...writes, resize]);
+    const before = await original;
+    assert.equal(before.cols, 40);
+    assert.equal(before.revision, 5);
+    assert.ok(before.data.includes('before-한'));
+    assert.ok(!before.data.includes('after'));
+    await s.adapter.applySnapshot(before);
+    assert.equal(s.client.buffer.active.getLine(0)!.getCell(9)!.getFgColor(), 1);
+    const after = await latest;
+    assert.equal(after.cols, 50);
+    assert.equal(after.revision, 8);
+    await s.adapter.applySnapshot(after);
+    assert.equal(s.client.buffer.active.getLine(0)!.translateToString(true), 'before-한red-after-last');
+  } finally { await s.dispose(); }
+});
+
+test('dispose finishes accepted batched output and rejects later writes', async () => {
+  const engine = new TerminalEngine({ ...geometry, onResponse() {} });
+  const writes = [engine.write('first'), engine.write('second'), engine.write('third')];
+  const frame = engine.snapshot();
+  const closing = engine.dispose();
+  await assert.rejects(engine.write('late'), /disposed/);
+  await Promise.all([...writes, closing]);
+  assert.equal((await frame).data, 'firstsecondthird');
+  assert.equal((await frame).revision, 3);
+});
+
+test('a large queued burst stays below the parser watermark and its snapshot waits for every chunk', async () => {
+  const engine = new TerminalEngine({ ...geometry, onResponse() {} });
+  try {
+    // More than xterm's 50 MB pending-data limit, without allocating visible
+    // cells. Unbounded batching discards output and lets the fence run early.
+    const chunk = '\0'.repeat(1024 * 1024);
+    const writes = Array.from({ length: 50 }, () => engine.write(chunk));
+    writes.push(engine.write('last chunk'));
+    const snapshot = engine.snapshot();
+    await Promise.all(writes);
+    const frame = await snapshot;
+    assert.equal(frame.revision, 51);
+    assert.equal(frame.data, 'last chunk');
+  } finally { await engine.dispose(); }
+});
+
 test('clearHistory retains all visible rows, cursor and a partial CSI parser', async () => {
   const s = setup();
   try {

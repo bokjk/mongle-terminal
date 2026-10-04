@@ -1,6 +1,7 @@
 import { useEffect, useId, useState } from 'react';
 import { CheckCircle2, ChevronDown, ChevronRight, FileText, GitBranch, GitCompareArrows } from 'lucide-react';
-import type { GitChange, GitListing, Transport } from '../../../packages/protocol/index';
+import type { GitChange, GitListing } from '../../../packages/protocol/index';
+import type { ExplorerClient } from './explorer-queue';
 
 export type GitKind = 'modified' | 'added' | 'deleted' | 'renamed' | 'copied' | 'type-changed' | 'untracked' | 'conflicted';
 const presentations: Record<GitKind, { marker: string; label: string }> = {
@@ -19,18 +20,19 @@ export function GitMarker({ kind }: { kind: GitKind }) {
   return <span className={`git-marker git-status-${kind}`} aria-hidden="true">{presentations[kind].marker}</span>;
 }
 
-export function useGitListing(client: Transport, reference: { id: string; hostId: string; bootId: string; generation: string; root: string }, enabled: boolean, revision: number) {
+export function useGitListing(client: ExplorerClient, reference: { id: string; hostId: string; bootId: string; generation: string; root: string }, enabled: boolean, revision: number) {
   const [listing, setListing] = useState<GitListing>();
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     if (!enabled) return;
     let active = true, pending = false;
+    const controller = new AbortController();
     async function load() {
       if (pending || document.hidden) return;
       pending = true; setBusy(true);
       try {
-        const result = await client.request<GitListing>('git.status', reference);
+        const result = await client.request<GitListing>('git.status', reference, controller.signal);
         if (active) { setListing(result); setError(''); }
       } catch (error) {
         if (active) { setListing(undefined); setError(error instanceof Error ? error.message : 'Git 상태를 읽지 못했습니다.'); }
@@ -40,7 +42,7 @@ export function useGitListing(client: Transport, reference: { id: string; hostId
     const interval = window.setInterval(() => void load(), 5000);
     const focus = () => void load();
     window.addEventListener('focus', focus); document.addEventListener('visibilitychange', focus);
-    return () => { active = false; window.clearInterval(interval); window.removeEventListener('focus', focus); document.removeEventListener('visibilitychange', focus); };
+    return () => { active = false; controller.abort(); window.clearInterval(interval); window.removeEventListener('focus', focus); document.removeEventListener('visibilitychange', focus); };
   }, [client, reference, enabled, revision]);
   return { listing, error, busy };
 }

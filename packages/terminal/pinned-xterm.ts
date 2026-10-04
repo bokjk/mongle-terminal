@@ -5,6 +5,7 @@
  * Upstream: xterm.js 6.0.0, src/common/services/CoreService.ts (MIT).
  */
 import type { TerminalModes } from './types.js';
+import type { Terminal } from '@xterm/xterm';
 
 interface CoreService {
   triggerDataEvent(data: string, wasUserInput?: boolean): void;
@@ -19,14 +20,94 @@ interface PresentationRenderer {
   handleSelectionChanged(start: [number, number] | undefined, end: [number, number] | undefined, column: boolean): void;
 }
 
+interface SelectionModel {
+  selectionStart: [number, number] | undefined;
+  selectionEnd: [number, number] | undefined;
+  selectionStartLength: number;
+  isSelectAllActive: boolean;
+}
+
+interface SelectionService {
+  _model: SelectionModel;
+  _activeSelectionMode: number;
+  _dragScrollIntervalTimer: number | undefined;
+  _addMouseDownListeners(): void;
+  _handleMouseMove(event: MouseEvent): void;
+  _handleMouseUp(event: MouseEvent): void;
+  refresh(): void;
+}
+
 interface PinnedCore {
   _renderService?: { _renderer: { value: PresentationRenderer | undefined } };
+  _selectionService?: SelectionService;
   coreService: CoreService;
   coreMouseService: { activeEncoding: string; activeProtocol: string };
   _bufferService: { buffers: { normal: {
     ybase: number; ydisp: number;
     lines: { trimStart(count: number): void };
   } } };
+}
+
+/** reset/select remove xterm's document drag listeners. Preserve a live gesture
+ * across the frame swap, but never revive one cancelled by a new user action.
+ * While the parser holds a partial buffer, keep only the latest pointer move
+ * and apply it after the complete buffer and viewport have been restored.
+ */
+export function captureSelectionDrag(terminal: Terminal): { finish(commit: boolean): void } | undefined {
+  const selection = coreOf(terminal)._selectionService;
+  const document = terminal.element?.ownerDocument;
+  if (!selection || !document || selection._dragScrollIntervalTimer === undefined) return undefined;
+  if (!selection._model || typeof selection._addMouseDownListeners !== 'function' ||
+      typeof selection._handleMouseMove !== 'function' || typeof selection._handleMouseUp !== 'function' ||
+      typeof selection.refresh !== 'function') throw new Error('Unsupported xterm selection internals.');
+  const model: SelectionModel = {
+    selectionStart: selection._model.selectionStart?.slice() as [number, number] | undefined,
+    selectionEnd: selection._model.selectionEnd?.slice() as [number, number] | undefined,
+    selectionStartLength: selection._model.selectionStartLength,
+    isSelectAllActive: selection._model.isSelectAllActive,
+  };
+  const mode = selection._activeSelectionMode;
+  const buffer = terminal.buffer.active;
+  const cols = terminal.cols, rows = terminal.rows;
+  const text = terminal.getSelection();
+  const anchorLine = model.selectionStart && buffer.getLine(model.selectionStart[1])?.translateToString();
+  let cancelled = false, ended = false, finished = false;
+  let lastMove: MouseEvent | undefined, mouseUp: MouseEvent | undefined;
+  const cancel = () => { cancelled = true; };
+  const move = (event: MouseEvent) => {
+    if (cancelled || ended) return;
+    if (!(event.buttons & 1)) { ended = true; return; }
+    lastMove = event;
+    event.stopImmediatePropagation();
+  };
+  const up = (event: MouseEvent) => { if (event.button === 0) { ended = true; mouseUp = event; } };
+  const input = terminal.onData(cancel);
+  const binary = terminal.onBinary(cancel);
+  document.addEventListener('mousemove', move, true);
+  document.addEventListener('mouseup', up, true);
+  document.addEventListener('mousedown', cancel, true);
+  return { finish(commit) {
+    if (finished) return;
+    finished = true;
+    document.removeEventListener('mousemove', move, true);
+    document.removeEventListener('mouseup', up, true);
+    document.removeEventListener('mousedown', cancel, true);
+    input.dispose(); binary.dispose();
+    if (!commit || cancelled || terminal.cols !== cols || terminal.rows !== rows || terminal.buffer.active.type !== buffer.type) return;
+    Object.assign(selection._model, model);
+    selection._activeSelectionMode = mode;
+    // A click may not yet have a nonempty range. In that case validate its
+    // anchor row; for a real range, preserve only the exact selected text.
+    if (terminal.getSelection() !== text || (!text && model.selectionStart &&
+        terminal.buffer.active.getLine(model.selectionStart[1])?.translateToString() !== anchorLine)) {
+      terminal.clearSelection();
+      return;
+    }
+    if (lastMove) selection._handleMouseMove(lastMove);
+    if (mouseUp) selection._handleMouseUp(mouseUp);
+    else if (!ended) selection._addMouseDownListeners();
+    selection.refresh();
+  } };
 }
 
 /** Unlike terminal.clear(), preserve every visible line and a pending parser. */
@@ -109,7 +190,7 @@ export function beginPresentation(terminal: unknown): (commit: boolean, rows: nu
         // still describe reset's empty selection; commit the restored public
         // selection now instead of flashing an empty highlight for one RAF.
         selection.call(renderer, position ? [position.start.x, position.start.y] : undefined,
-          position ? [position.end.x, position.end.y] : undefined, false);
+          position ? [position.end.x, position.end.y] : undefined, coreOf(terminal)._selectionService?._activeSelectionMode === 3);
       }
     } finally {
       renderer.clear = clear;

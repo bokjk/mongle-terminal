@@ -7,7 +7,8 @@ import { TerminalPane, type PaneActions } from './TerminalPane';
 import { Settings } from './Settings';
 import { SplitTree } from './SplitTree';
 import { usePaneDrag } from './use-pane-drag';
-import { FileExplorer, explorerClient } from './FileExplorer';
+import { FileExplorer } from './FileExplorer';
+import { explorerClient } from './explorer-queue';
 import { useFileDocuments } from './use-file-documents';
 const FileEditorPanel = lazy(() => import('./FileEditorPanel').then(module => ({ default: module.FileEditorPanel })));
 import { HostPicker } from './HostPicker';
@@ -38,6 +39,7 @@ export function App(){
   useEffect(()=>savePreference('mongle.files.open',filesOpen),[filesOpen]);
   const [settingsOpen,setSettingsOpen] = useState(false);
   const [editor,setEditor] = useState<Editor>();
+  const currentEditor = useRef(editor);currentEditor.current=editor;
   const [projectEditor,setProjectEditor] = useState<{group?:Group}>();
   const [collapsedProjects,setCollapsedProjects] = useState<Record<string,boolean>>({});
   const projectNavigation = useRef(0);
@@ -55,6 +57,8 @@ export function App(){
   const actions = useRef(new Map<string,PaneActions>());
   const layoutQueue = useRef<Promise<void>>(Promise.resolve());
   const hostSelection = useRef(0);
+  const stateEvents = useRef(0);
+  const stateRequests = useRef(0);
   const notify = useCallback((message:string)=>setToast(message),[]);
   const connected=connection.status==='connected';
   const [fileClient] = useState(() => explorerClient(client));
@@ -76,18 +80,25 @@ export function App(){
   },[state?.hostId,groupId,activeId,panelIds.join(','),JSON.stringify(savedTabs)]);
   const selectedHost=hosts.find(h=>h.selected);
   const layoutContext=useRef({hostId:state?.hostId,bootId:state?.bootId,groupId,connected});layoutContext.current={hostId:state?.hostId,bootId:state?.bootId,groupId,connected};
-  const paneDrag=usePaneDrag({client,state,group,enabled:connected&&!mobile&&!maximized&&!editor&&!settingsOpen&&!dialog&&Boolean(group?.layout),hostSelection,queue:layoutQueue,onState:setState,onError:notify,onSelect:setActiveId});
   const register=useCallback((id:string,action:PaneActions|null)=>{if(action)actions.current.set(id,action);else actions.current.delete(id);},[]);
   const ask=useCallback((options:Omit<Dialog,'resolve'>)=>new Promise<boolean>(resolve=>setDialog({...options,resolve})),[]);
   const confirmPaste=useCallback((text:string)=>/[\r\n\x00-\x08\x0b\x0c\x0e-\x1f]/.test(text)?ask({title:'여러 줄을 붙여넣을까요?',description:'줄바꿈이나 제어문자가 포함되어 있습니다. 명령이 실행될 수 있으니 내용을 확인해 주세요.',action:'붙여넣기',detail:text}):Promise.resolve(true),[ask]);
   const refreshHosts=useCallback(async()=>{if(window.mongle)setHosts(await window.mongle.listHosts());},[]);
-  const loadState=useCallback(async()=>{const selection=hostSelection.current;try{const next=await client.request<HostState>('state.get');if(selection!==hostSelection.current)return;setState(next);}catch(error){if(selection===hostSelection.current)notify(error instanceof Error?error.message:'컴퓨터를 불러오지 못했습니다.');}},[client,notify]);
+  const loadState=useCallback(async()=>{
+    const selection=hostSelection.current,events=stateEvents.current,request=++stateRequests.current;
+    // IPC replies can arrive after a newer host event or a later state lookup.
+    // Those complete snapshots already describe the current workspace.
+    const current=()=>selection===hostSelection.current&&events===stateEvents.current&&request===stateRequests.current;
+    try{const next=await client.request<HostState>('state.get');if(current())setState(next);}
+    catch(error){if(current())notify(error instanceof Error?error.message:'컴퓨터를 불러오지 못했습니다.');}
+  },[client,notify]);
+  const paneDrag=usePaneDrag({client,state,group,enabled:connected&&!mobile&&!maximized&&!editor&&!settingsOpen&&!dialog&&Boolean(group?.layout),hostSelection,queue:layoutQueue,refreshState:loadState,onError:notify,onSelect:setActiveId});
   useEffect(()=>{
-    const off=client.subscribe(event=>{if(event.type==='state')setState(event.state);else if(event.type==='notice')notify(event.message);});
-    const offConnection=client.onConnection(next=>{if(next.status==='connecting')hostSelection.current++;if(next.status!=='connected')setEditor(undefined);setConnection(next);if(next.status==='connected')void loadState();});
+    const off=client.subscribe(event=>{if(event.type==='state'){stateEvents.current++;setState(event.state);}else if(event.type==='notice')notify(event.message);});
+    const offConnection=client.onConnection(next=>{if(next.status==='connecting')hostSelection.current++;if(next.status!=='connected'){stateRequests.current++;setEditor(undefined);}setConnection(next);if(next.status==='connected')void loadState();});
     void refreshHosts().catch(error=>notify(error.message));
     const heartbeat=setInterval(()=>{void client.request('heartbeat').catch(()=>{});},10000);
-    return()=>{off();offConnection();clearInterval(heartbeat);client.close();};
+    return()=>{stateRequests.current++;off();offConnection();clearInterval(heartbeat);client.close();};
   },[client,loadState,notify,refreshHosts]);
   useEffect(()=>{if(!state)return;if(!state.groups.some(g=>g.id===groupId)){const stored=preference<string>(`mongle.group.${state.hostId}`,'');setGroupId(state.groups.some(g=>g.id===stored)?stored:state.groups[0]?.id||'');}},[state,groupId]);
   useEffect(()=>{if(!panelIds.includes(activeId)){const saved=state&&groupId?preference<string>(`mongle.active.${state.hostId}.${groupId}`,''):'';setActiveId(panelIds.includes(saved)?saved:panelIds[0]||'');}if(maximized&&!panelIds.includes(maximized))setMaximized(undefined);},[panelIds.join(','),activeId,maximized,state?.hostId,groupId]);
@@ -247,12 +258,19 @@ export function App(){
     </main>
     {settingsOpen&&state&&<Settings client={client} state={state} owner={connection.owner} theme={theme} fontSize={fontSize} onTheme={setTheme} onFontSize={setFontSize} onClose={()=>setSettingsOpen(false)} onError={notify}/>}
     {editor&&<EditorModal key={`${state?.hostId}:${group?.id}:${editor.kind}:${editor.kind==='group'?editor.group?.id:editor.kind==='new-terminal'?editor.tabTarget||editor.splitTarget:''}`} editor={editor} state={state} group={group} activeId={activeId} pickDirectory={connected&&connection.owner&&window.mongle?.selectDirectory?path=>window.mongle!.selectDirectory!(path):undefined} onClose={()=>setEditor(undefined)} onSubmit={async values=>{
-      if(editor.kind==='host'){if(!window.mongle)return;try{const host=await window.mongle.addHost({name:values.name,url:values.url});await refreshHosts();setEditor(undefined);await chooseHost(host.id);}catch(error){throw error;}return;}
+      const selection=hostSelection.current,navigation=projectNavigation.current,hostId=state?.hostId,bootId=state?.bootId;
+      const sameHost=()=>selection===hostSelection.current&&layoutContext.current.hostId===hostId&&layoutContext.current.bootId===bootId;
+      // Closing this editor does not undo an accepted host operation, but its
+      // eventual reply must not close a replacement editor or redirect the user.
+      const current=()=>selection===hostSelection.current&&currentEditor.current===editor&&projectNavigation.current===navigation&&(editor.kind==='host'||sameHost());
+      if(editor.kind==='host'){if(!window.mongle)return;const host=await window.mongle.addHost({name:values.name,url:values.url});await refreshHosts();if(current()){setEditor(undefined);await chooseHost(host.id);}return;}
       let result:any;
       if(editor.kind==='group')result=await client.request(editor.group?'groups.update':'groups.create',{...(editor.group?{id:editor.group.id,revision:editor.group.revision}:{}),name:values.name,...(values.cwd?{cwd:values.cwd}:{}),profileId:values.profileId});
       else if(editor.kind==='terminal')result=await client.request('terminals.rename',{id:editor.terminal.id,title:values.name});
-      else {if(!group)return;result=await client.request('terminals.create',{groupId:group.id,profileId:values.profileId,...(values.cwd?{cwd:values.cwd}:{}),...(editor.tabTarget?{tabTarget:editor.tabTarget}:{splitTarget:editor.splitTarget||activeId||undefined,axis:editor.axis||'horizontal'})});setActiveId(result.id);if(!editor.tabTarget)setMaximized(undefined);else if(maximized)setMaximized(result.id);}
-      await loadState();if(editor.kind==='group'&&!editor.group)setGroupId(result.id);setEditor(undefined);
+      else {if(!group)return;result=await client.request('terminals.create',{groupId:group.id,profileId:values.profileId,...(values.cwd?{cwd:values.cwd}:{}),...(editor.tabTarget?{tabTarget:editor.tabTarget}:{splitTarget:editor.splitTarget||activeId||undefined,axis:editor.axis||'horizontal'})});}
+      if(sameHost())await loadState();if(!current())return;
+      if(editor.kind==='new-terminal'){setActiveId(result.id);if(!editor.tabTarget)setMaximized(undefined);else if(maximized)setMaximized(result.id);}
+      if(editor.kind==='group'&&!editor.group)setGroupId(result.id);setEditor(undefined);
     }}/>}
     {dialog&&<Modal title={dialog.title} onClose={()=>{dialog.resolve(false);setDialog(undefined);}}><div className="modal-body"><p>{dialog.description}</p>{dialog.detail&&<pre className="paste-preview">{dialog.detail}</pre>}</div><div className="modal-footer"><button className="button" onClick={()=>{dialog.resolve(false);setDialog(undefined);}}>취소</button><button className={`button ${dialog.danger?'danger':'primary'}`} onClick={()=>{dialog.resolve(true);setDialog(undefined);}}>{dialog.action}</button></div></Modal>}
     {moving&&state&&<Modal title="다른 그룹으로 이동" onClose={()=>setMoving(undefined)}><div className="modal-body panel-list"><p className="hint">실행 중인 작업을 유지하면서 터미널을 옮깁니다.</p>{state.groups.filter(g=>g.id!==moving.groupId).map(g=><button key={g.id} className="device-row" onClick={async()=>{const result=await mutate('terminals.move',{id:moving.id,hostId:state.hostId,bootId:state.bootId,generation:moving.generation,groupId:g.id});if(result){setGroupId(g.id);setActiveId(moving.id);setMoving(undefined);}}}><Folder size={18}/>{g.name}</button>)}{state.groups.length<2&&<p>옮길 그룹이 없습니다. 먼저 새 그룹을 만들어 주세요.</p>}</div></Modal>}

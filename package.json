@@ -1,6 +1,6 @@
 {
   "name": "mongle-terminal",
-  "version": "0.3.8",
+  "version": "0.3.10",
   "private": true,
   "type": "module",
   "description": "몽글터미널 — 여러 기기에서 이어 쓰는 터미널",
