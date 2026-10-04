@@ -30,7 +30,7 @@ ZIP·개발 실행은 작업 저장·완전 종료 후 수동 교체한다. 실�
 
 ## 0.3.9 배포 전 필수 검증
 
-[Windows checks](../.github/workflows/ci.yml)는 전체 회귀 뒤 실제 Windows 클립보드 왕복 검사를 별도 실행한다. `MONGLE_E2E_CLIPBOARD=1`을 설정하고 OwnerPipe 데이터는 `%TEMP%` 아래에 격리한다. 접근 거부가 발생하거나 선택 복사·붙여넣기에 실패하면 해당 검사 단계가 실패한다. 접근 거부 상황에서 오류 표시만 확인하는 검사는 정상 복사 성공을 대신하지 않는다.
+[Windows checks](../.github/workflows/ci.yml)는 빌드 직후 실제 Windows 클립보드 왕복 검사를 실행하고 전체 회귀를 이어서 검사한다. `MONGLE_E2E_CLIPBOARD=1`을 설정하고 OwnerPipe 데이터는 `%TEMP%` 아래에 격리한다. 접근 거부가 발생하거나 선택 복사·붙여넣기에 실패하면 해당 검사 단계가 실패한다. 접근 거부 상황에서 오류 표시만 확인하는 검사는 정상 복사 성공을 대신하지 않는다.
 
 [태그 배포 작업](../.github/workflows/release.yml)은 최종 `release/win-unpacked/MongleTerminal.exe`로 네이티브 클립보드와 업데이트 브리지를 다시 검사한다. 이 단계가 성공해야 검증된 설치 파일·ZIP·메타데이터를 `windows-release` artifact로 보존하고 공개 저장소의 초안 생성 단계로 진행한다. 게시할 파일은 해당 태그 작업에서 검증한 artifact를 사용한다.
 

@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, realpath, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { promisify } from 'node:util';
 import { _electron, expect, type ElectronApplication, type Page } from '@playwright/test';
 import { isProcessAlive, readHostReadiness } from '../../apps/desktop/full-exit';
+import type { ConnectionInfo } from '../../apps/desktop/contracts';
 import { connectOwnerPipe } from '../../packages/local-ipc/index';
 import type { HostState } from '../../packages/protocol/index';
 import { probeClipboardAccess } from '../helpers/windows-clipboard';
@@ -38,6 +41,15 @@ test('desktop clipboard: native roundtrip or real access-denied feedback',
     let failure: unknown, preflight: Awaited<ReturnType<typeof probeClipboardAccess>> | undefined;
     let clipboardRestoration = 'not needed';
     const pids = new Set<number>(), errors: string[] = [], cleanupErrors: string[] = [];
+    const connectionHistory: Array<{ elapsedMs: number; status: ConnectionInfo['status']; owner: boolean; error?: string }> = [];
+    const startedAt = Date.now();
+    let electronStderr = '', connectionSubscribed = false;
+    let storageDiagnostics: unknown;
+    const redactDiagnostic = (value: string) => value
+      .split(isolated).join('<isolated-profile>')
+      .replace(/((?:authorization|token|password|secret|pairingCode|authKey)["']?\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s,;]+)/gi, '$1<redacted>')
+      .replace(/\bBearer\s+[^\s,;]+/gi, 'Bearer <redacted>')
+      .replace(/\b(?:[a-f\d]{32,}|[A-Za-z\d+/_-]{40,}={0,2})\b/gi, '<redacted>');
     const output = path.join(root, 'test-results/e2e', denied ? 'clipboard-denied' : 'clipboard'); await mkdir(output, { recursive: true });
     const rememberHost = async () => { const readiness = await readHostReadiness(dataDir); if (readiness) pids.add(readiness.pid); return readiness; };
     try {
@@ -50,8 +62,29 @@ test('desktop clipboard: native roundtrip or real access-denied feedback',
       launched = true;
       const app = application = await _electron.launch({ executablePath: executable || path.join(root, 'node_modules/electron/dist/electron.exe'), args: executable ? [] : [root], cwd: root, env: { ...env, MONGLE_DATA_DIR: dataDir }, timeout: 30000 });
       pids.add(app.process().pid!);
+      // This process belongs to the fresh isolated profile. Keep a bounded
+      // failure-only stderr tail; never collect clipboard or host auth state.
+      app.process().stderr?.on('data', chunk => { electronStderr = (electronStderr + String(chunk)).slice(-16 * 1024); });
       page = await app.firstWindow(); page.setDefaultTimeout(15000);
       page.on('pageerror', error => errors.push(error.message));
+      await page.exposeFunction('__recordClipboardConnection', (info: Pick<ConnectionInfo, 'status' | 'owner' | 'error'>) => {
+        connectionHistory.push({ elapsedMs: Date.now() - startedAt, status: info.status, owner: info.owner,
+          ...(info.error ? { error: redactDiagnostic(info.error).slice(0, 2048) } : {}) });
+        if (connectionHistory.length > 32) connectionHistory.shift();
+      });
+      await page.waitForFunction(() => typeof (window as any).mongle?.onConnection === 'function');
+      await page.evaluate(() => {
+        const scope = window as any;
+        // The real preload subscribes before requesting the current state.
+        // Only status/error fields leave this isolated renderer, never IDs.
+        scope.mongle.onConnection((info: { status: string; owner: boolean; error?: string }) => {
+          void scope.__recordClipboardConnection({ status: info.status, owner: info.owner, error: info.error }).catch(() => {});
+        });
+      });
+      connectionSubscribed = true;
+      // Locator assertions have their own 5s default, independent of the page
+      // timeout. A cold CI host may use the app's entire 15s startup window.
+      await expect(page.getByRole('button', { name: '새 터미널', exact: true })).toBeEnabled({ timeout: 30000 });
       if (!denied) {
         // Eagerly materialize every format before a write. Its contents stay
         // only in this Electron process, never in test logs or artifacts.
@@ -69,7 +102,6 @@ test('desktop clipboard: native roundtrip or real access-denied feedback',
         });
         clipboardCaptured = true;
       }
-      await expect(page.getByRole('button', { name: '새 터미널', exact: true })).toBeEnabled();
       owner = await connectOwnerPipe({ dataDir });
       const readiness = await rememberHost(), initial = await owner.request<HostState>('state.get');
       assert.ok(readiness);
@@ -163,6 +195,14 @@ test('desktop clipboard: native roundtrip or real access-denied feedback',
     } catch (error) { failure = error; }
     finally {
       if (!passed) await page?.screenshot({ path: path.join(output, 'failure.png') }).catch(() => {});
+      if (!passed && launched) {
+        try {
+          const literal = "'" + dataDir.replaceAll("'", "''") + "'";
+          const script = `$ErrorActionPreference='Stop'; $folder=${literal}; $exists=Test-Path -LiteralPath $folder -PathType Container; $sameOwner=$false; $administrators=$false; if($exists){$owner=(Get-Acl -LiteralPath $folder).GetOwner([System.Security.Principal.SecurityIdentifier]).Value; $sameOwner=$owner -eq [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value; $administrators=$owner -eq 'S-1-5-32-544'}; @{directoryExists=$exists; ownerMatchesCurrentUser=$sameOwner; ownerIsAdministrators=$administrators; ownerSecretExists=(Test-Path -LiteralPath (Join-Path $folder 'owner.secret') -PathType Leaf)} | ConvertTo-Json -Compress`;
+          const { stdout } = await promisify(execFile)('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true, timeout: 10000 });
+          storageDiagnostics = JSON.parse(stdout);
+        } catch (error) { storageDiagnostics = { error: redactDiagnostic(String(error)).slice(0, 2048) }; }
+      }
       if (clipboardCaptured && application) {
         try {
           clipboardRestoration = await application.evaluate(async ({ clipboard }) => {
@@ -224,7 +264,9 @@ test('desktop clipboard: native roundtrip or real access-denied feedback',
       finally { owner?.close(); }
       if (helper === undefined) delete process.env.MONGLE_OWNER_HELPER; else process.env.MONGLE_OWNER_HELPER = helper;
       const cleanedUp = cleanupErrors.length === 0;
-      await writeFile(path.join(output, 'result.json'), JSON.stringify({ passed: passed && cleanedUp, cleanedUp, mode: denied ? 'access denied' : 'native clipboard', preflight, clipboardRestoration, errors, cleanupErrors, ...(failure ? { error: failure instanceof Error ? failure.stack : String(failure) } : {}) }, null, 2));
+      await writeFile(path.join(output, 'result.json'), JSON.stringify({ passed: passed && cleanedUp, cleanedUp, mode: denied ? 'access denied' : 'native clipboard', preflight, clipboardRestoration, errors, cleanupErrors,
+        ...(!passed ? { startupDiagnostics: { isolatedProfile: true, connectionSubscribed, connectionHistory, storageDiagnostics, electronStderr: redactDiagnostic(electronStderr) } } : {}),
+        ...(failure ? { error: failure instanceof Error ? failure.stack : String(failure) } : {}) }, null, 2));
     }
     if (failure) throw failure;
     assert.deepEqual(cleanupErrors, []);

@@ -61,8 +61,6 @@ jobs:
         run: npm.cmd run typecheck
       - name: Build web and Windows runtime
         run: npm.cmd run build
-      - name: Run regression tests sequentially
-        run: npx.cmd tsx --test --test-concurrency=1 tests/**/*.test.ts
       - name: Verify native Windows clipboard
         shell: pwsh
         run: |
@@ -78,5 +76,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
           path: test-results/e2e/clipboard/result.json
+      - name: Run regression tests sequentially
+        run: npx.cmd tsx --test --test-concurrency=1 tests/**/*.test.ts
       - name: Validate release documentation
         run: node --import tsx scripts/release-check.ts
