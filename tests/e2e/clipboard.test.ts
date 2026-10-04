@@ -44,6 +44,9 @@ test('desktop clipboard: native roundtrip or real access-denied feedback',
     const pids = new Set<number>(), errors: string[] = [], cleanupErrors: string[] = [];
     const connectionHistory: Array<{ elapsedMs: number; status: ConnectionInfo['status']; owner: boolean; error?: string }> = [];
     const startedAt = Date.now();
+    const fixtureProof: Array<{ stage: string; elapsedMs: number }> = [];
+    const recordFixtureStage = (stage: string) => fixtureProof.push({ stage, elapsedMs: Date.now() - startedAt });
+    let failureUiDiagnostics: unknown;
     let electronStderr = '', connectionSubscribed = false;
     let storageDiagnostics: unknown;
     let hostStartupDiagnostics: unknown;
@@ -118,14 +121,21 @@ test('desktop clipboard: native roundtrip or real access-denied feedback',
       await editor.getByRole('combobox').selectOption(cmd.id);
       await editor.getByLabel('시작 폴더', { exact: true }).fill(fixture);
       await page.getByRole('button', { name: '터미널 열기', exact: true }).click();
+      recordFixtureStage('terminal-open-requested');
       await page.getByText('여기서 제어 중', { exact: true }).waitFor();
+      recordFixtureStage('control-ready');
       for (const terminal of (await owner.request<HostState>('state.get')).terminals) if (terminal.pid) pids.add(terminal.pid);
       // A raw-mode child reports received bytes, so copying must never send ETX
       // and pasting must arrive exactly once without running shell commands.
       await page.locator('.xterm-helper-textarea').focus();
+      recordFixtureStage('fixture-focused');
+      recordFixtureStage('fixture-command-started');
       await page.keyboard.type(`"${process.execPath}" "${script}"`);
+      recordFixtureStage('fixture-command-typed');
       await page.keyboard.press('Enter');
+      recordFixtureStage('fixture-enter-sent');
       await page.waitForFunction(() => Array.from(document.querySelectorAll('.xterm-rows > div')).some(row => row.textContent?.trim() === 'MONGLE_CLIP_COPY'));
+      recordFixtureStage('fixture-marker-visible');
       const selectMarker = async () => {
         const box = await page!.locator('.xterm-rows > div').filter({ hasText: /^MONGLE_CLIP_COPY\s*$/ }).last().boundingBox();
         assert.ok(box);
@@ -198,6 +208,29 @@ test('desktop clipboard: native roundtrip or real access-denied feedback',
       assert.deepEqual(errors, []); passed = true;
     } catch (error) { failure = error; }
     finally {
+      if (!passed && page) {
+        let diagnosticTimer: ReturnType<typeof setTimeout> | undefined;
+        try {
+          const capture = Promise.all([
+            page.evaluate(() => {
+              const textarea = document.querySelector<HTMLTextAreaElement>('.xterm-helper-textarea');
+              const rows = Array.from(document.querySelectorAll('.xterm-rows > div'));
+              // Return classifications and known marker booleans only, never
+              // device names, toast bodies, textarea values or terminal rows.
+              return { dialogCount: document.querySelectorAll('[role="dialog"]').length,
+                textareaPresent: !!textarea, textareaFocused: !!textarea && document.activeElement === textarea, textareaReadOnly: textarea?.readOnly ?? null,
+                controlChips: Array.from(document.querySelectorAll('.control-chip')).slice(0, 8).map(element => { const text = element.textContent?.trim(); return text === '여기서 제어 중' ? 'controlled' : text === '연결 중…' ? 'connecting' : text === '입력 확인 후 다시 제어' ? 'input-uncertain' : text === '제어 다시 시도' ? 'retry-control' : text === '화면을 눌러 입력' ? 'awaiting-click' : text === '연결 대기 중' ? 'disconnected' : 'other'; }),
+                toastCategories: Array.from(document.querySelectorAll('.toast')).slice(0, 8).map(element => { const text = element.textContent || ''; return /복사/.test(text) ? 'clipboard-copy' : /붙여넣/.test(text) ? 'clipboard-paste' : /입력/.test(text) ? 'input' : /동기화|화면 크기/.test(text) ? 'synchronization' : /제어/.test(text) ? 'control' : /연결|호스트/.test(text) ? 'connection' : 'other'; }),
+                markerDOMContains: rows.some(row => row.textContent?.includes('MONGLE_CLIP_COPY')),
+                markerExactRow: rows.some(row => row.textContent?.trim() === 'MONGLE_CLIP_COPY') };
+            }),
+            readFile(childPidFile, 'utf8').then(source => { const pid = Number(source); return { pidFileExists: true, childAlive: Number.isSafeInteger(pid) && pid > 0 ? isProcessAlive(pid) : null }; }, error => ({ pidFileExists: (error as NodeJS.ErrnoException).code === 'ENOENT' ? false : null, childAlive: null })),
+          ]);
+          const [ui, child] = await Promise.race([capture, new Promise<never>((_, reject) => { diagnosticTimer = setTimeout(() => reject(new Error('Diagnostic timeout')), 1500); })]);
+          failureUiDiagnostics = { elapsedMs: Date.now() - startedAt, ...ui, ...child };
+        } catch { failureUiDiagnostics = { unavailable: true, elapsedMs: Date.now() - startedAt }; }
+        finally { if (diagnosticTimer) clearTimeout(diagnosticTimer); }
+      }
       if (!passed) await page?.screenshot({ path: path.join(output, 'failure.png') }).catch(() => {});
       if (!passed && launched) {
         try {
@@ -274,7 +307,7 @@ test('desktop clipboard: native roundtrip or real access-denied feedback',
       if (helper === undefined) delete process.env.MONGLE_OWNER_HELPER; else process.env.MONGLE_OWNER_HELPER = helper;
       const cleanedUp = cleanupErrors.length === 0;
       await writeFile(path.join(output, 'result.json'), JSON.stringify({ passed: passed && cleanedUp, cleanedUp, mode: denied ? 'access denied' : 'native clipboard', preflight, clipboardRestoration, errors, cleanupErrors,
-        ...(!passed ? { startupDiagnostics: { isolatedProfile: true, connectionSubscribed, connectionHistory, storageDiagnostics, hostStartupDiagnostics, electronStderr: redactDiagnostic(electronStderr) } } : {}),
+        ...(!passed ? { fixtureDiagnostics: { proof: fixtureProof, ui: failureUiDiagnostics }, startupDiagnostics: { isolatedProfile: true, connectionSubscribed, connectionHistory, storageDiagnostics, hostStartupDiagnostics, electronStderr: redactDiagnostic(electronStderr) } } : {}),
         ...(failure ? { error: failure instanceof Error ? failure.stack : String(failure) } : {}) }, null, 2));
     }
     if (failure) throw failure;

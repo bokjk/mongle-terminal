@@ -1,6 +1,6 @@
 # 배포와 자동 업데이트
 
-준비 중인 소스·패키지 버전: **0.3.9 Windows 미리보기 배포 후보**(2026-10-04). 연속 터미널 출력·워크트리 조회의 대기 시간을 줄이고 탐색기·재연결·복사의 안정성을 보완한다. 버전과 문서 준비를 공개 게시나 실사용 설치본 업데이트 완료로 기록하지 않는다.
+준비 중인 소스·패키지 버전: **0.3.10 Windows 미리보기 배포 후보**(2026-10-04). 연속 터미널 출력·워크트리 조회의 대기 시간을 줄이고 탐색기·재연결·복사·관리자 환경 첫 실행의 안정성을 보완한다. 0.3.9는 최종 패키지 검사 실패로 공개하지 않았으며 실패한 소스 태그는 보존한다. 버전과 문서 준비를 공개 게시나 실사용 설치본 업데이트 완료로 기록하지 않는다.
 
 직전 공개 배포는 **0.3.8**이다. 설치본의 익명 전체 다운로드·해시 검증 결과는 [0.3.8 검증](validation/public-release-0.3.8.md)에 기록한다. 소스는 비공개로 유지하고 [배포 전용 공개 저장소](https://github.com/bokjk/mongle-terminal-releases/releases/latest)에 설치 파일과 업데이트 메타데이터를 게시한다. 코드 서명과 프로젝트의 오픈소스 라이선스는 추가하지 않는다. 이전 배포는 [0.3.7 검증](validation/public-release-0.3.7.md), 공개 주소 전환은 [0.3.1 검증](validation/public-release-0.3.1.md)을 확인한다.
 
@@ -28,15 +28,15 @@ NSIS 설치본은 시작 30초 후와 6시간마다 새 안정 버전을 확인�
 
 ZIP·개발 실행은 작업 저장·완전 종료 후 수동 교체한다. 실제 구버전 NSIS → 신버전 설치·재실행·복원 검증은 패키지 실행이나 다운로드 검사와 구분한다.
 
-## 0.3.9 배포 전 필수 검증
+## 0.3.10 배포 전 필수 검증
 
-[Windows checks](../.github/workflows/ci.yml)는 빌드 직후 실제 Windows 클립보드 왕복 검사를 실행하고 전체 회귀를 이어서 검사한다. `MONGLE_E2E_CLIPBOARD=1`을 설정하고 OwnerPipe 데이터는 `%TEMP%` 아래에 격리한다. 접근 거부가 발생하거나 선택 복사·붙여넣기에 실패하면 해당 검사 단계가 실패한다. 접근 거부 상황에서 오류 표시만 확인하는 검사는 정상 복사 성공을 대신하지 않는다.
+[Windows checks](../.github/workflows/ci.yml)는 빌드 직후 실제 Windows 클립보드 왕복과 업데이트 브리지를 모두 검사한 뒤 전체 회귀를 실행한다. `MONGLE_E2E_CLIPBOARD=1`과 `MONGLE_E2E_UPDATE_DESKTOP=1`을 설정하고 OwnerPipe 데이터는 `%TEMP%` 아래에 격리한다. 두 검사 중 하나라도 실패하면 해당 단계가 실패하며, 선택 검사를 생략한 기본 회귀만으로 대신하지 않는다. 접근 거부 상황에서 오류 표시만 확인하는 검사도 정상 복사 성공을 대신하지 않는다.
 
-[태그 배포 작업](../.github/workflows/release.yml)은 최종 `release/win-unpacked/MongleTerminal.exe`로 네이티브 클립보드와 업데이트 브리지를 다시 검사한다. 이 단계가 성공해야 검증된 설치 파일·ZIP·메타데이터를 `windows-release` artifact로 보존하고 공개 저장소의 초안 생성 단계로 진행한다. 게시할 파일은 해당 태그 작업에서 검증한 artifact를 사용한다.
+[태그 배포 작업](../.github/workflows/release.yml)은 최종 `release/win-unpacked/MongleTerminal.exe`로 네이티브 클립보드와 업데이트 브리지를 다시 검사한다. PR CI와 태그 작업 모두 두 검사의 JSON 결과를 보존한다. 이 단계가 성공해야 검증된 설치 파일·ZIP·메타데이터를 `windows-release` artifact로 보존하고 공개 저장소의 초안 생성 단계로 진행한다. 게시할 파일은 해당 태그 작업에서 검증한 artifact를 사용한다.
 
-이 도구의 로컬 실행 환경에서는 Windows 클립보드 접근 오류 5를 확인했다. **독립된 Windows CI의 정상 복사 결과는 현재 대기 중**이며, 배포 후보 문서나 오류 처리 검사 통과만으로 정상 왕복을 통과한 것으로 기록하지 않는다. CI 결과와 태그 산출물이 확인되면 그 증거로 배포를 진행한다.
+로컬 도구 실행 환경의 Windows 클립보드 접근 오류 5는 이력으로 보존한다. 0.3.9 준비 당시 [기능 PR CI](https://github.com/bokjk/mongle-terminal/actions/runs/37194095694)와 [배포 PR CI](https://github.com/bokjk/mongle-terminal/actions/runs/37194682559)에서 각각 정상 네이티브 클립보드 **1/1**, 전체 회귀 **380개 중 365 통과·실패 0·선택 실행 15 생략**을 확인했다. 접근 거부 UI 검사가 정상 복사 성공을 대신한 것이 아니다. **0.3.10의 CI·최종 태그 패키지 검사와 공개 게시·다운로드 검증은 아직 대기 중**이며, 이전 버전의 결과를 새 산출물 검증으로 대체하지 않는다.
 
-배포 전 CI에서 관리자 권한 환경의 새 데이터 폴더가 Administrators 그룹 소유로 먼저 생성되어 실행부가 시작하지 못하는 결함도 확인했다. 새 폴더를 현재 사용자 전용으로 준비하는 초기화 순서를 수정하며, 기존 소유자·인증 검사를 완화하지 않는다. 수정한 첫 실행과 최종 패키지 검사가 통과하기 전에는 게시하지 않는다. 실패와 재검증 결과는 [0.3.9 배포 검증](validation/public-release-0.3.9.md)에 보존한다.
+관리자 환경의 새 데이터 폴더를 현재 사용자 전용으로 먼저 준비하는 제품 수정은 Windows CI에서 첫 실행·정상 복사와 기존의 다른 소유자 폴더 거부까지 확인했다. 그러나 소스 태그 `v0.3.9`의 [패키징 작업](https://github.com/bokjk/mongle-terminal/actions/runs/37195219441)은 업데이트 시험이 데이터 폴더를 Administrators 소유로 미리 만들어 앱이 거부하면서 실패했다. 전체 회귀·패키지 클립보드 성공만으로 배포를 진행하지 않았고, 시험용 경로 준비를 보완한 0.3.10에서 다시 검증한다. 소유자·인증 검사를 완화하거나 기존 태그를 덮어쓰지 않는다. [0.3.9 실패 기록](validation/public-release-0.3.9.md)과 [0.3.10 검증](validation/public-release-0.3.10.md)을 구분한다.
 
 업데이트 다운로드·체크섬, 패키지의 업데이트 브리지, 호스트 정상 종료·복원은 각각 수행 범위를 기록한다. 브리지 검사는 ZIP 실행본의 수동 업데이트 안내와 설치 불가 요청 시 호스트 보존을 확인하며, NSIS 설치 마법사로 구버전 설치본을 실제 교체·재실행하는 검사까지 완료했다는 뜻은 아니다.
 
@@ -64,8 +64,8 @@ npm.cmd run typecheck
 npx.cmd tsx --test --test-concurrency=1 tests/**/*.test.ts
 node --import tsx scripts/package.ts --output release-candidate
 # CHANGELOG의 현재 버전 항목을 검토해 release-candidate/RELEASE-NOTES.md로 저장
-powershell.exe -NoProfile -File scripts/publish-release.ps1 -Version 0.3.9 -OutputDir release-candidate -CheckOnly
-powershell.exe -NoProfile -File scripts/publish-release.ps1 -Version 0.3.9 -OutputDir release-candidate
+powershell.exe -NoProfile -File scripts/publish-release.ps1 -Version 0.3.10 -OutputDir release-candidate -CheckOnly
+powershell.exe -NoProfile -File scripts/publish-release.ps1 -Version 0.3.10 -OutputDir release-candidate
 ```
 
 `--output`은 프로젝트 아래 `release` 또는 `release-<이름>`을 받는다. 실사용 앱이 있는 `release/`를 덮어쓰지 않는다. `package.ts`는 토큰이 있어도 게시하지 않는다. 게시 스크립트는 지정된 공개 저장소만 대상으로 삼아 체크섬을 확인하고 초안만 생성·갱신한다. 태그 워크플로의 artifact를 내려받았다면 동봉된 `RELEASE-NOTES.md`를 사용한다.
