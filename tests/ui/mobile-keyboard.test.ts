@@ -114,17 +114,20 @@ test('mobile UI preserves resize input within its acknowledged lease and discard
       await waitForInput(delivered);
       assert.equal(await inputText(),delivered,'fresh ASCII, Unicode and auxiliary keys flush once in order after the matching resize ACK; acquire input never replays');
 
-      // An earlier in-flight input can fail while newer keystrokes wait for a
-      // resize ACK. Its uncertainty must discard the entire newer resize queue.
+      // Resize waits for the earlier in-flight input before changing the host
+      // input gate. Failure discards newer input and prevents that resize RPC.
       await page.evaluate(()=>(window as any).mobileTest.holdInput=true);await page.keyboard.type('x');
       await page.waitForFunction(()=>Boolean((window as any).mobileTest.pendingInput));
+      const resizeCalls=await page.evaluate(()=>(window as any).mobileTest.calls.filter((call:any)=>call.method==='terminal.resize').length);
       await page.evaluate(()=>(window as any).mobileTest.setHeight(560));
-      await page.waitForFunction(()=>Boolean((window as any).mobileTest.pendingResize));
+      await page.waitForFunction(()=>Math.round(document.querySelector('.app-shell')!.getBoundingClientRect().height)===560);
       await page.keyboard.type('DROP_ON_FAILURE');
       assert.equal(await inputText(),delivered+'x');
+      assert.equal(await page.evaluate(()=>(window as any).mobileTest.calls.filter((call:any)=>call.method==='terminal.resize').length),resizeCalls,'resize does not overtake the pending input acceptance');
       await page.evaluate(()=>(window as any).mobileTest.pendingInput());
       await page.getByText('마지막 입력의 전달 여부를 확인해 주세요. 확인 후 제어권을 다시 가져올 수 있습니다.',{exact:true}).waitFor();
-      await page.evaluate(()=>{const h=(window as any).mobileTest;h.pendingResize();h.output();});await waitForAck();
+      assert.equal(await page.evaluate(()=>(window as any).mobileTest.pendingResize),null,'failed input cancels the paused resize before it is sent');
+      await page.evaluate(()=>(window as any).mobileTest.output());await waitForAck();
       await page.keyboard.type('UNCERTAIN');
       assert.equal(await inputText(),delivered+'x','failed input discards resize-buffered text and stream frames do not release the uncertain-input latch');
       await page.locator('button.control-chip').tap();await page.waitForFunction(()=>Boolean((window as any).mobileTest.pendingAcquire));
