@@ -132,8 +132,11 @@ export function Settings({ client, state, owner, theme, fontSize, onTheme, onFon
     if (mounted.current) setDevices(value.devices);
   }
   async function copy(value: string) {
-    if (!navigator.clipboard) throw new Error('이 환경에서는 복사를 지원하지 않습니다. 주소나 코드를 직접 선택해 복사해 주세요.');
-    await navigator.clipboard.writeText(value);
+    if (!window.mongle?.writeClipboard && !navigator.clipboard) throw new Error('이 환경에서는 복사를 지원하지 않습니다. 주소나 코드를 직접 선택해 복사해 주세요.');
+    try {
+      if (window.mongle?.writeClipboard) await window.mongle.writeClipboard(value);
+      else await navigator.clipboard.writeText(value);
+    } catch { throw new Error('복사하지 못했습니다. 주소나 코드를 직접 선택해 복사해 주세요.'); }
     if (mounted.current) setNotice('복사했습니다.');
   }
   async function exportSettings() {

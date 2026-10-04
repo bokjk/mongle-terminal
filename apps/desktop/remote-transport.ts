@@ -10,6 +10,7 @@ export class RemoteTransport implements Transport {
   private listeners = new Set<(event: HostEvent) => void>();
   private pending = new Map<string, { resolve: (value: any) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }>();
   private closed = false;
+  private lifetime = new AbortController();
   private origin: string;
   constructor(private host: SavedHost, private bindIdentity: (id: string) => Promise<void>, private onLost: () => void) {
     this.origin = host.url!;
@@ -17,45 +18,63 @@ export class RemoteTransport implements Transport {
     this.ses.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
     this.ses.setPermissionCheckHandler(() => false);
   }
+  private ensureOpen() {
+    if (this.closed) throw new AppError('OFFLINE', '연결을 닫았습니다. 이전 입력을 자동으로 다시 보내지 않습니다.');
+  }
   private async json(route: string, body?: unknown, credentials: 'include' | 'omit' = 'include') {
+    this.ensureOpen();
     const response = await this.ses.fetch(this.origin + route, {
       method: body === undefined ? 'GET' : 'POST',
       credentials, redirect: 'error', cache: 'no-store',
       headers: { 'Content-Type': 'application/json', Origin: this.origin, ...(this.csrf ? { 'X-CSRF-Token': this.csrf } : {}) },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      signal: AbortSignal.timeout(10_000),
+      signal: AbortSignal.any([this.lifetime.signal, AbortSignal.timeout(10_000)]),
     });
-    const text = await response.text(); if (text.length > 2 * 1024 * 1024) throw new Error('서버 응답이 너무 큽니다.');
+    this.ensureOpen();
+    const text = await response.text();
+    this.ensureOpen();
+    if (text.length > 2 * 1024 * 1024) throw new Error('서버 응답이 너무 큽니다.');
     let data: any; try { data = JSON.parse(text); } catch { throw new Error('몽글터미널 서버 응답을 확인하지 못했습니다.'); }
     if (!response.ok) throw new AppError(data.error?.code || data.code || 'REMOTE_ERROR', data.error?.message || data.message || '원격 요청을 완료하지 못했습니다.');
     return data;
   }
   async connect(): Promise<{ paired: boolean; hostId: string; connectionId?: string }> {
     const health = await this.json('/health', undefined, 'omit');
+    this.ensureOpen();
     if (typeof health.hostId !== 'string') throw new Error('서버 설치 정보를 확인하지 못했습니다.');
     if (health.protocolVersion !== PROTOCOL_VERSION) throw new AppError('VERSION_MISMATCH', '원격 컴퓨터의 몽글터미널 버전이 호환되지 않습니다. 해당 컴퓨터의 앱 버전을 확인하세요.');
     await this.bindIdentity(health.hostId);
     const info = await this.json('/v1/session');
+    this.ensureOpen();
     if (!info.authenticated) return { paired: false, hostId: health.hostId };
     if (info.hostId !== health.hostId) throw new Error('연결 중 서버 설치 정보가 바뀌었습니다.');
     this.csrf = info.csrf;
     const issued = await this.json('/v1/ws-ticket', {});
+    this.ensureOpen();
     await new Promise<void>((resolve, reject) => {
       const ws = this.ws = new net.WebSocket(this.origin.replace(/^https:/, 'wss:') + '/v1/ws', { session: this.ses, useSessionCookies: true, origin: this.origin });
       let authenticated = false;
-      const timer = setTimeout(() => { ws.close(); reject(new Error('원격 연결 시간이 초과되었습니다.')); }, 10_000);
-      ws.onopen = () => ws.send(JSON.stringify({ type: 'authenticate', ticket: issued.ticket }));
+      const finish = (error?: Error) => {
+        clearTimeout(timer);
+        this.lifetime.signal.removeEventListener('abort', cancel);
+        if (error) reject(error); else resolve();
+      };
+      const cancel = () => finish(new AppError('OFFLINE', '원격 연결을 닫았습니다.'));
+      const timer = setTimeout(() => { finish(new Error('원격 연결 시간이 초과되었습니다.')); ws.close(); }, 10_000);
+      this.lifetime.signal.addEventListener('abort', cancel, { once: true });
+      ws.onopen = () => { if (!this.closed) ws.send(JSON.stringify({ type: 'authenticate', ticket: issued.ticket })); };
       ws.onmessage = (event: { data: string | Buffer }) => {
+        if (this.closed) return;
         const text = event.data.toString(); if (Buffer.byteLength(text, 'utf8') > 16 * 1024 * 1024) { ws.close(1009); return; }
         let value: any; try { value = JSON.parse(text); } catch { ws.close(1002); return; }
         if (!authenticated) {
-          if (value.type !== 'authenticated') { clearTimeout(timer); reject(new Error('원격 인증 응답을 확인하지 못했습니다.')); ws.close(1008); return; }
-          authenticated = true; clearTimeout(timer); resolve(); return;
+          if (value.type !== 'authenticated') { finish(new Error('원격 인증 응답을 확인하지 못했습니다.')); ws.close(1008); return; }
+          authenticated = true; finish(); return;
         }
         this.receive(value);
       };
-      ws.onerror = () => { clearTimeout(timer); reject(new Error('원격 연결에 실패했습니다. Tailscale 연결을 확인하세요.')); };
-      ws.onclose = () => { clearTimeout(timer); reject(new Error('원격 연결이 종료되었습니다.')); this.rejectPending(); if (!this.closed) this.onLost(); };
+      ws.onerror = () => { finish(new Error('원격 연결에 실패했습니다. Tailscale 연결을 확인하세요.')); };
+      ws.onclose = () => { finish(new Error('원격 연결이 종료되었습니다.')); this.rejectPending(); if (!this.closed) this.onLost(); };
     });
     const context = await this.request<{ id: string }>('connection.info');
     return { paired: true, hostId: health.hostId, connectionId: context.id };
@@ -84,6 +103,6 @@ export class RemoteTransport implements Transport {
   }
   subscribe(listener: (event: HostEvent) => void) { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; }
   private rejectPending() { for (const item of this.pending.values()) { clearTimeout(item.timer); item.reject(new AppError('OFFLINE', '연결이 끊어졌습니다.')); } this.pending.clear(); }
-  close() { this.closed = true; this.ws?.close(); this.rejectPending(); this.listeners.clear(); }
+  close() { this.closed = true; this.lifetime.abort(); this.ws?.close(); this.rejectPending(); this.listeners.clear(); }
   async forget() { this.close(); await this.ses.clearStorageData(); await this.ses.closeAllConnections(); }
 }

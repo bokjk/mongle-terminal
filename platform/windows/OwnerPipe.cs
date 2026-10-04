@@ -74,12 +74,22 @@ internal static class OwnerPipe
         new Thread(WriteOutput) { IsBackground = true, Name = "owner-output" }.Start();
         try
         {
-            if (Environment.OSVersion.Platform != PlatformID.Win32NT || args.Length < 2 || (args[0] != "server" && args[0] != "client") || (args[0] == "server" ? args.Length != 3 : args.Length != 2))
-                throw new InvalidOperationException("Windows owner IPC requires server/client and a data directory.");
+            if (Environment.OSVersion.Platform != PlatformID.Win32NT || args.Length < 2 || (args[0] != "server" && args[0] != "client" && args[0] != "prepare") || (args[0] == "server" ? args.Length != 3 : args.Length != 2))
+                throw new InvalidOperationException("Windows owner IPC requires server/client/prepare and a data directory.");
             if (args[0] == "server" && (!Int32.TryParse(args[2], out ParentPid) || ParentPid <= 0)) throw new SecurityException("Owner host parent identity is required.");
             string dataDir = Path.GetFullPath(args[1]).TrimEnd(Path.DirectorySeparatorChar);
             if (dataDir.Length < 4) throw new SecurityException("A dedicated data directory is required.");
             RejectReparsePoints(dataDir);
+            if (args[0] == "prepare")
+            {
+                // Electron must prepare the parent before Chromium creates its
+                // profile with an elevated token's default Administrators owner.
+                // This path never reads secrets, takes a host lock or starts IPC.
+                ProtectDirectory(dataDir);
+                Console.WriteLine("{\"kind\":\"prepared\"}");
+                Console.Out.Flush();
+                return 0;
+            }
             if (args[0] == "client" && (!Directory.Exists(dataDir) || !File.Exists(Path.Combine(dataDir, "owner.secret"))))
                 throw new OwnerException("NO_HOST", "No local owner host has been initialized.");
             if (args[0] == "server") ProtectDirectory(dataDir);

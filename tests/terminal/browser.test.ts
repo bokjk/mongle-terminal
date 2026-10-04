@@ -11,6 +11,167 @@ const chrome = process.platform === 'win32' && existsSync('C:/Program Files/Goog
 
 const browserOptions = { skip: chrome ? false : 'Requires installed Windows Chrome for the real DOM check.', timeout: 30000 };
 
+for (const direction of ['forward', 'reverse'] as const) {
+  test(`real Chrome: active ${direction} selection keeps its anchor across output frames`, browserOptions,
+    async () => withTerminalBrowser(async (page, engine) => {
+      await engine.write('abcdefghijklmnopqrstuvwxyz\r\noutput');
+      await page.evaluate(async snapshot => {
+        const h = (window as any).mongleTerminalTest;
+        await h.adapter.applySnapshot(snapshot);
+        h.adapter.setInputEnabled(true);
+      }, await engine.snapshot());
+      const cell = await terminalCellGeometry(page);
+      const anchor = direction === 'forward' ? 2 : 12;
+      const midpoint = direction === 'forward' ? 5 : 8;
+      const endpoint = direction === 'forward' ? 12 : 2;
+      await page.mouse.move(cell.x + (anchor + 0.1) * cell.width, cell.y);
+      await page.mouse.down();
+      await page.mouse.move(cell.x + (midpoint + 0.1) * cell.width, cell.y);
+      assert.equal(await page.evaluate(() => (window as any).mongleTerminalTest.terminal.getSelection()),
+        direction === 'forward' ? 'cde' : 'ijkl');
+      await engine.write(' continues');
+      await page.evaluate(async snapshot => {
+        await (window as any).mongleTerminalTest.adapter.applySnapshot(snapshot);
+      }, await engine.snapshot());
+      await page.mouse.move(cell.x + (endpoint + 0.1) * cell.width, cell.y);
+      await page.mouse.up();
+      assert.deepEqual(await page.evaluate(() => {
+        const h = (window as any).mongleTerminalTest;
+        return { selected: h.terminal.getSelection(), inputs: h.inputs };
+      }), { selected: 'cdefghijkl', inputs: [] }, 'output cannot end the drag or change its original anchor');
+    }));
+}
+
+test('real Chrome: selection movement and release during a pending frame finish once without sticking', browserOptions,
+  async () => withTerminalBrowser(async (page, engine) => {
+    await engine.write('abcdefghijklmnopqrstuvwxyz\r\noutput');
+    await page.evaluate(async snapshot => {
+      const h = (window as any).mongleTerminalTest;
+      await h.adapter.applySnapshot(snapshot);
+      h.adapter.setInputEnabled(true);
+    }, await engine.snapshot());
+    const cell = await terminalCellGeometry(page);
+    await page.mouse.move(cell.x + 2.1 * cell.width, cell.y);
+    await page.mouse.down();
+    await page.mouse.move(cell.x + 5.1 * cell.width, cell.y);
+    await engine.write(' continues');
+    const finishFrame = await pauseFrameCompletion(page, await engine.snapshot());
+    await page.mouse.move(cell.x + 12.1 * cell.width, cell.y);
+    await page.mouse.up();
+    await finishFrame();
+    assert.equal(await page.evaluate(() => (window as any).mongleTerminalTest.terminal.getSelection()), 'cdefghijkl');
+    await page.mouse.move(cell.x + 20.1 * cell.width, cell.y);
+    assert.deepEqual(await page.evaluate(() => {
+      const h = (window as any).mongleTerminalTest;
+      return { selected: h.terminal.getSelection(), inputs: h.inputs };
+    }), { selected: 'cdefghijkl', inputs: [] }, 'mouseup during parsing must not leave a drag listener active');
+  }));
+
+test('real Chrome: typing during a pending frame cancels old selection without swallowing the key', browserOptions,
+  async () => withTerminalBrowser(async (page, engine) => {
+    await engine.write('abcdefghijklmnopqrstuvwxyz\r\noutput');
+    await page.evaluate(async snapshot => {
+      const h = (window as any).mongleTerminalTest;
+      await h.adapter.applySnapshot(snapshot);
+      h.adapter.setInputEnabled(true);
+      h.terminal.focus();
+    }, await engine.snapshot());
+    const cell = await terminalCellGeometry(page);
+    await page.mouse.move(cell.x + 2.1 * cell.width, cell.y);
+    await page.mouse.down();
+    await page.mouse.move(cell.x + 5.1 * cell.width, cell.y);
+    await engine.write(' continues');
+    const finishFrame = await pauseFrameCompletion(page, await engine.snapshot());
+    await page.keyboard.press('x');
+    await finishFrame();
+    await page.mouse.move(cell.x + 12.1 * cell.width, cell.y);
+    await page.mouse.up();
+    assert.deepEqual(await page.evaluate(() => {
+      const h = (window as any).mongleTerminalTest;
+      return { selected: h.terminal.getSelection(), inputs: h.inputs };
+    }), { selected: '', inputs: [['x', 'utf8']] }, 'a frame must not resurrect selection cleared by deliberate typing');
+  }));
+
+test('real Chrome: a new mouse selection during a pending frame replaces the previous drag', browserOptions,
+  async () => withTerminalBrowser(async (page, engine) => {
+    await engine.write('abcdefghijklmnopqrstuvwxyz\r\noutput');
+    await page.evaluate(async snapshot => {
+      const h = (window as any).mongleTerminalTest;
+      await h.adapter.applySnapshot(snapshot);
+      h.adapter.setInputEnabled(true);
+    }, await engine.snapshot());
+    const cell = await terminalCellGeometry(page);
+    await page.mouse.move(cell.x + 2.1 * cell.width, cell.y);
+    await page.mouse.down();
+    await page.mouse.move(cell.x + 5.1 * cell.width, cell.y);
+    await engine.write(' continues');
+    const finishFrame = await pauseFrameCompletion(page, await engine.snapshot());
+    await page.mouse.up();
+    await page.mouse.move(cell.x + 15.1 * cell.width, cell.y);
+    await page.mouse.down();
+    await page.mouse.move(cell.x + 20.1 * cell.width, cell.y);
+    assert.equal(await page.evaluate(() => (window as any).mongleTerminalTest.terminal.getSelection()), 'pqrst');
+    await finishFrame();
+    await page.mouse.move(cell.x + 23.1 * cell.width, cell.y);
+    await page.mouse.up();
+    assert.deepEqual(await page.evaluate(() => {
+      const h = (window as any).mongleTerminalTest;
+      return { selected: h.terminal.getSelection(), inputs: h.inputs };
+    }), { selected: 'pqrstuvw', inputs: [] }, 'restoring an older gesture cannot overwrite a new mouse selection');
+  }));
+
+test('real Chrome: changed text cancels an active selection instead of moving it to replacement output', browserOptions,
+  async () => withTerminalBrowser(async (page, engine) => {
+    await engine.write('abcdefghijklmnopqrstuvwxyz');
+    await page.evaluate(async snapshot => {
+      const h = (window as any).mongleTerminalTest;
+      await h.adapter.applySnapshot(snapshot);
+      h.adapter.setInputEnabled(true);
+    }, await engine.snapshot());
+    const cell = await terminalCellGeometry(page);
+    await page.mouse.move(cell.x + 2.1 * cell.width, cell.y);
+    await page.mouse.down();
+    await page.mouse.move(cell.x + 5.1 * cell.width, cell.y);
+    await engine.write('\rABCDEFGHIJKLMNOPQRSTUVWXYZ');
+    await page.evaluate(async snapshot => {
+      await (window as any).mongleTerminalTest.adapter.applySnapshot(snapshot);
+    }, await engine.snapshot());
+    await page.mouse.move(cell.x + 12.1 * cell.width, cell.y);
+    await page.mouse.up();
+    assert.deepEqual(await page.evaluate(() => {
+      const h = (window as any).mongleTerminalTest;
+      return { selected: h.terminal.getSelection(), inputs: h.inputs };
+    }), { selected: '', inputs: [] });
+  }));
+
+async function terminalCellGeometry(page: Page) {
+  const rect = await page.locator('.xterm-screen').boundingBox();
+  assert.ok(rect);
+  return { x: rect.x, y: rect.y + rect.height / 16, width: rect.width / 40 };
+}
+
+/** Hold the write callback after parsing, so input races do not depend on timing. */
+async function pauseFrameCompletion(page: Page, snapshot: Awaited<ReturnType<TerminalEngine['snapshot']>>) {
+  await page.evaluate(frame => {
+    const h = (window as any).mongleTerminalTest;
+    const original = h.terminal.write;
+    h.terminal.write = (data: string, done: () => void) => original.call(h.terminal, data, () => {
+      h.finishFrameWrite = () => { h.terminal.write = original; done(); };
+    });
+    h.heldFrame = h.adapter.applySnapshot(frame);
+  }, snapshot);
+  await page.waitForFunction(() => typeof (window as any).mongleTerminalTest.finishFrameWrite === 'function');
+  return async () => {
+    await page.evaluate(async () => {
+      const h = (window as any).mongleTerminalTest;
+      h.finishFrameWrite();
+      await h.heldFrame;
+      delete h.finishFrameWrite;
+      delete h.heldFrame;
+    });
+  };
+}
+
 test('real Chrome: composing Korean commits before one modified Enter and never replays after gate loss',browserOptions,async()=>withTerminalBrowser(async(page,engine)=>{
   await engine.write('\x1b[?9001h');
   await page.evaluate(async snapshot=>{const h=(window as any).mongleTerminalTest;await h.adapter.applySnapshot(snapshot);h.adapter.setInputEnabled(true);h.terminal.focus();},await engine.snapshot());

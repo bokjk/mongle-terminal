@@ -68,6 +68,23 @@ jobs:
         run: npx.cmd tsx --test --test-concurrency=1 tests/**/*.test.ts
       - name: Build and package without publishing
         run: npm.cmd run package
+      - name: Verify packaged native Windows clipboard and update bridge
+        shell: pwsh
+        run: |
+          $env:MONGLE_E2E_DATA_ROOT = Join-Path $env:TEMP 'mongle-clipboard-release'
+          $env:MONGLE_E2E_EXE = Join-Path $env:GITHUB_WORKSPACE 'release\win-unpacked\MongleTerminal.exe'
+          $env:MONGLE_E2E_CLIPBOARD = '1'
+          $env:MONGLE_E2E_UPDATE_DESKTOP = '1'
+          node --import tsx --test --test-concurrency=1 tests/e2e/clipboard.test.ts tests/e2e/update-desktop.test.ts
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Preserve packaged clipboard result
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: packaged-native-clipboard-result
+          if-no-files-found: ignore
+          retention-days: 14
+          path: test-results/e2e/clipboard/result.json
       - name: Recheck release documents after packaging
         shell: pwsh
         run: node --import tsx scripts/release-check.ts "$env:RELEASE_TAG"

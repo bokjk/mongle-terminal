@@ -4,11 +4,11 @@ import { createServer } from 'node:http';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { build } from 'esbuild';
-import { chromium } from '@playwright/test';
+import { chromium, expect } from '@playwright/test';
 
 const chrome = process.platform === 'win32' && existsSync('C:/Program Files/Google/Chrome/Application/chrome.exe');
 
-test('settings UI downloads JSON, validates and confirms empty-group import, and confirms device logout', { skip: chrome ? false : 'Requires installed Windows Chrome.', timeout: 30000 }, async () => {
+test('settings UI downloads/imports JSON, copies remote connection details and confirms device logout', { skip: chrome ? false : 'Requires installed Windows Chrome.', timeout: 30000 }, async () => {
   const config = { version: 1, name: '집 컴퓨터', recordHistory: true, groups: [{ name: '몽글', cwd: 'C:\\Projects', profileId: 'powershell' }] };
   const source = `
     import React from 'react';
@@ -17,7 +17,20 @@ test('settings UI downloads JSON, validates and confirms empty-group import, and
     const config=${JSON.stringify(config)};
     const state={hostId:'host',bootId:'boot',name:'현재 컴퓨터',version:'0.1.0',protocolVersion:1,groups:[],terminals:[],profiles:[],settings:{name:'현재 컴퓨터',recordHistory:true,scrollback:5000}};
     window.calls=[];window.errors=[];window.settingsClosed=false;
-    const client={request:async(method,params)=>{window.calls.push({method,params}); if(method==='settings.export')return config;if(method==='settings.import')return {importedGroups:params.config.groups.length,warnings:['폴더를 기본값으로 변경했습니다.']};if(method==='auth.logout')return {ok:true};throw Error('Unexpected RPC: '+method);}};
+    window.nativeCopies=[];window.browserCopies=[];window.failNativeCopy=false;window.browserCopyAllowed=false;
+    window.mongle={writeClipboard:async value=>{window.nativeCopies.push(value);if(window.failNativeCopy)throw Error("Error invoking remote method 'mongle:clipboard-write': Error: 네이티브 클립보드 쓰기 실패");}};
+    Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async value=>{window.browserCopies.push(value);if(!window.browserCopyAllowed)throw Error('브라우저 클립보드 권한 없음');}}});
+    const client={request:async(method,params)=>{
+      window.calls.push({method,params});
+      if(method==='settings.export')return config;
+      if(method==='settings.import')return {importedGroups:params.config.groups.length,warnings:['폴더를 기본값으로 변경했습니다.']};
+      if(method==='auth.logout')return {ok:true};
+      if(method==='remote.status')return {enabled:true,origin:'https://clipboard-test.example.ts.net'};
+      if(method==='devices.list')return {devices:[]};
+      if(method==='pairing.list')return {requests:[]};
+      if(method==='pairing.create')return {code:'TEST-CODE',expiresAt:Date.now()+60000};
+      throw Error('Unexpected RPC: '+method);
+    }};
     const root=createRoot(document.getElementById('root'));
     window.render=owner=>root.render(<Settings client={client} state={state} owner={owner} theme='dark' fontSize={14} onTheme={()=>{}} onFontSize={()=>{}} onClose={()=>{window.settingsClosed=true}} onError={message=>window.errors.push(message)} />);
     window.render(true);
@@ -63,6 +76,36 @@ test('settings UI downloads JSON, validates and confirms empty-group import, and
     assert.deepEqual(imports, [{ method: 'settings.import', params: { config, confirmed: true } }]);
     assert.equal(await page.evaluate('window.calls.some(call => call.method.startsWith("terminal."))'), false);
 
+    await page.getByRole('tab', { name: '원격 연결', exact: true }).click();
+    const copied = page.getByRole('status').filter({ hasText: '복사했습니다.' });
+    await page.getByRole('button', { name: '접속 주소 복사', exact: true }).click();
+    await expect(copied).toBeVisible();
+    await page.getByRole('button', { name: '연결 코드 만들기', exact: true }).click();
+    await page.getByRole('button', { name: '연결 코드 복사', exact: true }).click();
+    await expect(copied).toBeVisible();
+    assert.deepEqual(await page.evaluate('window.nativeCopies'), ['https://clipboard-test.example.ts.net', 'TEST-CODE']);
+    assert.deepEqual(await page.evaluate('window.browserCopies'), [], 'The desktop must not request denied browser clipboard permission');
+    await page.evaluate('window.failNativeCopy=true');
+    await page.getByRole('button', { name: '연결 코드 복사', exact: true }).click();
+    await expect(page.getByRole('alert')).toHaveText('복사하지 못했습니다. 주소나 코드를 직접 선택해 복사해 주세요.');
+    await expect(copied).toHaveCount(0);
+    assert.deepEqual(await page.evaluate('window.nativeCopies'), ['https://clipboard-test.example.ts.net', 'TEST-CODE', 'TEST-CODE']);
+    assert.deepEqual(await page.evaluate('window.browserCopies'), [], 'A failed native copy must not fall through to another write');
+
+    await page.evaluate('window.mongle=undefined;window.browserCopyAllowed=true');
+    await page.getByRole('button', { name: '접속 주소 복사', exact: true }).click();
+    await expect(copied).toBeVisible();
+    assert.deepEqual(await page.evaluate('window.browserCopies'), ['https://clipboard-test.example.ts.net']);
+    await page.evaluate('window.browserCopyAllowed=false');
+    await page.getByRole('button', { name: '연결 코드 복사', exact: true }).click();
+    await expect(page.getByRole('alert')).toHaveText('복사하지 못했습니다. 주소나 코드를 직접 선택해 복사해 주세요.');
+    await expect(copied).toHaveCount(0);
+    assert.deepEqual(await page.evaluate('window.browserCopies'), ['https://clipboard-test.example.ts.net', 'TEST-CODE']);
+    await page.evaluate("Object.defineProperty(navigator,'clipboard',{configurable:true,value:undefined})");
+    await page.getByRole('button', { name: '연결 코드 복사', exact: true }).click();
+    await expect(page.getByRole('alert')).toHaveText('이 환경에서는 복사를 지원하지 않습니다. 주소나 코드를 직접 선택해 복사해 주세요.');
+    assert.equal(await page.evaluate('window.calls.some(call => /^remote\\.(enable|disable|configure)$/.test(call.method))'), false, 'Copying connection details does not change remote access');
+
     await page.evaluate('window.render(false)');
     await page.getByRole('tab', { name: '원격 연결', exact: true }).click();
     await page.getByRole('button', { name: '이 기기 연결 해제', exact: true }).click();
@@ -70,7 +113,7 @@ test('settings UI downloads JSON, validates and confirms empty-group import, and
     await page.getByRole('button', { name: '접속 권한 해제', exact: true }).click();
     await page.waitForFunction('window.settingsClosed === true');
     assert.equal(await page.evaluate('window.calls.filter(call => call.method === "auth.logout").length'), 1);
-    assert.equal(await page.evaluate('window.errors.length'), 3, 'Rejected import files must report their error');
+    assert.equal(await page.evaluate('window.errors.length'), 6, 'Rejected import files, failed clipboard writes and unavailable clipboard must report their error');
   } finally {
     await browser.close();
     await new Promise<void>(resolve => server.close(() => resolve()));
