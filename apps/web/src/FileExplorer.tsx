@@ -62,7 +62,8 @@ function ExplorerContent({ client, reference, title, reported, gitSupported, vie
   }
   function refresh() { sequence.current++; previewRequest.current?.abort(); setPreview(undefined); setSelected(''); setError(''); setBusy(false); setRevision(value => value + 1); }
   function openChange(change: GitChange) {
-    if (!change.untracked && (change.worktree === 'D' || change.index === 'D')) { sequence.current++; previewRequest.current?.abort(); setSelected(change.path); setPreview(undefined); setBusy(false); setError('삭제된 파일입니다. 작업 폴더에 미리 볼 내용이 없습니다.'); if (onOpenFile) onError('삭제된 파일입니다. 작업 폴더에 열 내용이 없습니다.'); return; }
+    const recreated = changes.some(item => item.path === change.path && item.untracked);
+    if (!change.untracked && !recreated && (change.worktree === 'D' || change.index === 'D')) { sequence.current++; previewRequest.current?.abort(); setSelected(change.path); setPreview(undefined); setBusy(false); setError('삭제된 파일입니다. 작업 폴더에 미리 볼 내용이 없습니다.'); if (onOpenFile) onError('삭제된 파일입니다. 작업 폴더에 열 내용이 없습니다.'); return; }
     void openFile({ name: change.path.split('/').pop()!, path: change.path, kind: 'file' });
   }
   async function copy(value: string) {

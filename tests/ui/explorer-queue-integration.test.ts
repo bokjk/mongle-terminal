@@ -67,6 +67,8 @@ test('actual App explorer cancels obsolete queued reads while preserving the two
     return page;
   };
   const explorer = (page: Page) => page.getByRole('complementary', { name: '파일 탐색기' });
+  const editor = (page: Page) => page.getByRole('region', { name: '파일 편집기', exact: true });
+  const content = (page: Page) => editor(page).locator('.document-body:not([hidden]) .cm-content');
   const click = (page: Page, name: string) => explorer(page).getByRole('button', { name, exact: true }).click();
   const release = async (page: Page, path: string, id?: string) => { await page.evaluate(({ path, id }) => (window as any).fixture.release(path, id), { path, id }); await settle(page); };
   const calls = (page: Page) => page.evaluate(() => (window as any).fixture.calls) as Promise<Array<{ method: string; params: { id: string; path?: string; root: string } }>>;
@@ -89,29 +91,39 @@ test('actual App explorer cancels obsolete queued reads while preserving the two
       await release(page, 'second');
       assert.ok(!(await calls(page)).some(call => call.params.path === 'obsolete'));
       await click(page, 'latest.txt'); await release(page, 'latest.txt');
-      await expect(explorer(page).locator('pre')).toContainText('latest.txt');
+      await expect(content(page)).toContainText('latest.txt');
       await verifyBudget(page);
     });
-    await t.test('the last file selection overtakes obsolete queued previews and ignores late in-flight replies', async () => {
+    await t.test('independent file tabs share the read budget and late replies never replace the selected tab', async () => {
       const page = await open();
       await click(page, 'first.txt'); await click(page, 'second.txt');
       await page.waitForFunction(() => (window as any).fixture.active === 2);
       await click(page, 'obsolete.txt'); await click(page, 'latest.txt');
       await release(page, 'first.txt');
+      await release(page, 'obsolete.txt');
       await page.waitForFunction(() => (window as any).fixture.held.some((item: any) => item.params.path === 'latest.txt'));
       await release(page, 'latest.txt');
-      await expect(explorer(page).locator('pre')).toContainText('latest.txt');
+      await expect(content(page)).toContainText('latest.txt');
       await release(page, 'second.txt');
-      await expect(explorer(page).locator('pre')).toContainText('latest.txt');
-      assert.ok(!(await calls(page)).some(call => call.params.path === 'obsolete.txt'));
+      await expect(content(page)).toContainText('latest.txt');
+      for (const name of ['first.txt', 'second.txt', 'obsolete.txt']) {
+        await editor(page).getByRole('tab', { name, exact: true }).click();
+        await expect(content(page)).toContainText(name);
+      }
+      assert.equal((await calls(page)).filter(call => call.method === 'files.preview').length, 4, 'Switching tabs reuses their loaded documents');
       await verifyBudget(page);
     });
-    await t.test('closing a queued preview cancels its read without later reopening the preview', async () => {
+    await t.test('hiding the editor preserves its queued document without reopening the panel on completion', async () => {
       const page = await open(); await blockBoth(page);
-      await click(page, 'obsolete.txt'); await click(page, '미리보기 닫기');
-      await release(page, 'first'); await release(page, 'second');
-      await expect(explorer(page).getByRole('region', { name: '파일 미리보기' })).toHaveCount(0);
-      assert.ok(!(await calls(page)).some(call => call.params.path === 'obsolete.txt'));
+      await click(page, 'obsolete.txt');
+      await editor(page).getByRole('button', { name: '편집기 숨기기', exact: true }).click();
+      await release(page, 'first'); await release(page, 'obsolete.txt'); await release(page, 'second');
+      await expect(editor(page)).toHaveCount(0);
+      await click(page, 'obsolete.txt');
+      await expect(content(page)).toContainText('obsolete.txt');
+      await editor(page).getByRole('button', { name: 'obsolete.txt 닫기', exact: true }).click();
+      await expect(editor(page)).toHaveCount(0);
+      assert.equal((await calls(page)).filter(call => call.params.path === 'obsolete.txt').length, 1);
       await verifyBudget(page);
     });
     await t.test('a briefly selected terminal cancels both its queued root listing and Git status', async () => {
@@ -136,14 +148,17 @@ test('actual App explorer cancels obsolete queued reads while preserving the two
       assert.equal(await page.evaluate(() => (window as any).fixture.active), 2);
       assert.equal(await explorer(page).getByRole('button', { name: 'latest.txt', exact: true }).count(), 0, 'Reopened reads must wait for a real slot');
       await release(page, 'first', 'a');
+      await release(page, 'obsolete.txt', 'a');
       await expect(explorer(page).getByRole('button', { name: 'latest.txt', exact: true })).toBeVisible();
       await click(page, 'latest.txt'); await release(page, 'latest.txt', 'a');
       await release(page, 'second', 'a');
-      await expect(explorer(page).locator('pre')).toContainText('latest.txt');
-      assert.ok(!(await calls(page)).some(call => call.params.path === 'obsolete' || call.params.path === 'obsolete.txt'));
+      await expect(content(page)).toContainText('latest.txt');
+      assert.ok(!(await calls(page)).some(call => call.params.path === 'obsolete'));
+      await editor(page).getByRole('tab', { name: 'obsolete.txt', exact: true }).click();
+      await expect(content(page)).toContainText('obsolete.txt');
       await verifyBudget(page);
     });
-    for (const transition of ['terminal', 'cwd'] as const) await t.test(`${transition} change removes the old tree and preview queue before loading the new scope`, async () => {
+    for (const transition of ['terminal', 'cwd'] as const) await t.test(`${transition} change cancels the old tree queue while preserving independent document tabs`, async () => {
       const page = await open(); await blockBoth(page);
       await click(page, 'obsolete'); await click(page, 'obsolete.txt');
       const oldRoot = await explorer(page).locator('.file-root').innerText();
@@ -152,14 +167,18 @@ test('actual App explorer cancels obsolete queued reads while preserving the two
       await expect(explorer(page).locator('.file-root')).not.toHaveText(oldRoot);
       assert.equal(await page.evaluate(() => (window as any).fixture.active), 2);
       await release(page, 'first', 'a');
+      await release(page, 'obsolete.txt', 'a');
       await expect(explorer(page).getByRole('button', { name: 'latest.txt', exact: true })).toBeVisible();
       await click(page, 'latest.txt');
       await release(page, 'latest.txt', transition === 'terminal' ? 'b' : 'a');
-      const latest = await explorer(page).locator('pre').innerText();
+      await expect(content(page)).toContainText('latest.txt');
+      const latest = await content(page).innerText();
       assert.ok(latest.includes(await explorer(page).locator('.file-root').innerText()));
       await release(page, 'second', 'a');
-      await expect(explorer(page).locator('pre')).toHaveText(latest);
-      assert.ok(!(await calls(page)).some(call => call.params.path === 'obsolete' || call.params.path === 'obsolete.txt'));
+      await expect(content(page)).toHaveText(latest);
+      assert.ok(!(await calls(page)).some(call => call.params.path === 'obsolete'));
+      await editor(page).getByRole('tab', { name: 'obsolete.txt', exact: true }).click();
+      await expect(content(page)).toContainText(oldRoot);
       await expect(explorer(page).getByRole('button', { name: 'first-child.txt', exact: true })).toHaveCount(0);
       await expect(explorer(page).getByRole('button', { name: 'second-child.txt', exact: true })).toHaveCount(0);
       await verifyBudget(page);

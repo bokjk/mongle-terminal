@@ -13,7 +13,9 @@ test('obsolete queued explorer reads never delay a newly selected folder or exce
       return new Promise<T>(resolve => finish.push(() => { active--; resolve(method as T); }));
     }, subscribe: () => () => {}, close() {},
   };
-  const client = explorerClient(transport), obsolete = new AbortController();
+  const shared = explorerClient(transport), client = explorerClient(shared), obsolete = new AbortController();
+  assert.equal(client, shared, 'Nested readers must reuse the same queue');
+  assert.equal(explorerClient(transport), shared, 'Reopened readers must reuse the same queue');
   const running = [client.request('first'), client.request('second')];
   const cancelled = Array.from({ length: 6 }, (_, index) => assert.rejects(client.request(`obsolete-${index}`, {}, obsolete.signal), { name: 'AbortError' }));
   await setImmediate();
