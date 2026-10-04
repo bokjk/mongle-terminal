@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Check, ChevronDown, ChevronRight, Folder, FolderOpen, Keyboard, Menu, Monitor, PanelLeftClose, PanelLeftOpen, Plus, RefreshCw, Settings as SettingsIcon, SquareTerminal, Trash2, X, WifiOff } from 'lucide-react';
 import { createClient, type ConnectionInfo, type SavedHost } from '../../../packages/client/index';
 import { APP_VERSION, findLeaf, leafIds, groupRepositoryIds, type LayoutLeaf, type Group, type HostState, type LayoutNode, type TerminalInfo, type ProjectInspection } from '../../../packages/protocol/index';
@@ -7,7 +7,9 @@ import { TerminalPane, type PaneActions } from './TerminalPane';
 import { Settings } from './Settings';
 import { SplitTree } from './SplitTree';
 import { usePaneDrag } from './use-pane-drag';
-import { FileExplorer } from './FileExplorer';
+import { FileExplorer, explorerClient } from './FileExplorer';
+import { useFileDocuments } from './use-file-documents';
+const FileEditorPanel = lazy(() => import('./FileEditorPanel').then(module => ({ default: module.FileEditorPanel })));
 import { HostPicker } from './HostPicker';
 import { WorkspaceHeader } from './WorkspaceHeader';
 import { TerminalTabs } from './TerminalTabs';
@@ -55,6 +57,11 @@ export function App(){
   const hostSelection = useRef(0);
   const notify = useCallback((message:string)=>setToast(message),[]);
   const connected=connection.status==='connected';
+  const [fileClient] = useState(() => explorerClient(client));
+  const fileDocs = useFileDocuments(fileClient, state, connected, connection.connectionId);
+  const [fileMaximized,setFileMaximized] = useState(false);
+  const [fileWidth,setFileWidth] = useState(()=>{const width=preference<unknown>('mongle.editor.width',720);return typeof width==='number'&&Number.isFinite(width)?Math.max(440,Math.min(1200,width)):720;});
+  useEffect(()=>savePreference('mongle.editor.width',fileWidth),[fileWidth]);
   const group=state?.groups.find(g=>g.id===groupId);
   const panelIds=leafIds(group?.layout||null);
   const tabsKey=`mongle.tabs.${state?.hostId}.${groupId}`;
@@ -102,10 +109,10 @@ export function App(){
   useEffect(()=>{if(!toast)return;const timer=setTimeout(()=>setToast(''),6500);return()=>clearTimeout(timer);},[toast]);
   useEffect(()=>{const closeMenus=(event:MouseEvent)=>{const target=event.target as HTMLElement;for(const menu of document.querySelectorAll<HTMLDetailsElement>('details.command-menu[open]')){if(!menu.contains(target)||target.closest('button.menu-item'))menu.open=false;}};document.addEventListener('click',closeMenus);return()=>document.removeEventListener('click',closeMenus);},[]);
   useEffect(()=>{const media=matchMedia('(max-width:700px)');const change=()=>setMobile(media.matches);media.addEventListener('change',change);const viewport=()=>document.documentElement.style.setProperty('--app-height',`${window.visualViewport?.height||window.innerHeight}px`);viewport();window.visualViewport?.addEventListener('resize',viewport);return()=>{media.removeEventListener('change',change);window.visualViewport?.removeEventListener('resize',viewport);};},[]);
-  useEffect(()=>{const key=(e:KeyboardEvent)=>{if(document.querySelector('[role=dialog]'))return;if(e.key==='Escape'){setSidebarOpen(false);setPanelsOpen(false);}if((e.ctrlKey||e.metaKey)&&e.shiftKey&&e.key.toLowerCase()==='n'&&state){e.preventDefault();setEditor({kind:'group'});}if((e.ctrlKey||e.metaKey)&&e.shiftKey&&e.key.toLowerCase()==='t'&&group){e.preventDefault();setEditor({kind:'new-terminal',...(state?.capabilities?.includes('layout.tabs')&&activeId?{tabTarget:activeId}:{})});}};window.addEventListener('keydown',key);return()=>window.removeEventListener('keydown',key);},[group,state,activeId]);
+  useEffect(()=>{const key=(e:KeyboardEvent)=>{if(document.querySelector('[role=dialog],[role=alertdialog]'))return;if(e.key==='Escape'){setSidebarOpen(false);setPanelsOpen(false);}if((e.ctrlKey||e.metaKey)&&e.shiftKey&&e.key.toLowerCase()==='n'&&state){e.preventDefault();setEditor({kind:'group'});}if((e.ctrlKey||e.metaKey)&&e.shiftKey&&e.key.toLowerCase()==='t'&&group){e.preventDefault();setEditor({kind:'new-terminal',...(state?.capabilities?.includes('layout.tabs')&&activeId?{tabTarget:activeId}:{})});}};window.addEventListener('keydown',key);return()=>window.removeEventListener('keydown',key);},[group,state,activeId]);
   useEffect(()=>{
     const key=(event:KeyboardEvent)=>{
-      if(document.querySelector('[role=dialog]')||mobile||editor||settingsOpen||dialog||moving||panelsOpen||event.isComposing||!event.ctrlKey||event.altKey||event.metaKey||event.key!=='Tab')return;
+      if((event.target as HTMLElement)?.closest('.file-editor-panel')||document.querySelector('[role=dialog],[role=alertdialog]')||mobile||editor||settingsOpen||dialog||moving||panelsOpen||event.isComposing||!event.ctrlKey||event.altKey||event.metaKey||event.key!=='Tab')return;
       const ids=leafIds(findLeaf(group?.layout||null,activeId)||null);if(!ids.length)return;
       event.preventDefault();event.stopPropagation();
       if(ids.length<2)return;
@@ -227,11 +234,16 @@ export function App(){
         </div>}
         <div className="workspace-content">
         <div className={`terminal-workspace ${paneDrag.dragging?'pane-dragging':''}`}>{mobile?renderPane(activeId):<SplitTree node={group.layout} renderPane={renderPane} selectedTab={selectedTab} focusedId={maximized} onRatio={(path,ratio)=>void changeLayout(layout=>updateRatio(layout,path,ratio))}/>}</div>
-        {filesOpen&&<>{mobile&&<div className="file-backdrop" onClick={()=>setFilesOpen(false)}/>}<FileExplorer client={client} hostId={state.hostId} bootId={state.bootId} terminal={state.terminals.find(t=>t.id===activeId)} supported={state.capabilities?.includes('files.read')===true} gitSupported={state.capabilities?.includes('git.read')===true} connected={connected} onClose={()=>setFilesOpen(false)} onError={notify}/></>}
+        {(filesOpen||fileDocs.visible)&&<div className={`file-workspace ${fileDocs.visible?'with-editor':''} ${fileDocs.visible&&fileMaximized?'maximized':''}`} style={{'--editor-width':`${fileWidth}px`} as React.CSSProperties}>
+          {fileDocs.visible&&<div className="file-workspace-resizer" role="separator" aria-label="파일 작업 영역 너비" aria-orientation="vertical" aria-valuemin={440} aria-valuemax={1200} aria-valuenow={fileWidth} tabIndex={0} onDoubleClick={()=>setFileWidth(720)} onPointerDown={event=>{if(event.button===0)event.currentTarget.setPointerCapture(event.pointerId);}} onPointerMove={event=>{if(event.currentTarget.hasPointerCapture(event.pointerId))setFileWidth(Math.max(440,Math.min(1200,event.currentTarget.parentElement!.getBoundingClientRect().right-event.clientX)));}} onPointerUp={event=>{if(event.currentTarget.hasPointerCapture(event.pointerId))event.currentTarget.releasePointerCapture(event.pointerId);}} onKeyDown={event=>{if(['ArrowLeft','ArrowRight','Home'].includes(event.key)){event.preventDefault();setFileWidth(width=>event.key==='Home'?720:Math.max(440,Math.min(1200,width+(event.key==='ArrowLeft'?20:-20))));}}}/>}
+          {filesOpen&&<FileExplorer client={fileClient} hostId={state.hostId} bootId={state.bootId} terminal={state.terminals.find(t=>t.id===activeId)} supported={state.capabilities?.includes('files.read')===true} gitSupported={state.capabilities?.includes('git.read')===true} connected={connected} onClose={()=>setFilesOpen(false)} onError={notify} onOpenFile={async(ref,path)=>{await fileDocs.open(ref,path);if(mobile)setFilesOpen(false);}}/>}
+          {fileDocs.visible&&<Suspense fallback={<p className="file-message">편집기를 여는 중…</p>}><FileEditorPanel files={fileDocs} treeOpen={filesOpen} onToggleTree={()=>setFilesOpen(value=>!value)} maximized={fileMaximized} onMaximize={()=>setFileMaximized(value=>!value)} onError={notify}/></Suspense>}
+        </div>}
         </div>
         {mobile&&<div className="mobile-keys" aria-label="터미널 보조 키">{[['Esc','\x1b'],['Tab','\t']].map(([label,key])=><button key={label} className="key-button" onPointerDown={e=>e.preventDefault()} onClick={()=>actions.current.get(activeId)?.key(key)}>{label}</button>)}<button className={`key-button ${ctrl?'latched':''}`} aria-pressed={ctrl} onPointerDown={e=>e.preventDefault()} onClick={()=>setCtrl(!ctrl)}>Ctrl</button><button className={`key-button ${alt?'latched':''}`} aria-pressed={alt} onPointerDown={e=>e.preventDefault()} onClick={()=>setAlt(!alt)}>Alt</button><button className="key-button" onPointerDown={e=>e.preventDefault()} onClick={()=>actions.current.get(activeId)?.key('\x03')}>^C</button>{[[ArrowLeft,'\x1b[D','왼쪽'],[ArrowDown,'\x1b[B','아래'],[ArrowUp,'\x1b[A','위'],[ArrowRight,'\x1b[C','오른쪽']].map(([Icon,key,label])=>{const Component=Icon as typeof ArrowLeft;return <button className="key-button" key={String(label)} aria-label={String(label)} onPointerDown={e=>e.preventDefault()} onClick={()=>actions.current.get(activeId)?.key(String(key))}><Component size={17}/></button>;})}<button className="key-button" aria-label="키보드 열기" onPointerDown={e=>e.preventDefault()} onClick={()=>actions.current.get(activeId)?.focus()}><Keyboard size={18}/></button></div>}
       </>}
-      <footer className="status-bar"><span><span className={`connection-dot ${connected?'connected':'offline'}`}/>{connected?'세션 연결됨':'오프라인'}</span><span>{state?`${state.terminals.filter(t=>t.status==='running').length}개 실행 중`:'연결 대기'}</span><span className="status-right">{connection.owner?'이 컴퓨터':'원격 연결'} · {group?.cwd||'몽글터미널'}</span></footer>
+      {fileDocs.visible&&!group?.layout&&<div className="orphan-file-editor"><Suspense fallback={<p className="file-message">편집기를 여는 중…</p>}><FileEditorPanel files={fileDocs} treeOpen={false} onToggleTree={()=>setFilesOpen(true)} maximized={true} onMaximize={()=>fileDocs.setVisible(false)} onError={notify}/></Suspense></div>}
+      <footer className="status-bar"><span><span className={`connection-dot ${connected?'connected':'offline'}`}/>{connected?'세션 연결됨':'오프라인'}</span><span>{state?`${state.terminals.filter(t=>t.status==='running').length}개 실행 중`:'연결 대기'}</span>{fileDocs.documents.length>0&&<button className="open-files-status" onClick={()=>fileDocs.setVisible(true)}>열린 파일 {fileDocs.documents.length}{fileDocs.unsaved?` · 수정 중 ${fileDocs.unsaved}`:''}</button>}<span className="status-right">{connection.owner?'이 컴퓨터':'원격 연결'} · {group?.cwd||'몽글터미널'}</span></footer>
     </main>
     {settingsOpen&&state&&<Settings client={client} state={state} owner={connection.owner} theme={theme} fontSize={fontSize} onTheme={setTheme} onFontSize={setFontSize} onClose={()=>setSettingsOpen(false)} onError={notify}/>}
     {editor&&<EditorModal key={`${state?.hostId}:${group?.id}:${editor.kind}:${editor.kind==='group'?editor.group?.id:editor.kind==='new-terminal'?editor.tabTarget||editor.splitTarget:''}`} editor={editor} state={state} group={group} activeId={activeId} pickDirectory={connected&&connection.owner&&window.mongle?.selectDirectory?path=>window.mongle!.selectDirectory!(path):undefined} onClose={()=>setEditor(undefined)} onSubmit={async values=>{

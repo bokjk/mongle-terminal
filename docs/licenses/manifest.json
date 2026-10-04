@@ -1,8 +1,328 @@
 {
   "schemaVersion": 1,
-  "lockfileSha256": "4c9c80d049e49aaef447ceca0197592013a33cefa65711f94b50efec3d395018",
-  "productionPackages": 30,
+  "lockfileSha256": "a06ffbc3ab16fd0c1012090971b6497b0a4504dac2d0c3d401905302b6c03678",
+  "productionPackages": 158,
   "notices": [
+    {
+      "name": "@codemirror/autocomplete",
+      "version": "6.20.3",
+      "license": "MIT",
+      "source": "git+https://code.haverbeke.berlin/codemirror/autocomplete.git",
+      "integrity": "sha512-tlosUqb+3BbxCxZdu4tKeRghPFC+QM7q4X5YhKV2eCmPG+1r2F3f4AaSz5sCrFqUtX4Jh20VFTKecl16MgiV9g==",
+      "files": [
+        "licenses/codemirror__autocomplete6.20.3/LICENSE"
+      ]
+    },
+    {
+      "name": "@codemirror/commands",
+      "version": "6.11.1",
+      "license": "MIT",
+      "source": "git+https://code.haverbeke.berlin/codemirror/commands.git",
+      "integrity": "sha512-O/4hG3SC1YwcmQ0d2UVNDs+AsaNWd1iHVxbTeEBuqH+6bExAiPK3iS/BvpY6rZGURALv4ZD3sIgcCmRvw3ehBg==",
+      "files": [
+        "licenses/codemirror__commands6.11.1/LICENSE"
+      ]
+    },
+    {
+      "name": "@codemirror/lang-css",
+      "version": "6.3.1",
+      "license": "MIT",
+      "source": "https://github.com/codemirror/lang-css.git",
+      "integrity": "sha512-kr5fwBGiGtmz6l0LSJIbno9QrifNMUusivHbnA1H6Dmqy4HZFte3UAICix1VuKo0lMPKQr2rqB+0BkKi/S3Ejg==",
+      "files": [
+        "licenses/codemirror__lang-css6.3.1/LICENSE"
+      ]
+    },
+    {
+      "name": "@codemirror/lang-html",
+      "version": "6.4.12",
+      "license": "MIT",
+      "source": "git+https://code.haverbeke.berlin/codemirror/lang-html.git",
+      "integrity": "sha512-pw2ReWKUqSkbvh76RAT4NYxiogRu+PWkR2ukAwO9uOgrm8uipkzjtKKtNpyeAQwHOqxEeSvAXZ6vr3AfyB9y/w==",
+      "files": [
+        "licenses/codemirror__lang-html6.4.12/LICENSE"
+      ]
+    },
+    {
+      "name": "@codemirror/lang-javascript",
+      "version": "6.2.5",
+      "license": "MIT",
+      "source": "git+https://github.com/codemirror/lang-javascript.git",
+      "integrity": "sha512-zD4e5mS+50htS7F+TYjBPsiIFGanfVqg4HyUz6WNFikgOPf2BgKlx+TQedI1w6n/IqRBVBbBWmGFdLB/7uxO4A==",
+      "files": [
+        "licenses/codemirror__lang-javascript6.2.5/LICENSE"
+      ]
+    },
+    {
+      "name": "@codemirror/lang-json",
+      "version": "6.0.2",
+      "license": "MIT",
+      "source": "https://github.com/codemirror/lang-json.git",
+      "integrity": "sha512-x2OtO+AvwEHrEwR0FyyPtfDUiloG3rnVTSZV1W8UteaLL8/MajQd8DpvUb2YVzC+/T18aSDv0H9mu+xw0EStoQ==",
+      "files": [
+        "licenses/codemirror__lang-json6.0.2/LICENSE"
+      ]
+    },
+    {
+      "name": "@codemirror/lang-markdown",
+      "version": "6.5.2",
+      "license": "MIT",
+      "source": "git+https://code.haverbeke.berlin/codemirror/lang-markdown.git",
+      "integrity": "sha512-AwBOdkWYuA//WcM0xO5PfHPUcmz/O2i5o0Nsg1U69SII/loCJlFI1Romd9xp2HYb1kYJRGZotyqRghuHH5n8Kw==",
+      "files": [
+        "licenses/codemirror__lang-markdown6.5.2/LICENSE"
+      ]
+    },
+    {
+      "name": "@codemirror/lang-python",
+      "version": "6.2.1",
+      "license": "MIT",
+      "source": "https://github.com/codemirror/lang-python.git",
+      "integrity": "sha512-IRjC8RUBhn9mGR9ywecNhB51yePWCGgvHfY1lWN/Mrp3cKuHr0isDKia+9HnvhiWNnMpbGhWrkhuWOc09exRyw==",
+      "files": [
+        "licenses/codemirror__lang-python6.2.1/LICENSE"
+      ]
+    },
+    {
+      "name": "@codemirror/language",
+      "version": "6.12.4",
+      "license": "MIT",
+      "source": "git+https://code.haverbeke.berlin/codemirror/language.git",
+      "integrity": "sha512-1q4PaT+o6PbgpkJt4Q8Fv5XJxTy4FUZ4MWETtyiDw3J0Pyr9E2vqcKL+k9wcvjNTIsauxvE7OfmWj3FRPHQ76A==",
+      "files": [
+        "licenses/codemirror__language6.12.4/LICENSE"
+      ]
+    },
+    {
+      "name": "@codemirror/lint",
+      "version": "6.9.7",
+      "license": "MIT",
+      "source": "git+https://code.haverbeke.berlin/codemirror/lint.git",
+      "integrity": "sha512-28/+iWLYxKxsvGYhSYL7zaCZqLz5+FFFDq9tVsvGv9kv8RY4fFAchJ5WX9M3YrrRlTIsECjsXPqeNgnSmNP2dg==",
+      "files": [
+        "licenses/codemirror__lint6.9.7/LICENSE"
+      ]
+    },
+    {
+      "name": "@codemirror/search",
+      "version": "6.7.2",
+      "license": "MIT",
+      "source": "git+https://code.haverbeke.berlin/codemirror/search.git",
+      "integrity": "sha512-gUYkYhT2+n/+VGZ+8EzE5WFkYZUZYm1VOKDudIsNqh42uRVQJ0a6Yss9sdKT3MeOYfuL1N6AZA57oza0Oyr0LA==",
+      "files": [
+        "licenses/codemirror__search6.7.2/LICENSE"
+      ]
+    },
+    {
+      "name": "@codemirror/state",
+      "version": "6.7.6",
+      "license": "MIT",
+      "source": "git+https://code.haverbeke.berlin/codemirror/state.git",
+      "integrity": "sha512-kAz+AncRtKuIknedxT1bq4XwXv4UowhbkHU1myPrtVb/jZtImWuV5BXzv5vK6i3kYACsdiZiQKFQQ5Mq7elW8w==",
+      "files": [
+        "licenses/codemirror__state6.7.6/LICENSE"
+      ]
+    },
+    {
+      "name": "@codemirror/view",
+      "version": "6.43.13",
+      "license": "MIT",
+      "source": "git+https://code.haverbeke.berlin/codemirror/view.git",
+      "integrity": "sha512-sihaFrUzAsYBQsL9J2t69y8nfMQGwcYmggAZsk+kjPbjYZMyuf2hU8tUNTZ+P+isb6XRr8JE22TZlJxBoVdH1A==",
+      "files": [
+        "licenses/codemirror__view6.43.13/LICENSE"
+      ]
+    },
+    {
+      "name": "@lezer/common",
+      "version": "1.5.3",
+      "license": "MIT",
+      "source": "git+https://code.haverbeke.berlin/lezer/common.git",
+      "integrity": "sha512-H0iErY4e43LpXbYDyBci5W4v/RwTgGV3YzYOlJPiGZ8RY8w51kVE+xLn1tg3Z6UmSfyETvtsUK3r7YsgDQEI7Q==",
+      "files": [
+        "licenses/lezer__common1.5.3/LICENSE"
+      ]
+    },
+    {
+      "name": "@lezer/css",
+      "version": "1.3.8",
+      "license": "MIT",
+      "source": "git+https://code.haverbeke.berlin/lezer/css.git",
+      "integrity": "sha512-EJn1zcL9qoDptief6ipWKZKLiOpXkxSe0+t8CH9oiMVcZlq7NBWrjCqnc/41EIjeo/ITj1gFFiATdTkaJDL+Og==",
+      "files": [
+        "licenses/lezer__css1.3.8/LICENSE"
+      ]
+    },
+    {
+      "name": "@lezer/highlight",
+      "version": "1.2.5",
+      "license": "MIT",
+      "source": "git+https://code.haverbeke.berlin/lezer/highlight.git",
+      "integrity": "sha512-O1GMVKgtf5YspFaRzpmqkVgMtIk2HG9uMAbH6wdAIdNh3TVzCsch/+cRi+6l2//UGDKe6NB9BW3cvuR5ezMQ0w==",
+      "files": [
+        "licenses/lezer__highlight1.2.5/LICENSE"
+      ]
+    },
+    {
+      "name": "@lezer/html",
+      "version": "1.3.13",
+      "license": "MIT",
+      "source": "https://github.com/lezer-parser/html.git",
+      "integrity": "sha512-oI7n6NJml729m7pjm9lvLvmXbdoMoi2f+1pwSDJkl9d68zGr7a9Btz8NdHTGQZtW2DA25ybeuv/SyDb9D5tseg==",
+      "files": [
+        "licenses/lezer__html1.3.13/LICENSE"
+      ]
+    },
+    {
+      "name": "@lezer/javascript",
+      "version": "1.5.6",
+      "license": "MIT",
+      "source": "git+https://code.haverbeke.berlin/lezer/javascript.git",
+      "integrity": "sha512-sEvOqpl4vJQca0NugSQK02vQPbc5KrvoojnYGoqqFgFO0MtcYhwGiHKVEB+LuXYJnfyXo4QPA8ztbrEa4Fw5NA==",
+      "files": [
+        "licenses/lezer__javascript1.5.6/LICENSE"
+      ]
+    },
+    {
+      "name": "@lezer/json",
+      "version": "1.0.3",
+      "license": "MIT",
+      "source": "https://github.com/lezer-parser/json.git",
+      "integrity": "sha512-BP9KzdF9Y35PDpv04r0VeSTKDeox5vVr3efE7eBbx3r4s3oNLfunchejZhjArmeieBH+nVOpgIiBJpEAv8ilqQ==",
+      "files": [
+        "licenses/lezer__json1.0.3/LICENSE"
+      ]
+    },
+    {
+      "name": "@lezer/lr",
+      "version": "1.4.10",
+      "license": "MIT",
+      "source": "git+https://code.haverbeke.berlin/lezer/lr.git",
+      "integrity": "sha512-rnCpTIBafOx4mRp43xOxDJbFipJm/c0cia/V5TiGlhmMa+wsSdoGmUN3w5Bqrks/09Q/D4tNAmWaT8p6NRi77A==",
+      "files": [
+        "licenses/lezer__lr1.4.10/LICENSE"
+      ]
+    },
+    {
+      "name": "@lezer/markdown",
+      "version": "1.7.2",
+      "license": "MIT",
+      "source": "git+https://code.haverbeke.berlin/lezer/markdown.git",
+      "integrity": "sha512-iTkYvoVcKt3WkeL7qUDyXHONZEwLio4wj8KTNi2dnjQEXBZKMV63BpQrPqfsM+OkvuRbiSTAcycYAsQzLhRNoQ==",
+      "files": [
+        "licenses/lezer__markdown1.7.2/LICENSE"
+      ]
+    },
+    {
+      "name": "@lezer/python",
+      "version": "1.1.19",
+      "license": "MIT",
+      "source": "git+https://code.haverbeke.berlin/lezer/python.git",
+      "integrity": "sha512-MhQIURHRytsNzP/YXnqpYKW6la6voAH3kyplTOOiCdjyFY6cWWGFVmYVdHIPrElqSDf4iCDktQCockB9FxuhzQ==",
+      "files": [
+        "licenses/lezer__python1.1.19/LICENSE"
+      ]
+    },
+    {
+      "name": "@marijn/find-cluster-break",
+      "version": "1.0.4",
+      "license": "MIT",
+      "source": "git+https://code.haverbeke.berlin/marijn/find-cluster-break.git",
+      "integrity": "sha512-Wy0V7+SGUjnF9/TkiM1hKVDPj7jKXduPNboMVtHTA8dySMURWqfg/JZ9E2Sq8JgSJmkl7k7Qe9FLeMSrSraWmQ==",
+      "files": [
+        "licenses/marijn__find-cluster-break1.0.4/LICENSE"
+      ]
+    },
+    {
+      "name": "@types/debug",
+      "version": "4.1.13",
+      "license": "MIT",
+      "source": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
+      "integrity": "sha512-KSVgmQmzMwPlmtljOomayoR89W4FynCAi3E8PPs7vmDVPe84hT+vGPKkJfThkmXs0x0jAaa9U8uW8bbfyS2fWw==",
+      "files": [
+        "licenses/types__debug4.1.13/LICENSE"
+      ]
+    },
+    {
+      "name": "@types/estree",
+      "version": "1.0.9",
+      "license": "MIT",
+      "source": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
+      "integrity": "sha512-GhdPgy1el4/ImP05X05Uw4cw2/M93BCUmnEvWZNStlCzEKME4Fkk+YpoA5OiHNQmoS7Cafb8Xa3Pya8m1Qrzeg==",
+      "files": [
+        "licenses/types__estree1.0.9/LICENSE"
+      ]
+    },
+    {
+      "name": "@types/estree-jsx",
+      "version": "1.0.5",
+      "license": "MIT",
+      "source": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
+      "integrity": "sha512-52CcUVNFyfb1A2ALocQw/Dd1BQFNmSdkuC3BkZ6iqhdMfQz7JWOFRuJFloOzjk+6WijU56m9oKXFAXc7o3Towg==",
+      "files": [
+        "licenses/types__estree-jsx1.0.5/LICENSE"
+      ]
+    },
+    {
+      "name": "@types/hast",
+      "version": "3.0.5",
+      "license": "MIT",
+      "source": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
+      "integrity": "sha512-rp/ezSWaD1m44dPKICGhiskI13nVr7qTloFwDa/IYkhhf5nzwP+zIQcIJh3WIFSBOy/H1PzB40jPjMDksN4F+g==",
+      "files": [
+        "licenses/types__hast3.0.5/LICENSE"
+      ]
+    },
+    {
+      "name": "@types/mdast",
+      "version": "4.0.4",
+      "license": "MIT",
+      "source": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
+      "integrity": "sha512-kGaNbPh1k7AFzgpud/gMdvIm5xuECykRR+JnWKQno9TAXVa6WIVCGTPvYGekIDL4uwCZQSYbUxNBSb1aUo79oA==",
+      "files": [
+        "licenses/types__mdast4.0.4/LICENSE"
+      ]
+    },
+    {
+      "name": "@types/ms",
+      "version": "2.1.0",
+      "license": "MIT",
+      "source": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
+      "integrity": "sha512-GsCCIZDE/p3i96vtEqx+7dBUGXrc7zeSK3wwPHIaRThS+9OhWIXRqzs4d6k1SVU8g91DrNRWxWUGhp5KXQb2VA==",
+      "files": [
+        "licenses/types__ms2.1.0/LICENSE"
+      ]
+    },
+    {
+      "name": "@types/react",
+      "version": "19.3.0",
+      "license": "MIT",
+      "source": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
+      "integrity": "sha512-N0rFCuH9YoxG9/m61l9MfpJKfmLOVU0em7ipIz6TRgSSkvReLB9vL85GB+yr8Bs5leqpvg96JSwF4ZS1s4viQg==",
+      "files": [
+        "licenses/types__react19.3.0/LICENSE"
+      ]
+    },
+    {
+      "name": "@types/unist",
+      "version": "3.0.3",
+      "license": "MIT",
+      "source": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
+      "integrity": "sha512-ko/gIFJRv177XgZsZcBwnqJN5x/Gien8qNOn0D5bQU/zAzVf9Zt3BlcUiLqhV9y4ARk0GbT3tnUiPNgnTXzc/Q==",
+      "files": [
+        "licenses/types__unist3.0.3/LICENSE"
+      ]
+    },
+    {
+      "name": "@ungap/structured-clone",
+      "version": "1.4.0",
+      "license": "ISC",
+      "source": "git+https://github.com/ungap/structured-clone.git",
+      "integrity": "sha512-1mEZtMKPM09vDmQt5y7YvmN2+DFTP7Tg0EWXdic8/C6VRnpb33e4ghisCIE3WZjsE2N8mf+QV1Zqh7ZFYLWInQ==",
+      "files": [
+        "licenses/ungap__structured-clone1.4.0/LICENSE"
+      ]
+    },
     {
       "name": "@xterm/addon-fit",
       "version": "0.11.0",
@@ -66,6 +386,16 @@
       ]
     },
     {
+      "name": "bail",
+      "version": "2.0.2",
+      "license": "MIT",
+      "source": "wooorm/bail",
+      "integrity": "sha512-0xO6mYd7JB2YesxDKplafRpsiOzPt9V02ddPCLbY1xYGPOX24NTyN50qnUxgCPcSoYMhKpAuBTjQoRZCAkUDRw==",
+      "files": [
+        "licenses/bail2.0.2/license"
+      ]
+    },
+    {
       "name": "builder-util-runtime",
       "version": "9.7.0",
       "license": "MIT",
@@ -76,6 +406,96 @@
       ]
     },
     {
+      "name": "ccount",
+      "version": "2.0.1",
+      "license": "MIT",
+      "source": "wooorm/ccount",
+      "integrity": "sha512-eyrF0jiFpY+3drT6383f1qhkbGsLSifNAjA61IUjZjmLCWjItY6LB9ft9YhoDgwfmclB2zhu51Lc7+95b8NRAg==",
+      "files": [
+        "licenses/ccount2.0.1/license"
+      ]
+    },
+    {
+      "name": "character-entities",
+      "version": "2.0.2",
+      "license": "MIT",
+      "source": "wooorm/character-entities",
+      "integrity": "sha512-shx7oQ0Awen/BRIdkjkvz54PnEEI/EjwXDSIZp86/KKdbafHh1Df/RYGBhn4hbe2+uKC9FnT5UCEdyPz3ai9hQ==",
+      "files": [
+        "licenses/character-entities2.0.2/license"
+      ]
+    },
+    {
+      "name": "character-entities-html4",
+      "version": "2.1.0",
+      "license": "MIT",
+      "source": "wooorm/character-entities-html4",
+      "integrity": "sha512-1v7fgQRj6hnSwFpq1Eu0ynr/CDEw0rXo2B61qXrLNdHZmPKgb7fqS1a2JwF0rISo9q77jDI8VMEHoApn8qDoZA==",
+      "files": [
+        "licenses/character-entities-html42.1.0/license"
+      ]
+    },
+    {
+      "name": "character-entities-legacy",
+      "version": "3.0.0",
+      "license": "MIT",
+      "source": "wooorm/character-entities-legacy",
+      "integrity": "sha512-RpPp0asT/6ufRm//AJVwpViZbGM/MkjQFxJccQRHmISF/22NBtsHqAWmL+/pmkPWoIUJdWyeVleTl1wydHATVQ==",
+      "files": [
+        "licenses/character-entities-legacy3.0.0/license"
+      ]
+    },
+    {
+      "name": "character-reference-invalid",
+      "version": "2.0.1",
+      "license": "MIT",
+      "source": "wooorm/character-reference-invalid",
+      "integrity": "sha512-iBZ4F4wRbyORVsu0jPV7gXkOsGYjGHPmAyv+HiHG8gi5PtC9KI2j1+v8/tlibRvjoWX027ypmG/n0HtO5t7unw==",
+      "files": [
+        "licenses/character-reference-invalid2.0.1/license"
+      ]
+    },
+    {
+      "name": "codemirror",
+      "version": "6.0.2",
+      "license": "MIT",
+      "source": "https://github.com/codemirror/basic-setup.git",
+      "integrity": "sha512-VhydHotNW5w1UGK0Qj96BwSk/Zqbp9WbnyK2W/eVMv4QyF41INRGpjUhFJY7/uDNuudSc33a/PKr4iDqRduvHw==",
+      "files": [
+        "licenses/codemirror6.0.2/LICENSE"
+      ]
+    },
+    {
+      "name": "comma-separated-tokens",
+      "version": "2.0.3",
+      "license": "MIT",
+      "source": "wooorm/comma-separated-tokens",
+      "integrity": "sha512-Fu4hJdvzeylCfQPp9SGWidpzrMs7tTrlu6Vb8XGaRGck8QSNZJJp538Wrb60Lax4fPwR64ViY468OIUTbRlGZg==",
+      "files": [
+        "licenses/comma-separated-tokens2.0.3/license"
+      ]
+    },
+    {
+      "name": "crelt",
+      "version": "1.0.7",
+      "license": "MIT",
+      "source": "git+https://code.haverbeke.berlin/marijn/crelt.git",
+      "integrity": "sha512-aK6BbWfhf4U/wCcLHKPJl/xa6VkVstRaPywWtMKGwuOLc/wZTyQYuoxgvZnNsBvv7Kg3YTBQYYBCggcviQczuA==",
+      "files": [
+        "licenses/crelt1.0.7/LICENSE"
+      ]
+    },
+    {
+      "name": "csstype",
+      "version": "3.2.3",
+      "license": "MIT",
+      "source": "https://github.com/frenic/csstype",
+      "integrity": "sha512-z1HGKcYy2xA8AGQfwrn0PAy+PB7X/GSj3UVJW9qKyn43xWa+gl5nXmU4qqLMRzWVLFC8KusUX8T/0kCiOYpAIQ==",
+      "files": [
+        "licenses/csstype3.2.3/LICENSE"
+      ]
+    },
+    {
       "name": "debug",
       "version": "4.4.3",
       "license": "MIT",
@@ -83,6 +503,36 @@
       "integrity": "sha512-RGwwWnwQvkVfavKVt22FGLw+xYSdzARwm0ru6DhTVA3umU5hZc28V3kO4stgYryrTlLpuvgI9GiijltAjNbcqA==",
       "files": [
         "licenses/debug4.4.3/LICENSE"
+      ]
+    },
+    {
+      "name": "decode-named-character-reference",
+      "version": "1.3.0",
+      "license": "MIT",
+      "source": "wooorm/decode-named-character-reference",
+      "integrity": "sha512-GtpQYB283KrPp6nRw50q3U9/VfOutZOe103qlN7BPP6Ad27xYnOIWv4lPzo8HCAL+mMZofJ9KEy30fq6MfaK6Q==",
+      "files": [
+        "licenses/decode-named-character-reference1.3.0/license"
+      ]
+    },
+    {
+      "name": "dequal",
+      "version": "2.0.3",
+      "license": "MIT",
+      "source": "lukeed/dequal",
+      "integrity": "sha512-0je+qPKHEMohvfRTCEo3CrPG6cAzAYgmzKyxRiYSSDkS6eGJdyVJm7WaYA5ECaAD9wLB2T4EEeymA5aFVcYXCA==",
+      "files": [
+        "licenses/dequal2.0.3/license"
+      ]
+    },
+    {
+      "name": "devlop",
+      "version": "1.1.0",
+      "license": "MIT",
+      "source": "wooorm/devlop",
+      "integrity": "sha512-RWmIqhcFf1lRYBvNmr7qTNuyCt/7/ns2jbpp1+PalgE/rDQcBT0fioSMUpJ93irlUhC5hrg4cYqe6U+0ImW0rA==",
+      "files": [
+        "licenses/devlop1.1.0/license"
       ]
     },
     {
@@ -106,6 +556,26 @@
       ]
     },
     {
+      "name": "estree-util-is-identifier-name",
+      "version": "3.0.0",
+      "license": "MIT",
+      "source": "syntax-tree/estree-util-is-identifier-name",
+      "integrity": "sha512-hFtqIDZTIUZ9BXLb8y4pYGyk6+wekIivNVTcmvk8NoOh+VeRn5y6cEHzbURrWbfp1fIqdVipilzj+lfaadNZmg==",
+      "files": [
+        "licenses/estree-util-is-identifier-name3.0.0/license"
+      ]
+    },
+    {
+      "name": "extend",
+      "version": "3.0.2",
+      "license": "MIT",
+      "source": "https://github.com/justmoon/node-extend.git",
+      "integrity": "sha512-fjquC59cD7CyW6urNXK0FBufkZcoiGG80wTuPujX590cB5Ttln20E2UB4S/WARVqhXffZl2LNgS+gQdPIIim/g==",
+      "files": [
+        "licenses/extend3.0.2/LICENSE"
+      ]
+    },
+    {
       "name": "fs-extra",
       "version": "10.1.0",
       "license": "MIT",
@@ -123,6 +593,96 @@
       "integrity": "sha512-RbJ5/jmFcNNCcDV5o9eTnBLJ/HszWV0P73bc+Ff4nS/rJj+YaS6IGyiOL0VoBYX+l1Wrl3k63h/KrH+nhJ0XvQ==",
       "files": [
         "licenses/graceful-fs4.2.11/LICENSE"
+      ]
+    },
+    {
+      "name": "hast-util-to-jsx-runtime",
+      "version": "2.3.6",
+      "license": "MIT",
+      "source": "syntax-tree/hast-util-to-jsx-runtime",
+      "integrity": "sha512-zl6s8LwNyo1P9uw+XJGvZtdFF1GdAkOg8ujOw+4Pyb76874fLps4ueHXDhXWdk6YHQ6OgUtinliG7RsYvCbbBg==",
+      "files": [
+        "licenses/hast-util-to-jsx-runtime2.3.6/license"
+      ]
+    },
+    {
+      "name": "hast-util-whitespace",
+      "version": "3.0.0",
+      "license": "MIT",
+      "source": "syntax-tree/hast-util-whitespace",
+      "integrity": "sha512-88JUN06ipLwsnv+dVn+OIYOvAuvBMy/Qoi6O7mQHxdPXpjy+Cd6xRkWwux7DKO+4sYILtLBRIKgsdpS2gQc7qw==",
+      "files": [
+        "licenses/hast-util-whitespace3.0.0/license"
+      ]
+    },
+    {
+      "name": "html-url-attributes",
+      "version": "3.0.1",
+      "license": "MIT",
+      "source": "https://github.com/rehypejs/rehype-minify/tree/main/packages/html-url-attributes",
+      "integrity": "sha512-ol6UPyBWqsrO6EJySPz2O7ZSr856WDrEzM5zMqp+FJJLGMW35cLYmmZnl0vztAZxRUoNZJFTCohfjuIJ8I4QBQ==",
+      "files": [
+        "licenses/html-url-attributes3.0.1/license"
+      ]
+    },
+    {
+      "name": "inline-style-parser",
+      "version": "0.2.7",
+      "license": "MIT",
+      "source": "git+https://github.com/remarkablemark/inline-style-parser.git",
+      "integrity": "sha512-Nb2ctOyNR8DqQoR0OwRG95uNWIC0C1lCgf5Naz5H6Ji72KZ8OcFZLz2P5sNgwlyoJ8Yif11oMuYs5pBQa86csA==",
+      "files": [
+        "licenses/inline-style-parser0.2.7/LICENSE"
+      ]
+    },
+    {
+      "name": "is-alphabetical",
+      "version": "2.0.1",
+      "license": "MIT",
+      "source": "wooorm/is-alphabetical",
+      "integrity": "sha512-FWyyY60MeTNyeSRpkM2Iry0G9hpr7/9kD40mD/cGQEuilcZYS4okz8SN2Q6rLCJ8gbCt6fN+rC+6tMGS99LaxQ==",
+      "files": [
+        "licenses/is-alphabetical2.0.1/license"
+      ]
+    },
+    {
+      "name": "is-alphanumerical",
+      "version": "2.0.1",
+      "license": "MIT",
+      "source": "wooorm/is-alphanumerical",
+      "integrity": "sha512-hmbYhX/9MUMF5uh7tOXyK/n0ZvWpad5caBA17GsC6vyuCqaWliRG5K1qS9inmUhEMaOBIW7/whAnSwveW/LtZw==",
+      "files": [
+        "licenses/is-alphanumerical2.0.1/license"
+      ]
+    },
+    {
+      "name": "is-decimal",
+      "version": "2.0.1",
+      "license": "MIT",
+      "source": "wooorm/is-decimal",
+      "integrity": "sha512-AAB9hiomQs5DXWcRB1rqsxGUstbRroFOPPVAomNk/3XHR5JyEZChOyTWe2oayKnsSsr/kcGqF+z6yuH6HHpN0A==",
+      "files": [
+        "licenses/is-decimal2.0.1/license"
+      ]
+    },
+    {
+      "name": "is-hexadecimal",
+      "version": "2.0.1",
+      "license": "MIT",
+      "source": "wooorm/is-hexadecimal",
+      "integrity": "sha512-DgZQp241c8oO6cA1SbTEWiXeoxV42vlcJxgH+B3hi1AiqqKruZR3ZGF8In3fj4+/y/7rHvlOZLZtgJ/4ttYGZg==",
+      "files": [
+        "licenses/is-hexadecimal2.0.1/license"
+      ]
+    },
+    {
+      "name": "is-plain-obj",
+      "version": "4.1.0",
+      "license": "MIT",
+      "source": "sindresorhus/is-plain-obj",
+      "integrity": "sha512-+Pgi+vMuUNkJyExiMBt5IlFoMyKnr5zhJ4Uspz58WOhBF5QoIZkFyNHIbBAtHwzVAgk5RtndVNsDRN61/mmDqg==",
+      "files": [
+        "licenses/is-plain-obj4.1.0/license"
       ]
     },
     {
@@ -178,6 +738,16 @@
       ]
     },
     {
+      "name": "longest-streak",
+      "version": "3.1.0",
+      "license": "MIT",
+      "source": "wooorm/longest-streak",
+      "integrity": "sha512-9Ri+o0JYgehTaVBBDoMqIl8GXtbWg711O3srftcHhZ0dqnETqLaoIK0x17fUw9rFSlK/0NlsKe0Ahhyl5pXE2g==",
+      "files": [
+        "licenses/longest-streak3.1.0/license"
+      ]
+    },
+    {
       "name": "lucide-react",
       "version": "1.48.0",
       "license": "ISC",
@@ -185,6 +755,466 @@
       "integrity": "sha512-R0CIKY/fXiC6y9xRBADgsK+VW2p/pcTJOMhLZf1T+uG+vJUvyUR02nGOgmIIC7MPkiNK4Ox8QDnbqF8rJYWPZQ==",
       "files": [
         "licenses/lucide-react1.48.0/LICENSE"
+      ]
+    },
+    {
+      "name": "markdown-table",
+      "version": "3.0.4",
+      "license": "MIT",
+      "source": "wooorm/markdown-table",
+      "integrity": "sha512-wiYz4+JrLyb/DqW2hkFJxP7Vd7JuTDm77fvbM8VfEQdmSMqcImWeeRbHwZjBjIFki/VaMK2BhFi7oUUZeM5bqw==",
+      "files": [
+        "licenses/markdown-table3.0.4/license"
+      ]
+    },
+    {
+      "name": "mdast-util-find-and-replace",
+      "version": "3.0.3",
+      "license": "MIT",
+      "source": "syntax-tree/mdast-util-find-and-replace",
+      "integrity": "sha512-xPgpDNl0/OXHsI7TlaIs22lWnH3KlpvZdXG1ET/m/YT2Hhdkx8lJV4kLphE6l9simyM4KPDFBwas08BgEob6Jw==",
+      "files": [
+        "licenses/mdast-util-find-and-replace3.0.3/license"
+      ]
+    },
+    {
+      "name": "escape-string-regexp",
+      "version": "5.0.0",
+      "license": "MIT",
+      "source": "sindresorhus/escape-string-regexp",
+      "integrity": "sha512-/veY75JbMK4j1yjvuUxuVsiS/hr/4iHs9FTT6cgTexxdE0Ly/glccBAkloH/DofkjRbZU3bnoj38mOmhkZ0lHw==",
+      "files": [
+        "licenses/escape-string-regexp5.0.0/license"
+      ]
+    },
+    {
+      "name": "mdast-util-from-markdown",
+      "version": "2.1.0",
+      "license": "MIT",
+      "source": "syntax-tree/mdast-util-from-markdown",
+      "integrity": "sha512-KRLgmPaP2H1ul2bpoJkOS+9pAcDAAj9Nu1mqLnh8NLeJG5tlvj42TH80PIGBpROWlRXLk0lDrWNuZCFy/tsB4A==",
+      "files": [
+        "licenses/mdast-util-from-markdown2.1.0/license"
+      ]
+    },
+    {
+      "name": "mdast-util-gfm",
+      "version": "3.1.0",
+      "license": "MIT",
+      "source": "syntax-tree/mdast-util-gfm",
+      "integrity": "sha512-0ulfdQOM3ysHhCJ1p06l0b0VKlhU0wuQs3thxZQagjcjPrlFRqY215uZGHHJan9GEAXd9MbfPjFJz+qMkVR6zQ==",
+      "files": [
+        "licenses/mdast-util-gfm3.1.0/license"
+      ]
+    },
+    {
+      "name": "mdast-util-gfm-autolink-literal",
+      "version": "2.0.1",
+      "license": "MIT",
+      "source": "syntax-tree/mdast-util-gfm-autolink-literal",
+      "integrity": "sha512-5HVP2MKaP6L+G6YaxPNjuL0BPrq9orG3TsrZ9YXbA3vDw/ACI4MEsnoDpn6ZNm7GnZgtAcONJyPhOP8tNJQavQ==",
+      "files": [
+        "licenses/mdast-util-gfm-autolink-literal2.0.1/license"
+      ]
+    },
+    {
+      "name": "mdast-util-gfm-footnote",
+      "version": "2.1.0",
+      "license": "MIT",
+      "source": "syntax-tree/mdast-util-gfm-footnote",
+      "integrity": "sha512-sqpDWlsHn7Ac9GNZQMeUzPQSMzR6Wv0WKRNvQRg0KqHh02fpTz69Qc1QSseNX29bhz1ROIyNyxExfawVKTm1GQ==",
+      "files": [
+        "licenses/mdast-util-gfm-footnote2.1.0/license"
+      ]
+    },
+    {
+      "name": "mdast-util-gfm-strikethrough",
+      "version": "2.0.1",
+      "license": "MIT",
+      "source": "syntax-tree/mdast-util-gfm-strikethrough",
+      "integrity": "sha512-OuJHqvr455pwu2OaOrir7dbzqs4jlWKOtlu9L6GjcIjjQwNyw02VntQsr/Ek6/A13vgnXfUhBekWRUP1OkNivw==",
+      "files": [
+        "licenses/mdast-util-gfm-strikethrough2.0.1/license"
+      ]
+    },
+    {
+      "name": "mdast-util-gfm-table",
+      "version": "2.0.0",
+      "license": "MIT",
+      "source": "syntax-tree/mdast-util-gfm-table",
+      "integrity": "sha512-78UEvebzz/rJIxLvE7ZtDd/vIQ0RHv+3Mh5DR96p7cS7HsBhYIICDBCu8csTNWNO6tBWfqXPWekRuj2FNOGOZg==",
+      "files": [
+        "licenses/mdast-util-gfm-table2.0.0/license"
+      ]
+    },
+    {
+      "name": "mdast-util-gfm-task-list-item",
+      "version": "2.0.0",
+      "license": "MIT",
+      "source": "syntax-tree/mdast-util-gfm-task-list-item",
+      "integrity": "sha512-IrtvNvjxC1o06taBAVJznEnkiHxLFTzgonUdy8hzFVeDun0uTjxxrRGVaNFqkU1wJR3RBPEfsxmU6jDWPofrTQ==",
+      "files": [
+        "licenses/mdast-util-gfm-task-list-item2.0.0/license"
+      ]
+    },
+    {
+      "name": "mdast-util-mdx-expression",
+      "version": "2.0.1",
+      "license": "MIT",
+      "source": "syntax-tree/mdast-util-mdx-expression",
+      "integrity": "sha512-J6f+9hUp+ldTZqKRSg7Vw5V6MqjATc+3E4gf3CFNcuZNWD8XdyI6zQ8GqH7f8169MM6P7hMBRDVGnn7oHB9kXQ==",
+      "files": [
+        "licenses/mdast-util-mdx-expression2.0.1/license"
+      ]
+    },
+    {
+      "name": "mdast-util-mdx-jsx",
+      "version": "3.2.0",
+      "license": "MIT",
+      "source": "syntax-tree/mdast-util-mdx-jsx",
+      "integrity": "sha512-lj/z8v0r6ZtsN/cGNNtemmmfoLAFZnjMbNyLzBafjzikOM+glrjNHPlf6lQDOTccj9n5b0PPihEBbhneMyGs1Q==",
+      "files": [
+        "licenses/mdast-util-mdx-jsx3.2.0/license"
+      ]
+    },
+    {
+      "name": "mdast-util-mdxjs-esm",
+      "version": "2.0.1",
+      "license": "MIT",
+      "source": "syntax-tree/mdast-util-mdxjs-esm",
+      "integrity": "sha512-EcmOpxsZ96CvlP03NghtH1EsLtr0n9Tm4lPUJUBccV9RwUOneqSycg19n5HGzCf+10LozMRSObtVr3ee1WoHtg==",
+      "files": [
+        "licenses/mdast-util-mdxjs-esm2.0.1/license"
+      ]
+    },
+    {
+      "name": "mdast-util-phrasing",
+      "version": "4.1.0",
+      "license": "MIT",
+      "source": "syntax-tree/mdast-util-phrasing",
+      "integrity": "sha512-TqICwyvJJpBwvGAMZjj4J2n0X8QWp21b9l0o7eXyVJ25YNWYbJDVIyD1bZXE6WtV6RmKJVYmQAKWa0zWOABz2w==",
+      "files": [
+        "licenses/mdast-util-phrasing4.1.0/license"
+      ]
+    },
+    {
+      "name": "mdast-util-to-hast",
+      "version": "13.2.1",
+      "license": "MIT",
+      "source": "syntax-tree/mdast-util-to-hast",
+      "integrity": "sha512-cctsq2wp5vTsLIcaymblUriiTcZd0CwWtCbLvrOzYCDZoWyMNV8sZ7krj09FSnsiJi3WVsHLM4k6Dq/yaPyCXA==",
+      "files": [
+        "licenses/mdast-util-to-hast13.2.1/license"
+      ]
+    },
+    {
+      "name": "mdast-util-to-markdown",
+      "version": "2.2.0",
+      "license": "MIT",
+      "source": "syntax-tree/mdast-util-to-markdown",
+      "integrity": "sha512-2Jn/ADrHFFyyniBMi0bncTbJqU78K3/TEYvzvwrWWzD9MYPUa/Gm4r3nOeKFQg/PDM5BsbDYdc8ackW4NTY6NA==",
+      "files": [
+        "licenses/mdast-util-to-markdown2.2.0/license"
+      ]
+    },
+    {
+      "name": "mdast-util-to-string",
+      "version": "4.0.0",
+      "license": "MIT",
+      "source": "syntax-tree/mdast-util-to-string",
+      "integrity": "sha512-0H44vDimn51F0YwvxSJSm0eCDOJTRlmN0R1yBh4HLj9wiV1Dn0QoXGbvFAWj2hSItVTlCmBF1hqKlIyUBVFLPg==",
+      "files": [
+        "licenses/mdast-util-to-string4.0.0/license"
+      ]
+    },
+    {
+      "name": "micromark",
+      "version": "4.0.3",
+      "license": "MIT",
+      "source": "https://github.com/micromark/micromark/tree/main/packages/micromark",
+      "integrity": "sha512-oGYfQzHSG5dOMovQcJ3fyTmZlWAWpi0XA0sJwJs+i6OT88o1+Jtw/8z0CmdowSLxGhhFK89rQ/oXph/wN02PNw==",
+      "files": [
+        "licenses/micromark4.0.3/license"
+      ]
+    },
+    {
+      "name": "micromark-core-commonmark",
+      "version": "2.0.4",
+      "license": "MIT",
+      "source": "https://github.com/micromark/micromark/tree/main/packages/micromark-core-commonmark",
+      "integrity": "sha512-wxEeE8v8XVvOrxn1TZj74qYhAtTQsSqufHVS3uNVyT1MupXxhyaHk8/9xDNPh9BmL77QNDgWTkZ3RsYHB2ry7w==",
+      "files": [
+        "licenses/micromark-core-commonmark2.0.4/license"
+      ]
+    },
+    {
+      "name": "micromark-extension-gfm",
+      "version": "3.0.0",
+      "license": "MIT",
+      "source": "micromark/micromark-extension-gfm",
+      "integrity": "sha512-vsKArQsicm7t0z2GugkCKtZehqUm31oeGBV/KVSorWSy8ZlNAv7ytjFhvaryUiCUJYqs+NoE6AFhpQvBTM6Q4w==",
+      "files": [
+        "licenses/micromark-extension-gfm3.0.0/license"
+      ]
+    },
+    {
+      "name": "micromark-extension-gfm-autolink-literal",
+      "version": "2.1.0",
+      "license": "MIT",
+      "source": "micromark/micromark-extension-gfm-autolink-literal",
+      "integrity": "sha512-oOg7knzhicgQ3t4QCjCWgTmfNhvQbDDnJeVu9v81r7NltNCVmhPy1fJRX27pISafdjL+SVc4d3l48Gb6pbRypw==",
+      "files": [
+        "licenses/micromark-extension-gfm-autolink-literal2.1.0/license"
+      ]
+    },
+    {
+      "name": "micromark-extension-gfm-footnote",
+      "version": "2.1.0",
+      "license": "MIT",
+      "source": "micromark/micromark-extension-gfm-footnote",
+      "integrity": "sha512-/yPhxI1ntnDNsiHtzLKYnE3vf9JZ6cAisqVDauhp4CEHxlb4uoOTxOCJ+9s51bIB8U1N1FJ1RXOKTIlD5B/gqw==",
+      "files": [
+        "licenses/micromark-extension-gfm-footnote2.1.0/license"
+      ]
+    },
+    {
+      "name": "micromark-extension-gfm-strikethrough",
+      "version": "2.1.0",
+      "license": "MIT",
+      "source": "micromark/micromark-extension-gfm-strikethrough",
+      "integrity": "sha512-ADVjpOOkjz1hhkZLlBiYA9cR2Anf8F4HqZUO6e5eDcPQd0Txw5fxLzzxnEkSkfnD0wziSGiv7sYhk/ktvbf1uw==",
+      "files": [
+        "licenses/micromark-extension-gfm-strikethrough2.1.0/license"
+      ]
+    },
+    {
+      "name": "micromark-extension-gfm-table",
+      "version": "2.1.2",
+      "license": "MIT",
+      "source": "micromark/micromark-extension-gfm-table",
+      "integrity": "sha512-pRzm4kDTu0MjlmBkxmS9yYhw60nncfcEwu9NNdPFSQEFXS95ZKyIIyTSHu/o3ReBUrLKYEq+7YaXCRn/bPB4MA==",
+      "files": [
+        "licenses/micromark-extension-gfm-table2.1.2/license"
+      ]
+    },
+    {
+      "name": "micromark-extension-gfm-tagfilter",
+      "version": "2.0.0",
+      "license": "MIT",
+      "source": "micromark/micromark-extension-gfm-tagfilter",
+      "integrity": "sha512-xHlTOmuCSotIA8TW1mDIM6X2O1SiX5P9IuDtqGonFhEK0qgRI4yeC6vMxEV2dgyr2TiD+2PQ10o+cOhdVAcwfg==",
+      "files": [
+        "licenses/micromark-extension-gfm-tagfilter2.0.0/license"
+      ]
+    },
+    {
+      "name": "micromark-extension-gfm-task-list-item",
+      "version": "2.1.0",
+      "license": "MIT",
+      "source": "micromark/micromark-extension-gfm-task-list-item",
+      "integrity": "sha512-qIBZhqxqI6fjLDYFTBIa4eivDMnP+OZqsNwmQ3xNLE4Cxwc+zfQEfbs6tzAo2Hjq+bh6q5F+Z8/cksrLFYWQQw==",
+      "files": [
+        "licenses/micromark-extension-gfm-task-list-item2.1.0/license"
+      ]
+    },
+    {
+      "name": "micromark-factory-destination",
+      "version": "2.0.1",
+      "license": "MIT",
+      "source": "https://github.com/micromark/micromark/tree/main/packages/micromark-factory-destination",
+      "integrity": "sha512-Xe6rDdJlkmbFRExpTOmRj9N3MaWmbAgdpSrBQvCFqhezUn4AHqJHbaEnfbVYYiexVSs//tqOdY/DxhjdCiJnIA==",
+      "files": [
+        "licenses/micromark-factory-destination2.0.1/license"
+      ]
+    },
+    {
+      "name": "micromark-factory-label",
+      "version": "2.0.1",
+      "license": "MIT",
+      "source": "https://github.com/micromark/micromark/tree/main/packages/micromark-factory-label",
+      "integrity": "sha512-VFMekyQExqIW7xIChcXn4ok29YE3rnuyveW3wZQWWqF4Nv9Wk5rgJ99KzPvHjkmPXF93FXIbBp6YdW3t71/7Vg==",
+      "files": [
+        "licenses/micromark-factory-label2.0.1/license"
+      ]
+    },
+    {
+      "name": "micromark-factory-space",
+      "version": "2.1.0",
+      "license": "MIT",
+      "source": "https://github.com/micromark/micromark/tree/main/packages/micromark-factory-space",
+      "integrity": "sha512-fS8hnLIjnjvdQIj39Geug8wWsR0HrYZ43KShKxNfwT7t2LOHo/LbWZEzEaSOjwtjdCsjoE6syHhonEzW0zv0+Q==",
+      "files": [
+        "licenses/micromark-factory-space2.1.0/license"
+      ]
+    },
+    {
+      "name": "micromark-factory-title",
+      "version": "2.0.1",
+      "license": "MIT",
+      "source": "https://github.com/micromark/micromark/tree/main/packages/micromark-factory-title",
+      "integrity": "sha512-5bZ+3CjhAd9eChYTHsjy6TGxpOFSKgKKJPJxr293jTbfry2KDoWkhBb6TcPVB4NmzaPhMs1Frm9AZH7OD4Cjzw==",
+      "files": [
+        "licenses/micromark-factory-title2.0.1/license"
+      ]
+    },
+    {
+      "name": "micromark-factory-whitespace",
+      "version": "2.0.1",
+      "license": "MIT",
+      "source": "https://github.com/micromark/micromark/tree/main/packages/micromark-factory-whitespace",
+      "integrity": "sha512-Ob0nuZ3PKt/n0hORHyvoD9uZhr+Za8sFoP+OnMcnWK5lngSzALgQYKMr9RJVOWLqQYuyn6ulqGWSXdwf6F80lQ==",
+      "files": [
+        "licenses/micromark-factory-whitespace2.0.1/license"
+      ]
+    },
+    {
+      "name": "micromark-util-character",
+      "version": "2.1.1",
+      "license": "MIT",
+      "source": "https://github.com/micromark/micromark/tree/main/packages/micromark-util-character",
+      "integrity": "sha512-wv8tdUTJ3thSFFFJKtpYKOYiGP2+v96Hvk4Tu8KpCAsTMs6yi+nVmGh1syvSCsaxz45J6Jbw+9DD6g97+NV67Q==",
+      "files": [
+        "licenses/micromark-util-character2.1.1/license"
+      ]
+    },
+    {
+      "name": "micromark-util-chunked",
+      "version": "2.0.1",
+      "license": "MIT",
+      "source": "https://github.com/micromark/micromark/tree/main/packages/micromark-util-chunked",
+      "integrity": "sha512-QUNFEOPELfmvv+4xiNg2sRYeS/P84pTW0TCgP5zc9FpXetHY0ab7SxKyAQCNCc1eK0459uoLI1y5oO5Vc1dbhA==",
+      "files": [
+        "licenses/micromark-util-chunked2.0.1/license"
+      ]
+    },
+    {
+      "name": "micromark-util-classify-character",
+      "version": "2.0.1",
+      "license": "MIT",
+      "source": "https://github.com/micromark/micromark/tree/main/packages/micromark-util-classify-character",
+      "integrity": "sha512-K0kHzM6afW/MbeWYWLjoHQv1sgg2Q9EccHEDzSkxiP/EaagNzCm7T/WMKZ3rjMbvIpvBiZgwR3dKMygtA4mG1Q==",
+      "files": [
+        "licenses/micromark-util-classify-character2.0.1/license"
+      ]
+    },
+    {
+      "name": "micromark-util-combine-extensions",
+      "version": "2.0.1",
+      "license": "MIT",
+      "source": "https://github.com/micromark/micromark/tree/main/packages/micromark-util-combine-extensions",
+      "integrity": "sha512-OnAnH8Ujmy59JcyZw8JSbK9cGpdVY44NKgSM7E9Eh7DiLS2E9RNQf0dONaGDzEG9yjEl5hcqeIsj4hfRkLH/Bg==",
+      "files": [
+        "licenses/micromark-util-combine-extensions2.0.1/license"
+      ]
+    },
+    {
+      "name": "micromark-util-decode-numeric-character-reference",
+      "version": "2.0.2",
+      "license": "MIT",
+      "source": "https://github.com/micromark/micromark/tree/main/packages/micromark-util-decode-numeric-character-reference",
+      "integrity": "sha512-ccUbYk6CwVdkmCQMyr64dXz42EfHGkPQlBj5p7YVGzq8I7CtjXZJrubAYezf7Rp+bjPseiROqe7G6foFd+lEuw==",
+      "files": [
+        "licenses/micromark-util-decode-numeric-character-reference2.0.2/license"
+      ]
+    },
+    {
+      "name": "micromark-util-decode-string",
+      "version": "2.0.1",
+      "license": "MIT",
+      "source": "https://github.com/micromark/micromark/tree/main/packages/micromark-util-decode-string",
+      "integrity": "sha512-nDV/77Fj6eH1ynwscYTOsbK7rR//Uj0bZXBwJZRfaLEJ1iGBR6kIfNmlNqaqJf649EP0F3NWNdeJi03elllNUQ==",
+      "files": [
+        "licenses/micromark-util-decode-string2.0.1/license"
+      ]
+    },
+    {
+      "name": "micromark-util-edit-map",
+      "version": "1.0.0",
+      "license": "MIT",
+      "source": "https://github.com/micromark/micromark/tree/main/packages/micromark-util-edit-map",
+      "integrity": "sha512-Pa2ljlsEL6sVwFaYeyrOLSYbQt73JvGbPOYFq+9AElXiSnfI5Q4465RRZ1sHv7lDjDOnGRDDaqPXqClqWK/q1Q==",
+      "files": [
+        "licenses/micromark-util-edit-map1.0.0/license"
+      ]
+    },
+    {
+      "name": "micromark-util-encode",
+      "version": "2.0.1",
+      "license": "MIT",
+      "source": "https://github.com/micromark/micromark/tree/main/packages/micromark-util-encode",
+      "integrity": "sha512-c3cVx2y4KqUnwopcO9b/SCdo2O67LwJJ/UyqGfbigahfegL9myoEFoDYZgkT7f36T0bLrM9hZTAaAyH+PCAXjw==",
+      "files": [
+        "licenses/micromark-util-encode2.0.1/license"
+      ]
+    },
+    {
+      "name": "micromark-util-html-tag-name",
+      "version": "2.0.1",
+      "license": "MIT",
+      "source": "https://github.com/micromark/micromark/tree/main/packages/micromark-util-html-tag-name",
+      "integrity": "sha512-2cNEiYDhCWKI+Gs9T0Tiysk136SnR13hhO8yW6BGNyhOC4qYFnwF1nKfD3HFAIXA5c45RrIG1ub11GiXeYd1xA==",
+      "files": [
+        "licenses/micromark-util-html-tag-name2.0.1/license"
+      ]
+    },
+    {
+      "name": "micromark-util-normalize-identifier",
+      "version": "2.0.1",
+      "license": "MIT",
+      "source": "https://github.com/micromark/micromark/tree/main/packages/micromark-util-normalize-identifier",
+      "integrity": "sha512-sxPqmo70LyARJs0w2UclACPUUEqltCkJ6PhKdMIDuJ3gSf/Q+/GIe3WKl0Ijb/GyH9lOpUkRAO2wp0GVkLvS9Q==",
+      "files": [
+        "licenses/micromark-util-normalize-identifier2.0.1/license"
+      ]
+    },
+    {
+      "name": "micromark-util-resolve-all",
+      "version": "2.0.1",
+      "license": "MIT",
+      "source": "https://github.com/micromark/micromark/tree/main/packages/micromark-util-resolve-all",
+      "integrity": "sha512-VdQyxFWFT2/FGJgwQnJYbe1jjQoNTS4RjglmSjTUlpUMa95Htx9NHeYW4rGDJzbjvCsl9eLjMQwGeElsqmzcHg==",
+      "files": [
+        "licenses/micromark-util-resolve-all2.0.1/license"
+      ]
+    },
+    {
+      "name": "micromark-util-sanitize-uri",
+      "version": "2.0.1",
+      "license": "MIT",
+      "source": "https://github.com/micromark/micromark/tree/main/packages/micromark-util-sanitize-uri",
+      "integrity": "sha512-9N9IomZ/YuGGZZmQec1MbgxtlgougxTodVwDzzEouPKo3qFWvymFHWcnDi2vzV1ff6kas9ucW+o3yzJK9YB1AQ==",
+      "files": [
+        "licenses/micromark-util-sanitize-uri2.0.1/license"
+      ]
+    },
+    {
+      "name": "micromark-util-subtokenize",
+      "version": "2.1.0",
+      "license": "MIT",
+      "source": "https://github.com/micromark/micromark/tree/main/packages/micromark-util-subtokenize",
+      "integrity": "sha512-XQLu552iSctvnEcgXw6+Sx75GflAPNED1qx7eBJ+wydBb2KCbRZe+NwvIEEMM83uml1+2WSXpBAcp9IUCgCYWA==",
+      "files": [
+        "licenses/micromark-util-subtokenize2.1.0/license"
+      ]
+    },
+    {
+      "name": "micromark-util-symbol",
+      "version": "2.0.1",
+      "license": "MIT",
+      "source": "https://github.com/micromark/micromark/tree/main/packages/micromark-util-symbol",
+      "integrity": "sha512-vs5t8Apaud9N28kgCrRUdEed4UJ+wWNvicHLPxCa9ENlYuAY31M0ETy5y1vA33YoNPDFTghEbnh6efaE8h4x0Q==",
+      "files": [
+        "licenses/micromark-util-symbol2.0.1/license"
+      ]
+    },
+    {
+      "name": "micromark-util-types",
+      "version": "2.0.3",
+      "license": "MIT",
+      "source": "https://github.com/micromark/micromark/tree/main/packages/micromark-util-types",
+      "integrity": "sha512-oxB2Ik03hI0gv+VNn9tnh1t1YEe9MDPptViAEgfdf3YQHsn0pzGTgCdlSCJXcwhqm8phaEuM7zeEu3QQzVBrPg==",
+      "files": [
+        "licenses/micromark-util-types2.0.3/license"
       ]
     },
     {
@@ -216,6 +1246,36 @@
       "files": [
         "licenses/node-pty1.1.0/LICENSE",
         "licenses/node-pty1.1.0/deps/winpty/LICENSE"
+      ]
+    },
+    {
+      "name": "parse-entities",
+      "version": "4.0.2",
+      "license": "MIT",
+      "source": "wooorm/parse-entities",
+      "integrity": "sha512-GG2AQYWoLgL877gQIKeRPGO1xF9+eG1ujIb5soS5gPvLQ1y2o8FL90w2QWNdf9I361Mpp7726c+lj3U0qK1uGw==",
+      "files": [
+        "licenses/parse-entities4.0.2/license"
+      ]
+    },
+    {
+      "name": "@types/unist",
+      "version": "2.0.11",
+      "license": "MIT",
+      "source": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
+      "integrity": "sha512-CmBKiL6NNo/OqgmMn95Fk9Whlp2mtvIv+KNpQKN2F4SjvrEesubTRWGYSg+BnWZOnlCaSTU1sMpsBOzgbYhnsA==",
+      "files": [
+        "licenses/types__unist2.0.11/LICENSE"
+      ]
+    },
+    {
+      "name": "property-information",
+      "version": "7.2.0",
+      "license": "MIT",
+      "source": "wooorm/property-information",
+      "integrity": "sha512-IAtzIB6sUiWaJYrX9smp3V46pBGbBeLFRGdh25kg1334VcBlD8HzhPeNIWQH9zhGmo2itIe25EHt9dQP7G5hmg==",
+      "files": [
+        "licenses/property-information7.2.0/license"
       ]
     },
     {
@@ -251,6 +1311,56 @@
       ]
     },
     {
+      "name": "react-markdown",
+      "version": "10.1.0",
+      "license": "MIT",
+      "source": "remarkjs/react-markdown",
+      "integrity": "sha512-qKxVopLT/TyA6BX3Ue5NwabOsAzm0Q7kAPwq6L+wWDwisYs7R8vZ0nRXqq6rkueboxpkjvLGU9fWifiX/ZZFxQ==",
+      "files": [
+        "licenses/react-markdown10.1.0/license"
+      ]
+    },
+    {
+      "name": "remark-gfm",
+      "version": "4.0.1",
+      "license": "MIT",
+      "source": "remarkjs/remark-gfm",
+      "integrity": "sha512-1quofZ2RQ9EWdeN34S79+KExV1764+wCUGop5CPL1WGdD0ocPpu91lzPGbwWMECpEpd42kJGQwzRfyov9j4yNg==",
+      "files": [
+        "licenses/remark-gfm4.0.1/license"
+      ]
+    },
+    {
+      "name": "remark-parse",
+      "version": "11.0.0",
+      "license": "MIT",
+      "source": "https://github.com/remarkjs/remark/tree/main/packages/remark-parse",
+      "integrity": "sha512-FCxlKLNGknS5ba/1lmpYijMUzX2esxW5xQqjWxw2eHFfS2MSdaHVINFmhjo+qN1WhZhNimq0dZATN9pH0IDrpA==",
+      "files": [
+        "licenses/remark-parse11.0.0/license"
+      ]
+    },
+    {
+      "name": "remark-rehype",
+      "version": "11.1.2",
+      "license": "MIT",
+      "source": "remarkjs/remark-rehype",
+      "integrity": "sha512-Dh7l57ianaEoIpzbp0PC9UKAdCSVklD8E5Rpw7ETfbTl3FqcOOgq5q2LVDhgGCkaBv7p24JXikPdvhhmHvKMsw==",
+      "files": [
+        "licenses/remark-rehype11.1.2/license"
+      ]
+    },
+    {
+      "name": "remark-stringify",
+      "version": "11.0.0",
+      "license": "MIT",
+      "source": "https://github.com/remarkjs/remark/tree/main/packages/remark-stringify",
+      "integrity": "sha512-1OSmLd3awB/t8qdoEOMazZkNsfVTeY4fTsgzcQFdXNq8ToTN4ZGwrMnlda4K6smTFKD+GRV6O48i6Z4iKgPPpw==",
+      "files": [
+        "licenses/remark-stringify11.0.0/license"
+      ]
+    },
+    {
       "name": "sax",
       "version": "1.6.1",
       "license": "BlueOak-1.0.0",
@@ -271,6 +1381,56 @@
       ]
     },
     {
+      "name": "space-separated-tokens",
+      "version": "2.0.2",
+      "license": "MIT",
+      "source": "wooorm/space-separated-tokens",
+      "integrity": "sha512-PEGlAwrG8yXGXRjW32fGbg66JAlOAwbObuqVoJpv/mRgoWDQfgH1wDPvtzWyUSNAXBGSk8h755YDbbcEy3SH2Q==",
+      "files": [
+        "licenses/space-separated-tokens2.0.2/license"
+      ]
+    },
+    {
+      "name": "stringify-entities",
+      "version": "4.0.4",
+      "license": "MIT",
+      "source": "wooorm/stringify-entities",
+      "integrity": "sha512-IwfBptatlO+QCJUo19AqvrPNqlVMpW9YEL2LIVY+Rpv2qsjCGxaDLNRgeGsQWJhfItebuJhsGSLjaBbNSQ+ieg==",
+      "files": [
+        "licenses/stringify-entities4.0.4/license"
+      ]
+    },
+    {
+      "name": "style-mod",
+      "version": "4.1.4",
+      "license": "MIT",
+      "source": "git+https://code.haverbeke.berlin/marijn/style-mod.git",
+      "integrity": "sha512-XXWIQt633/EpAFx8aZDOTjBzrCaGmhvEQlQo6MVPfa2OzO2cWo+4hV9h+6UkHYlXGfy+ODXKUdP7Pthmcu5ATw==",
+      "files": [
+        "licenses/style-mod4.1.4/LICENSE"
+      ]
+    },
+    {
+      "name": "style-to-js",
+      "version": "1.1.21",
+      "license": "MIT",
+      "source": "git+https://github.com/remarkablemark/style-to-js.git",
+      "integrity": "sha512-RjQetxJrrUJLQPHbLku6U/ocGtzyjbJMP9lCNK7Ag0CNh690nSH8woqWH9u16nMjYBAok+i7JO1NP2pOy8IsPQ==",
+      "files": [
+        "licenses/style-to-js1.1.21/LICENSE"
+      ]
+    },
+    {
+      "name": "style-to-object",
+      "version": "1.0.14",
+      "license": "MIT",
+      "source": "git+https://github.com/remarkablemark/style-to-object.git",
+      "integrity": "sha512-LIN7rULI0jBscWQYaSswptyderlarFkjQ+t79nzty8tcIAceVomEVlLzH5VP4Cmsv6MtKhs7qaAiwlcp+Mgaxw==",
+      "files": [
+        "licenses/style-to-object1.0.14/LICENSE"
+      ]
+    },
+    {
       "name": "tiny-typed-emitter",
       "version": "2.1.0",
       "license": "MIT",
@@ -281,6 +1441,86 @@
       ]
     },
     {
+      "name": "trim-lines",
+      "version": "3.0.1",
+      "license": "MIT",
+      "source": "wooorm/trim-lines",
+      "integrity": "sha512-kRj8B+YHZCc9kQYdWfJB2/oUl9rA99qbowYYBtr4ui4mZyAQ2JpvVBd/6U2YloATfqBhBTSMhTpgBHtU0Mf3Rg==",
+      "files": [
+        "licenses/trim-lines3.0.1/license"
+      ]
+    },
+    {
+      "name": "trough",
+      "version": "2.2.0",
+      "license": "MIT",
+      "source": "wooorm/trough",
+      "integrity": "sha512-tmMpK00BjZiUyVyvrBK7knerNgmgvcV/KLVyuma/SC+TQN167GrMRciANTz09+k3zW8L8t60jWO1GpfkZdjTaw==",
+      "files": [
+        "licenses/trough2.2.0/license"
+      ]
+    },
+    {
+      "name": "unified",
+      "version": "11.0.5",
+      "license": "MIT",
+      "source": "unifiedjs/unified",
+      "integrity": "sha512-xKvGhPWw3k84Qjh8bI3ZeJjqnyadK+GEFtazSfZv/rKeTkTjOJho6mFqh2SM96iIcZokxiOpg78GazTSg8+KHA==",
+      "files": [
+        "licenses/unified11.0.5/license"
+      ]
+    },
+    {
+      "name": "unist-util-is",
+      "version": "6.0.1",
+      "license": "MIT",
+      "source": "syntax-tree/unist-util-is",
+      "integrity": "sha512-LsiILbtBETkDz8I9p1dQ0uyRUWuaQzd/cuEeS1hoRSyW5E5XGmTzlwY1OrNzzakGowI9Dr/I8HVaw4hTtnxy8g==",
+      "files": [
+        "licenses/unist-util-is6.0.1/license"
+      ]
+    },
+    {
+      "name": "unist-util-position",
+      "version": "5.0.0",
+      "license": "MIT",
+      "source": "syntax-tree/unist-util-position",
+      "integrity": "sha512-fucsC7HjXvkB5R3kTCO7kUjRdrS0BJt3M/FPxmHMBOm8JQi2BsHAHFsy27E0EolP8rp0NzXsJ+jNPyDWvOJZPA==",
+      "files": [
+        "licenses/unist-util-position5.0.0/license"
+      ]
+    },
+    {
+      "name": "unist-util-stringify-position",
+      "version": "4.0.0",
+      "license": "MIT",
+      "source": "syntax-tree/unist-util-stringify-position",
+      "integrity": "sha512-0ASV06AAoKCDkS2+xw5RXJywruurpbC4JZSm7nr7MOt1ojAzvyyaO+UxZf18j8FCF6kmzCZKcAgN/yu2gm2XgQ==",
+      "files": [
+        "licenses/unist-util-stringify-position4.0.0/license"
+      ]
+    },
+    {
+      "name": "unist-util-visit",
+      "version": "5.1.0",
+      "license": "MIT",
+      "source": "syntax-tree/unist-util-visit",
+      "integrity": "sha512-m+vIdyeCOpdr/QeQCu2EzxX/ohgS8KbnPDgFni4dQsfSCtpz8UqDyY5GjRru8PDKuYn7Fq19j1CQ+nJSsGKOzg==",
+      "files": [
+        "licenses/unist-util-visit5.1.0/license"
+      ]
+    },
+    {
+      "name": "unist-util-visit-parents",
+      "version": "6.0.2",
+      "license": "MIT",
+      "source": "syntax-tree/unist-util-visit-parents",
+      "integrity": "sha512-goh1s1TBrqSqukSc8wrjwWhL0hiJxgA8m4kFxGlQ+8FYQ3C/m11FcTs4YYem7V664AhHVvgoQLk890Ssdsr2IQ==",
+      "files": [
+        "licenses/unist-util-visit-parents6.0.2/license"
+      ]
+    },
+    {
       "name": "universalify",
       "version": "2.0.1",
       "license": "MIT",
@@ -288,6 +1528,36 @@
       "integrity": "sha512-gptHNQghINnc/vTGIk0SOFGFNXw7JVrlRUtConJRlvaw6DuX0wO5Jeko9sWrMBhh+PsYAZ7oXAiOnf/UKogyiw==",
       "files": [
         "licenses/universalify2.0.1/LICENSE"
+      ]
+    },
+    {
+      "name": "vfile",
+      "version": "6.0.3",
+      "license": "MIT",
+      "source": "vfile/vfile",
+      "integrity": "sha512-KzIbH/9tXat2u30jf+smMwFCsno4wHVdNmzFyL+T/L3UGqqk6JKfVqOFOZEpZSHADH1k40ab6NUIXZq422ov3Q==",
+      "files": [
+        "licenses/vfile6.0.3/license"
+      ]
+    },
+    {
+      "name": "vfile-message",
+      "version": "4.0.3",
+      "license": "MIT",
+      "source": "vfile/vfile-message",
+      "integrity": "sha512-QTHzsGd1EhbZs4AsQ20JX1rC3cOlt/IWJruk893DfLRr57lcnOeMaWG4K0JrRta4mIJZKth2Au3mM3u03/JWKw==",
+      "files": [
+        "licenses/vfile-message4.0.3/license"
+      ]
+    },
+    {
+      "name": "w3c-keyname",
+      "version": "2.2.8",
+      "license": "MIT",
+      "source": "git+https://github.com/marijnh/w3c-keyname.git",
+      "integrity": "sha512-dpojBhNsCNN7T82Tm7k26A6G9ML3NkhDsnw9n/eoxSRlVBB4CEtIQ/KTCLI2Fwf3ataSXRhYFkQi3SlnFwPvPQ==",
+      "files": [
+        "licenses/w3c-keyname2.2.8/LICENSE"
       ]
     },
     {
@@ -311,6 +1581,16 @@
       ]
     },
     {
+      "name": "zwitch",
+      "version": "2.0.4",
+      "license": "MIT",
+      "source": "wooorm/zwitch",
+      "integrity": "sha512-bXE4cR/kVZhKZX/RjPEflHaKVhUVl85noU3v6b8apfQEc1x4A+zBxjZ4lN8LqGd6WZ3dl98pY4o717VFmoPp+A==",
+      "files": [
+        "licenses/zwitch2.0.4/license"
+      ]
+    },
+    {
       "name": "Electron / Chromium runtime",
       "version": "44.4.5",
       "license": "MIT and bundled third-party licenses",
@@ -322,11 +1602,11 @@
     },
     {
       "name": "Node.js independent host runtime",
-      "version": "v24.18.0",
+      "version": "v24.11.1",
       "license": "Node.js MIT and bundled third-party licenses",
-      "source": "https://github.com/nodejs/node/tree/v24.18.0",
+      "source": "https://github.com/nodejs/node/tree/v24.11.1",
       "files": [
-        "licenses/node-v24.18.0/LICENSE"
+        "licenses/node-v24.11.1/LICENSE"
       ]
     },
     {

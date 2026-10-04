@@ -7,6 +7,7 @@ export type SavedHost = { id: string; name: string; url?: string; local: boolean
 export interface DesktopBridge {
   titleBarOverlay?: boolean;
   setWindowTheme?(theme: 'dark' | 'light'): Promise<void>;
+  setUnsavedFiles?(count: number): Promise<void>;
   request<T = any>(method: string, params?: unknown): Promise<T>;
   subscribe(listener: (event: HostEvent) => void): () => void;
   listHosts(): Promise<SavedHost[]>;

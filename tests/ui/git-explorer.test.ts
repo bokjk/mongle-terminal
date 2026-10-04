@@ -59,6 +59,7 @@ test('Git switch, tree decorations, grouped changes, refresh, stale responses an
     const paneA = page.locator(`[data-terminal-id="${first.id}"]`), paneB = page.locator(`[data-terminal-id="${second.id}"]`);
     await paneA.locator('textarea').focus(); await page.getByRole('button', { name: '파일 탐색기', exact: true }).click();
     const explorer = page.getByRole('complementary', { name: '파일 탐색기' }), filesTab = explorer.getByRole('tab', { name: '파일', exact: true }), gitTab = explorer.getByRole('tab', { name: /^Git/ });
+    const editor = page.getByRole('region', { name: '파일 편집기', exact: true }), content = editor.locator('.document-body:not([hidden]) .cm-content');
     const count = (await host.handle('git.status', { id: first.id, hostId: host.getState().hostId, bootId: host.getState().bootId, generation: first.generation, root: repository }, ctx) as Extract<GitListing, { state: 'repository' }>).changes.length;
     await expect(gitTab.locator('.git-count')).toHaveText(String(count));
     await expect(explorer.getByRole('button', { name: 'added.txt', exact: true })).toHaveAccessibleDescription('추가됨');
@@ -70,14 +71,14 @@ test('Git switch, tree decorations, grouped changes, refresh, stale responses an
     await filesTab.focus(); await page.keyboard.press('ArrowRight'); await expect(gitTab).toHaveAttribute('aria-selected', 'true');
     const staged = explorer.getByRole('region', { name: '스테이징됨', exact: true }), working = explorer.getByRole('region', { name: '작업 폴더 변경', exact: true });
     await expect(staged.getByRole('button', { name: 'staged.txt · 수정됨' })).toBeVisible(); await expect(working.getByRole('button', { name: 'staged.txt · 수정됨' })).toBeVisible();
-    await staged.getByRole('button', { name: 'staged.txt · 수정됨' }).click(); await expect(explorer.locator('pre')).toHaveText('staged and working content\n');
+    await staged.getByRole('button', { name: 'staged.txt · 수정됨' }).click(); await expect(content).toContainText('staged and working content');
     await expect(staged.getByRole('button', { name: 'README.md · 삭제됨' })).toBeVisible();
     await expect(explorer.getByRole('region', { name: '새 파일', exact: true }).getByRole('button', { name: 'README.md · 새 파일', exact: false })).toBeVisible();
-    await staged.getByRole('button', { name: 'README.md · 삭제됨' }).click(); await expect(explorer.locator('pre')).toHaveText('recreated current file\n');
-    await explorer.getByRole('button', { name: '미리보기 닫기' }).click();
-    await explorer.getByRole('button', { name: '새 파일.txt · 새 파일', exact: false }).click(); await expect(explorer.locator('pre')).toContainText('안녕하세요'); assert.equal(await page.evaluate(() => (window as any).gitPreviewExecuted), undefined);
-    await explorer.getByRole('button', { name: 'deleted.txt · 삭제됨' }).click(); await expect(explorer.getByRole('alert')).toContainText('삭제된 파일');
-    await explorer.getByRole('button', { name: '미리보기 닫기' }).click();
+    await staged.getByRole('button', { name: 'README.md · 삭제됨' }).click(); await expect(editor.getByRole('article', { name: '마크다운 미리보기' })).toContainText('recreated current file');
+    await editor.getByRole('button', { name: 'README.md 닫기' }).click();
+    await explorer.getByRole('button', { name: '새 파일.txt · 새 파일', exact: false }).click(); await expect(content).toContainText('안녕하세요'); assert.equal(await page.evaluate(() => (window as any).gitPreviewExecuted), undefined);
+    await explorer.getByRole('button', { name: 'deleted.txt · 삭제됨' }).click(); await expect(page.getByRole('status').filter({ hasText: '삭제된 파일' })).toBeVisible();
+    await editor.getByRole('button', { name: '새 파일.txt 닫기' }).click();
     await page.screenshot({ path: `${output}/git-dark.png` });
     await filesTab.click();
     await writeFile(path.join(repository, 'one', 'fresh.txt'), 'refresh');
