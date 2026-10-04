@@ -16,6 +16,8 @@ test('shared explorer follows selected terminal and cwd, rejects late previews a
   await mkdir(path.join(folderA, 'src'), { recursive: true }); await mkdir(folderB);
   await writeFile(path.join(folderA, 'README.txt'), '<script>window.previewExecuted=true</script>\n한글 미리보기');
   await writeFile(path.join(folderA, 'slow.txt'), 'OLD_PREVIEW_MUST_NOT_APPEAR');
+  await writeFile(path.join(folderA, 'first.md'), '# 첫 문서\n\n원래 내용');
+  await writeFile(path.join(folderA, 'second.md'), '# 둘째 문서\n\n다른 내용');
   await writeFile(path.join(folderA, 'src', 'nested.txt'), 'nested');
   await writeFile(path.join(folderB, 'second.txt'), '프로젝트 B 파일');
   const host = new HostCore({ dataDir: path.join(root, 'host'), name: '파일 탐색기 검증 PC' }); await host.init();
@@ -87,6 +89,21 @@ test('shared explorer follows selected terminal and cwd, rejects late previews a
     await editor.getByRole('button', { name: '디스크 파일 다시 열기', exact: true }).first().click();
     await page.getByRole('button', { name: '변경 버리기', exact: true }).click();
     await expect(content).toHaveText('다른 프로그램의 변경');
+    // Hidden Markdown tabs must not keep rendered previews, but editor history must survive.
+    await explorer.getByRole('button', { name: 'first.md', exact: true }).click();
+    await editor.getByRole('button', { name: '나란히 보기', exact: true }).click();
+    await content.focus(); await content.press('Control+End'); await page.keyboard.insertText(' 수정');
+    await expect(editor.locator('.markdown-preview')).toContainText('원래 내용 수정');
+    await explorer.getByRole('button', { name: 'second.md', exact: true }).click();
+    await expect(editor.locator('.markdown-preview')).toHaveCount(1);
+    await expect(editor.locator('.markdown-preview')).toContainText('둘째 문서');
+    await editor.getByRole('tab', { name: 'first.md · 수정 중', exact: true }).click();
+    await expect(content).toContainText('원래 내용 수정');
+    await content.focus(); await content.press('Control+z');
+    await expect(editor.locator('.markdown-preview')).toHaveCount(1);
+    await expect(editor.locator('.markdown-preview')).toContainText('원래 내용');
+    await expect(editor.locator('.markdown-preview')).not.toContainText('수정');
+    await expect(editor.getByRole('tab', { name: 'first.md', exact: true })).toBeVisible();
     await explorer.getByRole('button', { name: 'slow.txt', exact: true }).click();
     await expect.poll(() => Boolean(releaseSlow)).toBe(true);
     await paneB.locator('textarea').focus();

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Columns2, Copy, Eye, FileText, Folder, Maximize2, Minimize2, Pencil, RefreshCw, Save, X } from 'lucide-react';
 import type { FileDocuments } from './use-file-documents';
@@ -9,14 +9,15 @@ import { MarkdownPreview } from './MarkdownPreview';
 type Props = { files: FileDocuments; treeOpen: boolean; onToggleTree(): void; maximized: boolean; onMaximize(): void; onError(message: string): void };
 export function FileEditorPanel({ files, treeOpen, onToggleTree, maximized, onMaximize, onError }: Props) {
   const [confirm, setConfirm] = useState<{ key: string; action: 'close' | 'reload' }>();
+  const copy = useCallback(async (text: string, description: string) => {
+    try { if (window.mongle?.writeClipboard) await window.mongle.writeClipboard(text); else await navigator.clipboard.writeText(text); onError(`${description} 복사했습니다.`); }
+    catch { onError('클립보드에 복사하지 못했습니다. 내용을 선택해 복사해 주세요.'); }
+  }, [onError]);
+  const copyLink = useCallback((url: string) => { void copy(url, '링크 주소를'); }, [copy]);
   const doc = files.active;
   if (!files.visible || !doc) return null;
   const dirty = dirtyDocument(doc), connected = files.available(doc), editable = Boolean(doc.file?.documentId && !doc.file.readOnlyReason);
   const markdown = isMarkdown(doc.path);
-  async function copy(text: string, description: string) {
-    try { if (window.mongle?.writeClipboard) await window.mongle.writeClipboard(text); else await navigator.clipboard.writeText(text); onError(`${description} 복사했습니다.`); }
-    catch { onError('클립보드에 복사하지 못했습니다. 내용을 선택해 복사해 주세요.'); }
-  }
   function reload() { if (dirty) setConfirm({ key: doc!.key, action: 'reload' }); else void files.load(doc!.key); }
   return <section className="file-editor-panel" aria-label="파일 편집기" onKeyDown={event => {
     event.stopPropagation();
@@ -55,7 +56,7 @@ export function FileEditorPanel({ files, treeOpen, onToggleTree, maximized, onMa
       <div className="source-pane" hidden={isMarkdown(item.path) && item.mode === 'preview'}>
         {item.file && <CodeEditor path={item.path} value={item.text} active={item.key === doc.key && item.mode !== 'preview'} readOnly={!item.file.documentId || Boolean(item.file.readOnlyReason) || item.busy} onChange={text => files.patch(item.key, { text })} onSave={() => void files.save(item.key)}/>}
       </div>
-      {isMarkdown(item.path) && item.mode !== 'edit' && <MarkdownPreview text={item.text} onCopyLink={url => void copy(url, '링크 주소를')}/>}
+      {item.key === doc.key && isMarkdown(item.path) && item.mode !== 'edit' && <MarkdownPreview text={item.text} onCopyLink={copyLink}/>}
     </div>)}</div>
     <footer className="editor-status"><span>{doc.file?.encoding || '텍스트'}{doc.file?.text.includes('\r\n') ? ' · CRLF' : ' · LF'}</span><span role="status">{doc.saving ? '저장 중…' : dirty ? '저장하지 않은 변경' : doc.file ? '수정 없음' : '파일 열기'}</span><span>{doc.text.split(/\r\n|\r|\n/).length}줄</span></footer>
     {confirm && <DiscardFileDialog name={files.documents.find(item => item.key === confirm.key)?.name || '파일'} onCancel={() => setConfirm(undefined)} onDiscard={() => { if (confirm.action === 'close') files.close(confirm.key); else void files.load(confirm.key); setConfirm(undefined); }}/>}

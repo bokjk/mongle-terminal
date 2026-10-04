@@ -55,3 +55,31 @@ Aside의 `setViewportSize`는 지원되지 않았다. 별도 390px iframe 검증
 ## 남은 검증
 
 네이티브 종료/업데이트 확인창 실제 조작, 패키지 GUI E2E, 재연결/호스트 재시작 뒤 UI 복구, 실제 Tailscale 원격·휴대폰·네이티브 한글 IME 조합 입력, 전체 GitHub CI 실행, 설치본 교체와 공개 배포는 별도다. 브라우저 `insertText`로 검증한 한글 입력을 실제 IME 조합 입력 검증으로 표현하지 않는다.
+
+## 여러 마크다운 탭 성능 후속 검증
+
+검증일: 2026-10-05. 설치본 교체나 배포 없이 동일 PC의 Aside, 격리 HostCore, 실제 cmd 2개와 loopback 연결에서 측정했다. 표·제목·목록·링크를 반복한 마크다운 8개(각 57,902바이트)를 미리보기로 열고, 짧은 README를 아홉 번째 탭의 나란히 보기에서 편집했다. 기존 코드는 숨긴 문서의 Markdown 트리도 매 입력마다 재생성했다. 현재 문서의 미리보기만 생성하고, 변경되지 않은 내용/링크 콜백의 렌더링을 생략하며, 입력과 미리보기 갱신을 `useDeferredValue`로 분리했다. CodeMirror 인스턴스는 탭별로 유지한다.
+
+` abcdefghijkl` 13자를 요청 간격 100ms로 입력했다. 각 `beforeinput`부터 활성 README 미리보기의 DOM 변경까지 MutationObserver로 기록했다. 브라우저가 visible/focused인 상태였으며, 실제 화면 paint·네이티브 키보드/IME 지연 측정은 아니다. 각 조건은 한 번의 연속 입력 표본이므로 일반적인 성능 보장이나 통계적 벤치마크로 해석하지 않는다.
+
+| 같은 9개 탭 조건 | 수정 전 | 수정 후 |
+|---|---:|---:|
+| 입력 → 미리보기 DOM 반영 중앙값 | 1,625.1ms | 64.2ms |
+| 위 표본의 최대값 | 5,061.5ms | 203.5ms |
+| 문서 영역 DOM 요소 | 40,399 | 1,215 |
+| 생성된 미리보기 | 9 | 1 |
+| 입력 구간의 50ms 이상 long task | 19 | 0 |
+
+13개 값과 long task 원본은 커밋하지 않는 `test-results/file-editor/performance.json`에 남겼다. 초기 requestAnimationFrame 측정은 프레임 스케줄링 지연으로 신뢰할 수 없어 위 결과에서 제외했다. 후속으로 큰 문서 자체를 나란히 보기에서 편집할 때는 142–316ms long task 7개가 발생했다. 해당 후속 표본은 이전 README의 MutationObserver가 분리된 상태라 입력 → DOM 시간으로 사용하지 않았다. 숨겨진 문서의 비용을 제거했어도 활성 문서의 파싱 자체를 작업 스레드로 옮긴 것은 아니므로 복잡한 문서의 지연은 남는다. 필요하면 편집 모드로 전환할 수 있다.
+
+수정 후 Aside에서 실제로 확인한 내용:
+
+- 여러 파일을 연 뒤 README에 수정 → 다른 탭 → 복귀 시 내용 유지 → Ctrl+Z로 직전 수정 복원.
+- Ctrl+S 뒤 수정 없음 표시와 실제 디스크 내용 일치. 이후 한국어 예제 문서도 저장했다.
+- 악성 시험 Markdown의 script/img/실행 링크 DOM 0개, 스크립트 실행 없음, 브라우저 오류 0개.
+- 미저장 큰 문서를 닫으면 변경 버리기 확인창 표시. 밝은 테마에서 터미널 오른쪽 나란히 보기 화면 캡처.
+- `tests/ui/file-explorer.test.ts`에 두 Markdown 탭 전환 시 활성 미리보기 1개와 실행 취소 보존 회귀를 추가했다. 타입 검사는 통과했으며 Chrome 기반 자동 UI 검사는 사용자 브라우저 규칙에 따라 로컬에서 실행하지 않았다. 위 Aside 조작을 자동 UI 검사 통과로 대체 표기하지 않는다.
+- `npm run typecheck`, 전체 빌드를 포함한 `runtime/node.exe --import tsx scripts/package.ts --dir --output release-editor-performance-test` 통과. 패키지의 호스트 네이티브 모듈 실제 로드와 아이콘 7프레임 확인. 로그는 `.test-data/editor-performance-package.log`. NSIS 설치·서명·배포는 하지 않았다.
+- `scripts/release-check.ts`와 `git diff --check` 통과. 최종 Aside 캡처 일부는 CDP 시간 초과/viewport 대체가 있었으며 성공한 화면을 `test-results/file-editor/editor-current.png`에 보존했다. 밝은 테마 전환 뒤 터미널 하단에 검은 빈 영역도 관찰했다. 원인과 네이티브 앱 재현 여부는 확인하지 않았으며 이번 편집기 성능 수정으로 해결했다고 간주하지 않는다.
+
+README/CHANGELOG를 갱신했다. 기존 사용자 안내의 조작·저장·개인 데이터·업데이트 방식은 바뀌지 않아 USER-GUIDE와 RELEASING의 내용은 유지했다. 실물 모바일·원격·IME와 전체 CI에 대한 위 미검증 범위도 그대로다.
