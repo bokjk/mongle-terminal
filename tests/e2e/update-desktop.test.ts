@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import type { ChildProcess } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -15,23 +15,31 @@ const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catc
 
 test('desktop update bridge and settings identify an unpacked app and reject installation without stopping its host', { skip: !enabled, timeout: 60000 }, async () => {
   await mkdir(output, { recursive: true });
-  const dataDir = await mkdtemp(path.join(tmpdir(), 'mongle-update-desktop-'));
+  const isolated = await mkdtemp(path.join(tmpdir(), 'mongle-update-desktop-'));
+  // Elevated Windows runners may give ordinary mkdir/mkdtemp directories an
+  // Administrators owner. Let the app's native helper create its protected
+  // profile itself, exactly as a fresh installation does.
+  const dataDir = path.join(isolated, 'host');
+  await assert.rejects(lstat(dataDir), { code: 'ENOENT' });
   const env: NodeJS.ProcessEnv = { ...process.env, MONGLE_DATA_DIR: dataDir };
   delete env.ELECTRON_RUN_AS_NODE;
   let application: ElectronApplication | undefined;
   let electronProcess: ChildProcess | undefined;
   let hostPid: number | undefined;
   const errors: string[] = [];
-  const processLogs: string[] = [];
-  const proof: Record<string, unknown> = { passed: false, dataDir, executable: executable || 'development' };
+  let processLogs = '';
+  let failure: unknown;
+  const proof: Record<string, unknown> = { passed: false, dataDir, profileInitiallyAbsent: true, executable: executable || 'development', startupStage: 'launching' };
   try {
     application = await _electron.launch({ executablePath: executable || path.join(root, 'node_modules/electron/dist/electron.exe'), args: executable ? [] : [root], cwd: root, env: env as Record<string, string>, timeout: 25000 });
     electronProcess = application.process();
-    electronProcess.stderr?.on('data', data => processLogs.push(String(data)));
+    electronProcess.stderr?.on('data', data => { processLogs = (processLogs + String(data)).slice(-16 * 1024); });
+    proof.startupStage = 'waiting-for-window';
     const page = await application.firstWindow();
     page.setDefaultTimeout(10000);
     page.on('pageerror', error => errors.push(error.message));
     await expect(page.getByRole('button', { name: '새 그룹', exact: true })).toBeEnabled({ timeout: 25000 });
+    proof.startupStage = 'host-connected';
     const readiness = JSON.parse(await readFile(path.join(dataDir, 'host-info.json'), 'utf8'));
     hostPid = readiness.pid;
     assert.ok(hostPid && alive(hostPid));
@@ -59,9 +67,13 @@ test('desktop update bridge and settings identify an unpacked app and reject ins
     await page.screenshot({ path: path.join(output, 'unpacked-update-settings.png') });
     assert.deepEqual(errors, []);
     proof.passed = true; proof.state = state; proof.menu = menu; proof.hostPid = hostPid;
+  } catch (error) {
+    failure = error;
+    proof.error = String(error).slice(-8192);
+    throw error;
   } finally {
     if (application) {
-      const page = await application.firstWindow().catch(() => undefined);
+      const page = await application.firstWindow({ timeout: 3000 }).catch(() => undefined);
       if (page) {
         if (!proof.passed) await page.screenshot({ path: path.join(output, 'failure.png') }).catch(() => {});
         await page.evaluate(() => window.mongle!.request('host.shutdown')).catch(error => { proof.shutdownError = String(error); });
@@ -72,8 +84,9 @@ test('desktop update bridge and settings identify an unpacked app and reject ins
       const deadline = Date.now() + 10000;
       while (alive(hostPid) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 100));
     }
-    proof.cleanedUp = (!hostPid || !alive(hostPid)) && (!electronProcess || electronProcess.exitCode !== null || electronProcess.signalCode !== null);
+    proof.cleanupEvidence = { desktopObserved: Boolean(electronProcess), hostObserved: Boolean(hostPid) };
+    proof.cleanedUp = electronProcess && hostPid ? !alive(hostPid) && (electronProcess.exitCode !== null || electronProcess.signalCode !== null) : null;
     await writeFile(path.join(output, 'result.json'), JSON.stringify({ ...proof, errors, processLogs, finishedAt: new Date().toISOString() }, null, 2));
-    assert.equal(proof.cleanedUp, true, 'The isolated desktop and host must exit');
+    if (!failure) assert.equal(proof.cleanedUp, true, 'The isolated desktop and host must exit');
   }
 });
