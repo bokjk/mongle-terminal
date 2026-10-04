@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { connectOwnerPipe } from '../../packages/local-ipc/index';
 import { AppError, PROTOCOL_VERSION, type HostEvent, type Transport } from '../../packages/protocol/index';
 import { HostRegistry } from './host-registry';
-import { launchHost } from './runtime';
+import { launchHost, prepareDesktopDataDirectory } from './runtime';
 import { RemoteTransport } from './remote-transport';
 import type { ConnectionInfo } from './contracts';
 import { FullExitController, isProcessAlive, readHostReadiness } from './full-exit';
@@ -18,13 +18,25 @@ import { createVerifiedClipboardWriter } from './clipboard';
 app.setName('몽글터미널');
 // Match installer and shortcut identity for Windows taskbar grouping.
 if (process.platform === 'win32') app.setAppUserModelId('dev.mongle.terminal');
-const dataDir = path.resolve(process.env.MONGLE_DATA_DIR || path.join(process.env.LOCALAPPDATA || app.getPath('userData'), 'MongleTerminal'));
-app.setPath('userData', path.join(dataDir, 'desktop-profile'));
-const singleInstance = app.requestSingleInstanceLock();
-if (!singleInstance) app.quit();
-const root = app.isPackaged ? path.join(process.resourcesPath, 'hostbundle') : app.getAppPath();
+const root = path.resolve(app.isPackaged ? path.join(process.resourcesPath, 'hostbundle') : app.getAppPath());
 process.env.MONGLE_NATIVE_HELPER = path.join(root, 'platform/windows/OwnerPipe.exe');
 process.env.MONGLE_OWNER_HELPER = process.env.MONGLE_NATIVE_HELPER;
+const dataDir = path.resolve(process.env.MONGLE_DATA_DIR || path.join(process.env.LOCALAPPDATA || app.getPath('userData'), 'MongleTerminal'));
+const singleInstance = (() => {
+  try {
+    // Do not yield before preparation: Chromium can create profile directories
+    // with the token's default owner before the native owner check runs.
+    prepareDesktopDataDirectory(root, dataDir);
+    app.setPath('userData', path.join(dataDir, 'desktop-profile'));
+    const acquired = app.requestSingleInstanceLock();
+    if (!acquired) app.quit();
+    return acquired;
+  } catch (error) {
+    dialog.showErrorBox('몽글터미널을 열지 못했습니다', error instanceof Error ? error.message : String(error));
+    app.exit(1);
+    return false;
+  }
+})();
 const registry = new HostRegistry(dataDir);
 let window: BrowserWindow | undefined;
 let tray: Tray | undefined;
