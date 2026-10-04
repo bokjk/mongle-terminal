@@ -54,7 +54,7 @@ export function FileEditorPanel({ files, treeOpen, onToggleTree, maximized, onMa
     {doc.busy && <p className="file-message" role="status">파일을 읽는 중…</p>}
     <div className="document-bodies">{files.documents.map(item => <div key={item.key} role="tabpanel" aria-label={item.name} hidden={item.key !== doc.key || !item.file} className={`document-body mode-${isMarkdown(item.path) ? item.mode : 'edit'}`}>
       <div className="source-pane" hidden={isMarkdown(item.path) && item.mode === 'preview'}>
-        {item.file && <CodeEditor path={item.path} value={item.text} active={item.key === doc.key && item.mode !== 'preview'} readOnly={!item.file.documentId || Boolean(item.file.readOnlyReason) || item.busy} onChange={text => files.patch(item.key, { text })} onSave={() => void files.save(item.key)}/>}
+        {item.file && <CodeEditor path={item.path} value={item.text} session={item.editorSession} active={item.key === doc.key && item.mode !== 'preview'} readOnly={!item.file.documentId || Boolean(item.file.readOnlyReason) || item.busy} onChange={text => files.patch(item.key, { text })} onSave={() => void files.save(item.key)}/>}
       </div>
       {item.key === doc.key && isMarkdown(item.path) && item.mode !== 'edit' && <MarkdownPreview text={item.text} onCopyLink={copyLink}/>}
     </div>)}</div>

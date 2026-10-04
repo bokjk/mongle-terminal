@@ -83,3 +83,38 @@ Aside의 `setViewportSize`는 지원되지 않았다. 별도 390px iframe 검증
 - `scripts/release-check.ts`와 `git diff --check` 통과. 최종 Aside 캡처 일부는 CDP 시간 초과/viewport 대체가 있었으며 성공한 화면을 `test-results/file-editor/editor-current.png`에 보존했다. 밝은 테마 전환 뒤 터미널 하단에 검은 빈 영역도 관찰했다. 원인과 네이티브 앱 재현 여부는 확인하지 않았으며 이번 편집기 성능 수정으로 해결했다고 간주하지 않는다.
 
 README/CHANGELOG를 갱신했다. 기존 사용자 안내의 조작·저장·개인 데이터·업데이트 방식은 바뀌지 않아 USER-GUIDE와 RELEASING의 내용은 유지했다. 실물 모바일·원격·IME와 전체 CI에 대한 위 미검증 범위도 그대로다.
+
+## 입력 응답과 숨김 복원 후속 안정화
+
+검증일: 2026-10-05. 위 검증 뒤 확인한 문제를 같은 개발 브랜치에서 추가 수정했다. 기존 Mobbin 참고를 적용한 화면 구성은 유지하며, 새로운 디자인 패턴이나 조작 흐름을 추가한 작업은 아니다.
+
+### 발견한 문제와 변경
+
+- 큰 Markdown은 `useDeferredValue`로 미뤄도 파싱 자체가 메인 스레드를 막았다. 파싱·안전한 정적 마크업 생성을 전용 Web Worker로 옮겼다. 실행 중인 작업 1개와 대기 중인 최신 초안 1개만 유지하며 지난 결과를 표시하지 않는다. 편집/숨김/탭 전환으로 미리보기를 닫으면 작업을 종료한다. 10초 시간 제한과 64 KiB 입력 제한을 두고 실패 시 원문 편집은 유지한다.
+- `react-markdown`의 HTML 생략·URL 허용 목록·이미지 대체 정책과 React의 텍스트/속성 이스케이프를 유지한다. Worker가 생성한 마크업만 삽입한다. 링크는 계속 HTTP(S)/메일 주소 복사 전용이다. 별도 의존성을 추가하지 않았으며 브라우저용 엔티티 디코더가 `document`를 요구하는 문제는 해당 고정 패키지의 DOM 없는 공개 엔트리로 해결했다. CSP·샌드박스 설정을 완화하지 않았다.
+- 편집기를 숨기면 CodeMirror가 해제돼 실행 취소 기록을 잃는 것을 Aside에서 재현했다. 파일별 메모리에 문서·선택·history 데이터를 보관하고 다시 열 때 새 콜백과 함께 복원한다. 내용이 달라진 경우 오래된 이력은 복원하지 않는다. 활성 편집기에 복원한 뒤 중복 보관본은 해제한다. 새로고침/앱 종료 후 초안 복원 기능을 추가한 것은 아니다.
+- 읽기 전용 터미널의 `.xterm-viewport` 높이는 767.5px, 실제 호스트 그리드는 510px였으며 기본 viewport 배경이 검정이었다. 남는 공간도 기존 `--terminal` 색을 사용하게 했다. 수정 후 밝은 테마의 viewport와 호스트 영역 배경은 흰색으로 일치했다. 출력 셀의 ANSI 색이나 호스트 그리드 크기를 바꾸지 않았다.
+
+### 실제 입력 측정
+
+동일한 57,902바이트/3,171줄의 표·목록 포함 Markdown에 ` abcdefghijkl` 13자를 요청 간격 100ms로 입력했다. 수정 전에는 짧은 README와 큰 Markdown 탭 2개를 열었다. 수정 후 최초 표본은 큰 문서 1개, 재확인 표본은 동일한 2개 탭과 파일 목록/나란히 보기 배치였다. `PerformanceObserver`로 입력 구간의 메인 스레드 long task를 수집했다.
+
+| 지표 | 수정 전 | 수정 후 최초 | 수정 후 같은 2개 탭 |
+|---|---:|---:|---:|
+| 50ms 이상 long task | 13회 | 0회 | 0회 |
+| 해당 long task 범위 | 153–314ms | 없음 | 없음 |
+| 마지막 입력 → 최종 미리보기 DOM 반영 | 비교값으로 사용하지 않음 | 498.1ms | 491.5ms |
+
+입력 자체가 화면 처리에 막히는 현상을 줄였지만, 미리보기 완료가 즉시라는 뜻은 아니다. 수정 전 MutationObserver는 여러 입력을 한 번의 반영으로 합쳤으므로 문자별 지연으로 해석하지 않았다. 위 시간은 DOM 변경 기준이며 실제 paint·네이티브 IME 지연은 아니다. 조건별 표본 수가 적어 모든 하드웨어/원격 환경의 성능을 보장하지 않는다. 원본은 `test-results/file-editor/reliability-performance{,-repeat}.json`에 보관하고 커밋하지 않는다.
+
+### 확인한 범위
+
+- Aside + loopback의 실제 HostCore/cmd/파일: 큰 문서 미리보기, 숨김 전후 수정 유지 및 Ctrl+Z/Ctrl+Y, 저장 후 디스크 내용 일치.
+- 최종 빌드에서 문서 첫 줄 끝에 커서를 둔 채 숨김/복원 후 다시 입력해 같은 위치에 이어지는 것과 이전 편집의 실행 취소를 확인했다. 밝은 테마의 viewport 배경은 흰색이며 실제 캡처에서도 검은 빈 영역이 사라졌다. `test-results/file-editor/editor-reliability.png`는 전체 캡처의 CDP 시간 초과 후 Aside가 반환한 viewport 캡처이며 저장소에는 추가하지 않는다.
+- 시험 호스트를 정상 종료하고 동일한 격리 프로필에서 다시 시작했다. 브라우저 새로고침 없이 단절 중 초안 유지/저장 비활성화, 재연결 후 초안/실행 취소 유지, 만료된 권한의 저장 차단, 디스크 다시 열기로 새 권한을 얻은 뒤 실제 저장을 확인했다. 실제 Tailscale·다른 컴퓨터 전환·장시간 단절 시험은 아니다.
+- 악성 Markdown에서 script/img/iframe/실행 링크 DOM 0개, 스크립트 실행 없음. 66,000자 붙여넣기 시 미리보기와 저장의 크기 제한 안내, Ctrl+Z로 원문 복원 확인.
+- `markdown-render.test.ts` 8개와 `markdown-worker-bundle.test.ts` 1개: 안전한 마크업, 요청 합치기/지난 응답 무시, 닫기/실패/시간 초과, 오류 후 정상 문서 회복, DOM/Node 전역 없이 빌드된 Worker 실행. 브라우저 자동화가 아닌 Node 검사다.
+- `tests/host/file-editor.test.ts`, `tests/host/files.test.ts` 7개 통과: 실제 파일·인코딩·충돌·동시 저장·권한 폐기·경로 경계. Chrome 기반 `file-explorer.test.ts`에는 숨김 복원 회귀를 추가했지만 로컬 실행은 하지 않았다.
+- 전체 타입·빌드·`release-editor-reliability-test` 디렉터리 패키지와 호스트 네이티브 모듈 로드/7프레임 아이콘 검사를 통과했다. 로그는 `.test-data/editor-reliability-{build,package}.log`에 보관한다. 설치·공개 배포·패키지 GUI/네이티브 file URL의 Worker 실행·실물 모바일/IME·전체 GitHub CI는 별도다.
+
+README, CHANGELOG, USER-GUIDE와 구현 상태를 함께 갱신했다. 배포/자동 업데이트 방식은 바뀌지 않는다. 앞선 기록의 큰 문서 입력 지연·숨김 이력 유실·검은 빈 영역 항목은 이번 수정과 검증 범위로 보완한다.

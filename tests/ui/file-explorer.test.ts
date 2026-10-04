@@ -104,6 +104,13 @@ test('shared explorer follows selected terminal and cwd, rejects late previews a
     await expect(editor.locator('.markdown-preview')).toContainText('원래 내용');
     await expect(editor.locator('.markdown-preview')).not.toContainText('수정');
     await expect(editor.getByRole('tab', { name: 'first.md', exact: true })).toBeVisible();
+    await content.focus(); await content.press('Control+End'); await page.keyboard.insertText(' 숨김 이력');
+    await editor.getByRole('button', { name: '편집기 숨기기', exact: true }).click();
+    await page.getByRole('button', { name: /열린 파일 .*수정 중/ }).click();
+    await expect(content).toContainText('숨김 이력');
+    await content.focus(); await content.press('Control+z');
+    await expect(content).not.toContainText('숨김 이력');
+    await expect(editor.getByRole('tab', { name: 'first.md', exact: true })).toBeVisible();
     await explorer.getByRole('button', { name: 'slow.txt', exact: true }).click();
     await expect.poll(() => Boolean(releaseSlow)).toBe(true);
     await paneB.locator('textarea').focus();
