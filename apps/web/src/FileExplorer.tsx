@@ -5,7 +5,7 @@ import { GitChanges, GitMarker, gitKind, gitLabel, useGitListing } from './GitCh
 import { explorerClient, type ExplorerClient } from './explorer-queue';
 
 type Reference = { id: string; hostId: string; bootId: string; generation: string; root: string };
-type Props = { client: Transport; hostId: string; bootId: string; terminal?: TerminalInfo; supported: boolean; gitSupported: boolean; connected: boolean; onClose(): void; onError(message: string): void };
+type Props = { client: Transport; hostId: string; bootId: string; terminal?: TerminalInfo; supported: boolean; gitSupported: boolean; connected: boolean; onClose(): void; onError(message: string): void; onOpenFile?(reference: Reference, path: string): Promise<void> };
 const message = (error: unknown) => error instanceof Error ? error.message : '파일을 불러오지 못했습니다.';
 
 export function FileExplorer(props: Props) {
@@ -27,7 +27,7 @@ export function FileExplorer(props: Props) {
       onKeyDown={event => { if (['ArrowLeft', 'ArrowRight', 'Home'].includes(event.key)) { event.preventDefault(); setWidth(value => event.key === 'Home' ? 320 : Math.max(220, Math.min(560, value + (event.key === 'ArrowLeft' ? 20 : -20)))); } }}/>
     {(!props.connected || !terminal || !props.supported) && <ExplorerHeading view="files" gitSupported={false} count={0} onView={setView} onClose={props.onClose}/>}
     {!props.connected ? <p className="file-message">컴퓨터에 다시 연결하면 파일을 볼 수 있습니다.</p> : !terminal ? <p className="file-message">파일을 볼 터미널을 선택하세요.</p> : !props.supported ? <p className="file-message">이 컴퓨터의 몽글터미널을 업데이트하면 파일을 볼 수 있습니다.</p> :
-      <ExplorerContent key={`${props.hostId}:${props.bootId}:${terminal.id}:${terminal.generation}:${root}`} client={client} reference={reference!} title={terminal.title} reported={Boolean(terminal.currentCwd)} gitSupported={props.gitSupported} view={props.gitSupported ? view : 'files'} onView={setView} onClose={props.onClose} onError={props.onError}/>}
+      <ExplorerContent key={`${props.hostId}:${props.bootId}:${terminal.id}:${terminal.generation}:${root}`} client={client} reference={reference!} title={terminal.title} reported={Boolean(terminal.currentCwd)} gitSupported={props.gitSupported} view={props.gitSupported ? view : 'files'} onView={setView} onClose={props.onClose} onError={props.onError} onOpenFile={props.onOpenFile}/>}
   </aside>;
 }
 
@@ -37,7 +37,7 @@ function ExplorerHeading({ view, gitSupported, count, onView, onClose }: { view:
   }}><button role="tab" data-view="files" aria-selected={view === 'files'} tabIndex={view === 'files' ? 0 : -1} onClick={() => onView('files')}><Folder size={15}/>파일</button>{gitSupported && <button role="tab" data-view="git" aria-selected={view === 'git'} tabIndex={view === 'git' ? 0 : -1} onClick={() => onView('git')}><GitBranch size={15}/>Git{count > 0 && <span className="git-count" aria-label={`변경 파일 ${count}개`}>{count}</span>}</button>}</div><button className="icon-button" aria-label="파일 탐색기 닫기" onClick={onClose}><X size={16}/></button></header>;
 }
 
-function ExplorerContent({ client, reference, title, reported, gitSupported, view, onView, onClose, onError }: { client: ExplorerClient; reference: Reference; title: string; reported: boolean; gitSupported: boolean; view: 'files' | 'git'; onView(value: 'files' | 'git'): void; onClose(): void; onError(message: string): void }) {
+function ExplorerContent({ client, reference, title, reported, gitSupported, view, onView, onClose, onError, onOpenFile }: { client: ExplorerClient; reference: Reference; title: string; reported: boolean; gitSupported: boolean; view: 'files' | 'git'; onView(value: 'files' | 'git'): void; onClose(): void; onError(message: string): void; onOpenFile?: Props['onOpenFile'] }) {
   const [revision, setRevision] = useState(0);
   const [preview, setPreview] = useState<FilePreview>();
   const [selected, setSelected] = useState('');
@@ -51,6 +51,7 @@ function ExplorerContent({ client, reference, title, reported, gitSupported, vie
   const folderRevision = `${revision}:${JSON.stringify(changes)}`;
   useEffect(() => () => { sequence.current++; previewRequest.current?.abort(); }, []);
   async function openFile(entry: FileEntry) {
+    if (onOpenFile) { setSelected(entry.path); await onOpenFile(reference, entry.path); return; }
     const current = ++sequence.current;
     previewRequest.current?.abort();
     const controller = previewRequest.current = new AbortController();
@@ -61,7 +62,8 @@ function ExplorerContent({ client, reference, title, reported, gitSupported, vie
   }
   function refresh() { sequence.current++; previewRequest.current?.abort(); setPreview(undefined); setSelected(''); setError(''); setBusy(false); setRevision(value => value + 1); }
   function openChange(change: GitChange) {
-    if (!change.untracked && (change.worktree === 'D' || change.index === 'D')) { sequence.current++; previewRequest.current?.abort(); setSelected(change.path); setPreview(undefined); setBusy(false); setError('삭제된 파일입니다. 작업 폴더에 미리 볼 내용이 없습니다.'); return; }
+    const recreated = changes.some(item => item.path === change.path && item.untracked);
+    if (!change.untracked && !recreated && (change.worktree === 'D' || change.index === 'D')) { sequence.current++; previewRequest.current?.abort(); setSelected(change.path); setPreview(undefined); setBusy(false); setError('삭제된 파일입니다. 작업 폴더에 미리 볼 내용이 없습니다.'); if (onOpenFile) onError('삭제된 파일입니다. 작업 폴더에 열 내용이 없습니다.'); return; }
     void openFile({ name: change.path.split('/').pop()!, path: change.path, kind: 'file' });
   }
   async function copy(value: string) {
@@ -77,7 +79,7 @@ function ExplorerContent({ client, reference, title, reported, gitSupported, vie
       {view === 'git' && <GitChanges listing={git.listing} error={git.error} selected={selected} onFile={openChange} onRetry={refresh}/>}
       {view === 'files' && git.error && <p className="file-message">Git 상태 표시를 갱신하지 못했습니다. 새로고침해 주세요.</p>}
     </div>
-    {selected && <section className="file-preview" aria-label="파일 미리보기"><header><span title={selected}>{selected}</span>{preview && <button className="icon-button" aria-label="파일 경로 복사" onClick={() => void copy(preview.absolutePath)}><Copy size={14}/></button>}<button className="icon-button" aria-label="미리보기 닫기" onClick={() => { sequence.current++; previewRequest.current?.abort(); setSelected(''); setPreview(undefined); setBusy(false); setError(''); }}><X size={14}/></button></header>
+    {!onOpenFile && selected && <section className="file-preview" aria-label="파일 미리보기"><header><span title={selected}>{selected}</span>{preview && <button className="icon-button" aria-label="파일 경로 복사" onClick={() => void copy(preview.absolutePath)}><Copy size={14}/></button>}<button className="icon-button" aria-label="미리보기 닫기" onClick={() => { sequence.current++; previewRequest.current?.abort(); setSelected(''); setPreview(undefined); setBusy(false); setError(''); }}><X size={14}/></button></header>
       {busy ? <p className="file-message" role="status">파일을 읽는 중…</p> : error ? <p className="file-message error-text" role="alert">{error}</p> : preview && <><div className="file-preview-meta">현재 파일 · 읽기 전용 · {preview.encoding}{preview.truncated && ' · 처음 64 KiB만 표시'}</div><pre tabIndex={0}>{preview.text || '(빈 파일)'}</pre></>}
     </section>}
   </>;

@@ -21,6 +21,9 @@ export interface ConnectionContext { id: string; deviceId: string; deviceName: s
 export interface FileEntry { name: string; path: string; kind: 'directory' | 'file' | 'link' | 'other'; }
 export interface DirectoryListing { root: string; path: string; absolutePath: string; entries: FileEntry[]; truncated: boolean; }
 export interface FilePreview { path: string; absolutePath: string; text: string; truncated: boolean; encoding: 'UTF-8' | 'UTF-16LE' | 'UTF-16BE'; }
+/** Editing is explicitly granted by the host for this connection and document. */
+export interface FileDocument extends FilePreview { documentId?: string; version?: string; readOnlyReason?: string; }
+export const FILE_EDIT_BYTES = 64 * 1024;
 export type GitStatusCode = '' | 'M' | 'A' | 'D' | 'R' | 'C' | 'T';
 export interface GitChange { path: string; originalPath?: string; index: GitStatusCode; worktree: GitStatusCode; untracked: boolean; conflicted: boolean; }
 export type GitListing = { state: 'not-repository' | 'unavailable'; root: string; message: string } | { state: 'repository'; root: string; repositoryRoot: string; branch: string; detached: boolean; changes: GitChange[]; truncated: boolean };

@@ -90,6 +90,16 @@ jobs:
       - name: Recheck release documents after packaging
         shell: pwsh
         run: node --import tsx scripts/release-check.ts "$env:RELEASE_TAG"
+      - name: Verify actual NSIS replacement and workspace restore
+        run: node --import tsx scripts/verify-installed-upgrade.ts
+      - name: Preserve installed upgrade results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: installed-upgrade-result
+          path: test-results/installed-upgrade/result.json
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Preserve verified release files
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:

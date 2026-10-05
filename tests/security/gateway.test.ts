@@ -164,7 +164,7 @@ test('file and Git RPC use the paired WebSocket context and cannot bypass first-
   const f = await fixture();
   try {
     const auth = await f.paired();
-    for (const method of ['files.list', 'git.status']) {
+    for (const method of ['files.list', 'files.open', 'files.save', 'files.reload', 'git.status']) {
       const unauthenticated = f.socket(auth.cookie); await unauthenticated.open();
       unauthenticated.send({ type: 'request', id: 'premature-read', method, params: {} });
       await unauthenticated.closed(); assert.equal(f.core.calls.length, 0);
@@ -172,7 +172,7 @@ test('file and Git RPC use the paired WebSocket context and cannot bypass first-
     const socket = f.socket(auth.cookie); await socket.open();
     socket.send({ type: 'authenticate', ticket: await f.ticket(auth) });
     await socket.message(message => message.type === 'authenticated');
-    for (const method of ['files.list', 'files.preview', 'git.status']) {
+    for (const method of ['files.list', 'files.preview', 'files.open', 'files.save', 'files.reload', 'files.close', 'git.status']) {
       socket.send({ type: 'request', id: method, method, params: { path: 'src/readme.txt' } });
       const reply = await socket.message(message => message.id === method);
       assert.equal(reply.ok, true); assert.equal(reply.result.owner, false);

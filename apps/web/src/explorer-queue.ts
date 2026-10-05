@@ -36,5 +36,8 @@ export function explorerClient(client: Transport): ExplorerClient {
   };
   // Reopening the panel must also respect reads still running from its last mount.
   clients.set(client, queued);
+  // App and nested readers may both request a budget for the same client.
+  // Wrapping a queue again would lose cancellation at the inner boundary.
+  clients.set(queued, queued);
   return queued;
 }

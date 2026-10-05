@@ -4,6 +4,12 @@
 
 직전 공개 배포는 **0.3.8**이다. 설치본의 익명 전체 다운로드·해시 검증 결과는 [0.3.8 검증](validation/public-release-0.3.8.md)에 기록한다. 소스는 비공개로 유지하고 [배포 전용 공개 저장소](https://github.com/bokjk/mongle-terminal-releases/releases/latest)에 설치 파일과 업데이트 메타데이터를 게시한다. 코드 서명과 프로젝트의 오픈소스 라이선스는 추가하지 않는다. 이전 배포는 [0.3.7 검증](validation/public-release-0.3.7.md), 공개 주소 전환은 [0.3.1 검증](validation/public-release-0.3.1.md)을 확인한다.
 
+0.3.11 배포 후보의 파일 편집 변경: 데스크톱에 저장하지 않은 편집 파일 또는 진행 중인 저장 요청이 있으면 앱 종료·완전 종료·업데이트 설치를 먼저 차단한다. 사용자가 편집기에서 저장하거나 탭을 닫아 변경을 버린 뒤 다시 진행해야 한다. 설치 전에는 이 차단 동작과 기존 종료·복원 절차를 함께 검증한다. 0.3.11로 배포를 준비하며, 최종 태그 산출물의 검사와 실제 공개가 끝나기 전까지 공개 채널은 0.3.10이다.
+
+최종 태그 작업도 같은 NSIS 설치·교체·복원 검사를 수행하며, 설치된 app.asar와 전체 hostbundle의 상대 경로·SHA-256이 패키지 원본과 모두 일치해야 artifact를 보존한다. 최신 7-Zip의 ARM64 필터와 NSIS 압축 해제기의 호환성 문제로 일부 파일이 빠지는 것을 재현했으므로, 패키징에서 호환되는 BCJ 필터를 명시한다. 파일 검사의 예외를 추가하지 않는다.
+
+`Installed upgrade validation`은 별도의 일회성 GitHub 호스팅 Windows에서 공개 0.3.8 NSIS를 설치하고 작업을 정상 종료한 뒤 현재 소스의 실제 NSIS로 교체한다. 설치 표식·실제 실행 버전·패키지 해시·작업 그룹과 터미널의 자동 복원·시험 프로세스 종료를 검사하며 결과 JSON을 보관한다. 로컬 PC와 자체 호스팅 실행기는 스크립트가 거부한다. 이 검사는 공개 업로드·태그 생성 없이 실행하며 확인창 응답은 자동화한다. 마법사 전체 수동 조작이나 실제 사용자 설치본 교체로 표현하지 않는다.
+
 ## 배포 경로와 기존 사용자 전환
 
 - 소스: `bokjk/mongle-terminal` (비공개). 공개 범위·라이선스를 바꾸지 않는다.
@@ -68,13 +74,15 @@ npm.cmd run typecheck
 npx.cmd tsx --test --test-concurrency=1 tests/**/*.test.ts
 node --import tsx scripts/package.ts --output release-candidate
 # CHANGELOG의 현재 버전 항목을 검토해 release-candidate/RELEASE-NOTES.md로 저장
-powershell.exe -NoProfile -File scripts/publish-release.ps1 -Version 0.3.10 -OutputDir release-candidate -CheckOnly
+powershell.exe -NoProfile -File scripts/publish-release.ps1 -Version 0.3.11 -OutputDir release-candidate -CheckOnly
 powershell.exe -NoProfile -File scripts/publish-release.ps1 -Version 0.3.10 -OutputDir release-candidate
 ```
 
 `--output`은 프로젝트 아래 `release` 또는 `release-<이름>`을 받는다. 실사용 앱이 있는 `release/`를 덮어쓰지 않는다. `package.ts`는 토큰이 있어도 게시하지 않는다. 게시 스크립트는 지정된 공개 저장소만 대상으로 삼아 체크섬을 확인하고 초안만 생성·갱신한다. 태그 워크플로의 artifact를 내려받았다면 동봉된 `RELEASE-NOTES.md`를 사용한다.
 
 공개 패키지에는 빌드된 실행 코드, 필수 Windows 보조 실행 파일, Node 런타임, 네이티브 의존성, 사용자 안내와 `THIRD-PARTY-NOTICES.md`·`docs/licenses`를 포함한다. 내부 검증 문서, 소스맵, 보조 프로그램 C# 소스는 제외한다. 실행 가능한 JavaScript 번들 자체를 비밀로 보호한다는 뜻은 아니다.
+
+아이콘은 `scripts/build-icons.ts`에서 원본 PNG를 읽어 Windows 7개 크기와 웹 3개 크기로 생성한다. `sharp`는 Apache-2.0 라이선스의 빌드 전용 개발 의존성이며, 해당 모듈과 libvips 바이너리는 설치본에 포함하지 않는다. `IconBuilder.exe`는 생성·실행·배포하지 않는다. 기존 체크아웃에 남은 파일의 알약 탐지는 [검사 기록](validation/antivirus-icon-builder.md)을 참고하고 백신 제외로 빌드를 통과시키지 않는다.
 
 ## Release 첨부 파일
 
