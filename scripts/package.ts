@@ -109,6 +109,10 @@ async function verifyZip(zipPath: string) {
 }
 // Packaging must never create or modify a GitHub release, even with GH_TOKEN
 // present or on a CI tag. The separate release workflow creates drafts only.
+// Modern 7-Zip auto-selects the ARM64 filter for bundled node-pty binaries,
+// but the NSIS extraction plugin cannot decode it and silently omits six files.
+// BCJ is supported by that plugin and preserves every architecture's bytes.
+process.env.ELECTRON_BUILDER_7Z_FILTER = 'BCJ';
 const results = await build({ projectDir: root, publish: 'never', targets: Platform.WINDOWS.createTarget(makeInstaller ? ['nsis', 'zip'] : ['dir'], Arch.x64), config: {
   appId: 'dev.mongle.terminal', productName: 'Mongle Terminal', executableName: 'MongleTerminal',
   directories: { output: outputName, buildResources: 'platform/windows' },

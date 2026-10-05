@@ -63,3 +63,13 @@
 최초 0.3.8 개발 패키지 검사 당시에는 GitHub 전체 CI, 미저장 네이티브 종료·업데이트 보호, 실제 NSIS 교체·재실행·복원과 최종 백신 검사가 남아 있었다. 이후 수행한 결과는 위 후속 기록으로 갱신한다. 실물 휴대폰·외부 원격·물리 한글 IME와 Windows 11 설치 마법사 전체 수동 조작은 이번 결과에 포함하지 않는다.
 
 로컬 로그는 `.test-data/release-audit-{regression,retry,lifecycle,pwsh-diagnostic}.log`, `.test-data/release-editor-audit-package.log`, `.test-data/native-editor-audit*.log`에 보관한다. 시험 프로필 경로와 식별자를 포함한 원시 자료는 커밋하지 않는다.
+
+## 0.3.11 배포 준비와 설치 파일 누락 조사 (2026-10-05)
+
+- `660e025` 전체 Windows CI: 423개 중 408 통과·실패 0·선택 실행 15 생략. 별도 네이티브 클립보드·업데이트 브리지 2/2 통과. 실행: https://github.com/bokjk/mongle-terminal/actions/runs/37228601360
+- 같은 커밋의 강화된 실제 설치 검사에서 app.asar는 일치했지만 hostbundle 496개 중 490개만 설치되어 실패했다. 이전 app.asar 단독 검사 통과는 전체 패키지 일치를 증명하지 않는다.
+- 로컬 수정 후보의 원본 7z를 최신 7-Zip으로 풀면 495개 모두 일치했다. NSIS와 동일한 nsis7z 플러그인을 쓰는 격리된 압축 해제 전용 프로그램으로는 489개만 풀렸다. 누락은 node-pty의 win32-arm64 아래 conpty.dll·OpenConsole.exe·winpty-agent.exe·winpty.dll과 third_party/conpty/1.23.251008001/win10-arm64의 conpty.dll·OpenConsole.exe 6개였다. x64 파일과 나머지 파일은 모두 일치했다. 실제 사용자 설치·레지스트리를 건드리지 않고 재현했다.
+- 패키징에 BCJ 필터를 명시해 NSIS가 지원하지 않는 최신 ARM64 필터의 자동 선택을 막는다. 예외 없이 전체 설치 파일을 비교하며 수정 후 결과는 별도로 기록한다. 최종 태그 배포에도 실제 NSIS 교체·복원 검사를 추가했다.
+- `release-editor-fixed` 알약 2.5 정밀검사: 최신 2026-10-05 엔진, 15,915개·1분 5초·탐지 0. 지정 폴더 및 하위 win-unpacked/resources 검사 완료 로그를 확인했다. 제외 설정이나 보안 기능을 변경하지 않았다. 해당 로컬 패키지의 결과이며 최종 태그 artifact 검사를 대신하지 않는다.
+- 알약 검사 로그에 기본 임시 파일 삭제 단계가 포함되어 있었다. 같은 시점 활성 TEMP 시험 프로필의 메타데이터가 사라졌으므로 이후 백신 검사는 TEMP 시험 앱을 정상 종료한 뒤 진행한다. 이 현상의 원인을 MSIX 리디렉션으로 단정하지 않는다. 시험 앱은 연결된 설정 화면에서 시험 호스트를 정상 종료하고 앱 메뉴로 닫았으며 소유한 프로세스 종료를 확인했다.
+- 0.3.11 버전·README·사용자 안내·변경 이력과 배포 안내를 준비했다. 실제 공개는 아직 하지 않았다.
