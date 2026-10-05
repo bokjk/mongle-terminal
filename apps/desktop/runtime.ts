@@ -25,22 +25,6 @@ export function prepareDesktopDataDirectory(root: string, dataDir: string): void
   }
 }
 
-export async function prepareWindowsIcon(root: string) {
-  const source = path.join(root, 'platform/windows/IconBuilder.cs');
-  const builder = path.join(root, 'platform/windows/IconBuilder.exe');
-  const master = path.join(root, 'apps/web/public/mongle-terminal-icon.png');
-  const icon = path.join(root, 'platform/windows/icon.ico');
-  await access(master);
-  let compile = true; try { compile = (await stat(source)).mtimeMs > (await stat(builder)).mtimeMs; } catch {}
-  if (compile) {
-    const compiler = path.join(process.env.SystemRoot || 'C:\\Windows', 'Microsoft.NET/Framework64/v4.0.30319/csc.exe');
-    await execFileAsync(compiler, ['/nologo', '/target:exe', '/optimize+', '/reference:System.Drawing.dll', '/out:' + builder, source], { windowsHide: true });
-  }
-  // Always render from the current master; copied assets can preserve mtimes.
-  await execFileAsync(builder, [master, icon, path.dirname(master)], { windowsHide: true });
-  return icon;
-}
-
 export async function prepareRuntime(root: string, nodeExecutable = process.execPath) {
   if (process.platform !== 'win32' || process.arch !== 'x64') throw new Error('현재 배포는 Windows x64에서 빌드해야 합니다.');
   const runtime = path.join(root, 'runtime'); await mkdir(runtime, { recursive: true });
@@ -54,7 +38,6 @@ export async function prepareRuntime(root: string, nodeExecutable = process.exec
     const compiler = path.join(process.env.SystemRoot || 'C:\\Windows', 'Microsoft.NET/Framework64/v4.0.30319/csc.exe');
     await execFileAsync(compiler, ['/nologo', '/target:exe', '/optimize+', '/reference:System.Management.dll', '/out:' + output, source], { windowsHide: true });
   }
-  await prepareWindowsIcon(root);
   return { node: path.join(runtime, 'node.exe'), launcher: output };
 }
 

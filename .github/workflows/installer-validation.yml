@@ -1,0 +1,52 @@
+name: Installed upgrade validation
+
+on:
+  pull_request:
+    paths: ['apps/**', 'packages/**', 'platform/**', 'scripts/**', 'package*.json', '.github/workflows/installer-validation.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: installed-upgrade-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  installed-upgrade:
+    name: Real NSIS upgrade and restore
+    runs-on: windows-2022
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Prepare locked dependencies and native runtimes
+        shell: pwsh
+        run: |
+          npm.cmd ci
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          node node_modules/node-pty/scripts/prebuild.js
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          node node_modules/node-pty/scripts/post-install.js
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          node node_modules/esbuild/install.js
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          node node_modules/electron/install.js
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Build candidate installer without publishing
+        run: npm.cmd run package
+      - name: Install old version, replace with candidate and restore workspace
+        run: node --import tsx scripts/verify-installed-upgrade.ts
+      - name: Preserve installation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: installed-upgrade-result
+          path: test-results/installed-upgrade/result.json
+          if-no-files-found: ignore
+          retention-days: 14

@@ -48,6 +48,18 @@ let selectionGeneration = 0;
 let retryTimer: NodeJS.Timeout | undefined;
 let retryDelay = 500;
 let quitting = false;
+let unsavedFiles = 0;
+let unsavedNoticeOpen = false;
+function protectUnsavedFiles() {
+  if (!unsavedFiles) return false;
+  openWindow();
+  if (!unsavedNoticeOpen) {
+    unsavedNoticeOpen = true;
+    const options = { type: 'warning' as const, title: '저장하지 않은 파일', message: '파일 편집을 마친 뒤 종료해 주세요.', detail: '파일 편집기에서 변경 내용을 저장하거나 해당 파일 탭을 닫아 변경을 버릴 수 있습니다. 실행 중인 터미널은 유지됩니다.', buttons: ['편집기로 돌아가기'] };
+    void (window && !window.isDestroyed() ? dialog.showMessageBox(window, options) : dialog.showMessageBox(options)).finally(() => { unsavedNoticeOpen = false; });
+  }
+  return true;
+}
 let connecting = false;
 let hostStoppedByUser = false;
 let fullExitCommitted = false;
@@ -138,6 +150,7 @@ function trusted(event: IpcMainInvokeEvent) {
   if (!window || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame || event.senderFrame.url.split('#')[0] !== expectedURL) throw new Error('신뢰할 수 없는 화면의 요청입니다.');
 }
 function handlers() {
+  ipcMain.handle('mongle:unsaved-files', (event, count) => { trusted(event); unsavedFiles = z.number().int().min(0).max(48).parse(count); });
   ipcMain.handle('mongle:window-theme', (event, value) => {
     trusted(event);
     const theme = z.enum(['dark', 'light']).parse(value);
@@ -185,6 +198,7 @@ function handlers() {
   async function handleRequest(event: IpcMainInvokeEvent, method: unknown, params: unknown) {
     trusted(event); allowConnectionChanges(); z.string().min(1).max(80).regex(/^[a-zA-Z][a-zA-Z0-9_.-]*$/).parse(method);
     const name = method as string;
+    if (name === 'host.shutdown' && protectUnsavedFiles()) throw new AppError('UNSAVED_FILES', '편집 중인 파일을 저장하거나 닫은 뒤 종료해 주세요.');
     if (JSON.stringify(params ?? null).length > 256 * 1024) throw new Error('요청이 너무 큽니다.');
     if (transport instanceof RemoteTransport && ['pairing.request', 'pairing.status', 'pairing.claim', 'auth.logout'].includes(name)) {
       const result = await transport.pairing(name, params);
@@ -243,6 +257,7 @@ const fullExit = new FullExitController({
   readReadiness: () => readHostReadiness(dataDir),
   isProcessAlive,
   async confirm({ runningTerminals, recordHistory }) {
+    if (protectUnsavedFiles()) return false;
     const options = {
       type: 'warning' as const, title: '몽글터미널 완전 종료',
       message: '현재 컴퓨터의 몽글터미널을 완전히 종료할까요?',
@@ -253,6 +268,7 @@ const fullExit = new FullExitController({
     return result.response === 1;
   },
   async suspendDesktop() {
+    if (protectUnsavedFiles()) throw new AppError('UNSAVED_FILES', '편집 중인 파일을 먼저 저장해 주세요.');
     fullExitCommitted = true; hostStoppedByUser = true; selectionGeneration++;
     if (retryTimer) clearTimeout(retryTimer); retryTimer = undefined;
     await Promise.allSettled([...connectionAttempts]);
@@ -293,6 +309,7 @@ function setupUpdater() {
       }
     },
     async prepareInstall() {
+      if (protectUnsavedFiles()) return false;
       let prepared = false;
       await fullExit.run({
         async confirm({ runningTerminals, recordHistory }) {
@@ -351,6 +368,7 @@ function releaseDesktopResources() {
 }
 app.on('second-instance', () => { if (desktopReady) openWindow(); });
 app.on('before-quit', event => {
+  if (protectUnsavedFiles()) { event.preventDefault(); return; }
   // A second quit command must not turn a pending shutdown acknowledgement into
   // apparent completion. Windows session-end still owns its normal cleanup.
   if (fullExitCommitted && !quitting) { event.preventDefault(); return; }

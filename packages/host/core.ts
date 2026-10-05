@@ -11,6 +11,7 @@ import { detectShellProfiles, resolveShellLaunch, safeShellEnvironment } from '.
 import { TerminalEngine } from '../terminal/engine.js';
 import { shellIntegration } from '../shell-profiles/integration.js';
 import { inspectFiles, within } from './files.js';
+import { openFileDocument, saveFileDocument } from './file-editor.js';
 import { inspectGit } from './git.js';
 import { inspectProject, inspectKnownRepository, validateWorktree, prepareWorktree, addWorktree, removeWorktree, samePath, worktreeSlug } from './worktrees.js';
 
@@ -57,6 +58,7 @@ export class HostCore {
   private initialization?: Promise<void>;
   private storageError?: string;
   private fileReads = new Map<string, number>();
+  private fileDocuments = new Map<string, { client: Client; root: string; path: string; absolutePath: string }>();
 
   constructor(private options: { dataDir: string; name?: string }) {
     this.settings = {name: options.name || hostname(), recordHistory: true, scrollback: 5000};
@@ -110,7 +112,7 @@ export class HostCore {
     return result;
   }
   getState(): HostState {
-    return structuredClone({ hostId:this.hostId, bootId:this.bootId, name:this.settings.name, version:APP_VERSION, protocolVersion:PROTOCOL_VERSION, capabilities:['control.acquire-if-free','files.read','git.read','layout.tabs','worktrees.manage','worktrees.terminal-context'], groups:this.groups, terminals:this.terminals, repositories:this.repositories,worktrees:this.worktrees,worktreeOperations:this.worktreeOperations,profiles:this.profiles, settings:this.settings, ...(this.storageError ? {storageError:this.storageError} : {}) });
+    return structuredClone({ hostId:this.hostId, bootId:this.bootId, name:this.settings.name, version:APP_VERSION, protocolVersion:PROTOCOL_VERSION, capabilities:['control.acquire-if-free','files.read','files.edit','git.read','layout.tabs','worktrees.manage','worktrees.terminal-context'], groups:this.groups, terminals:this.terminals, repositories:this.repositories,worktrees:this.worktrees,worktreeOperations:this.worktreeOperations,profiles:this.profiles, settings:this.settings, ...(this.storageError ? {storageError:this.storageError} : {}) });
   }
   connect(ctx: ConnectionContext, send: Send): void {
     if (!this.initialized || this.closing || this.shutdownPrepared) throw new AppError('HOST_UNAVAILABLE','호스트가 준비되지 않았습니다.');
@@ -121,6 +123,7 @@ export class HostCore {
   }
   disconnect(id: string): void {
     this.clients.delete(id);
+    for (const [token, document] of this.fileDocuments) if (document.client.ctx.id === id) this.fileDocuments.delete(token);
     let changed = false;
     for (const runtime of this.runtimes.values()) if (runtime.lease?.connectionId === id) {this.revoke(runtime); changed = true;}
     if (changed) this.broadcastState();
@@ -129,7 +132,8 @@ export class HostCore {
     // Lease renewal must not wait for a slow snapshot or filesystem mutation.
     if (method === 'heartbeat') return this.route(method, params ?? {}, this.connectedClient(ctx));
     // Filesystem latency must not block heartbeat, terminal input or shutdown.
-    if (method === 'files.list' || method === 'files.preview' || method === 'git.status') return this.readFiles(method, params, ctx);
+    if (method === 'files.list' || method === 'files.preview' || method === 'files.open' || method === 'git.status') return this.readFiles(method, params, ctx);
+    if (method === 'files.save' || method === 'files.close' || method === 'files.reload') return this.editFile(method, params, ctx);
     if (method.startsWith('projects.') || method.startsWith('worktrees.')) return this.projectRequest(method,params,ctx);
     if(method==='terminals.create'||method==='terminals.restart') {
       const client=this.connectedClient(ctx);
@@ -345,9 +349,48 @@ export class HostCore {
     if (count >= 2 || [...this.fileReads.values()].reduce((a, b) => a + b, 0) >= 8) throw new AppError('FILES_BUSY', '파일을 읽는 중입니다. 잠시 후 다시 시도해 주세요.');
     this.fileReads.set(ctx.id, count + 1);
     try {
-      const result = method === 'git.status' ? await inspectGit(p.root, this.options.dataDir) : await inspectFiles(p.root, p.path, this.options.dataDir, method === 'files.preview');
+      const result = method === 'git.status' ? await inspectGit(p.root, this.options.dataDir) : method === 'files.open' ? await openFileDocument(p.root, p.path, this.options.dataDir) : await inspectFiles(p.root, p.path, this.options.dataDir, method === 'files.preview');
       check();
+      if (method === 'files.open' && 'version' in result && result.version && 'absolutePath' in result && !('readOnlyReason' in result && result.readOnlyReason)) {
+        if ([...this.fileDocuments.values()].filter(item => item.client === originalClient).length >= 32 || this.fileDocuments.size >= 128) throw new AppError('FILES_LIMIT', '열린 파일이 많습니다. 사용하지 않는 파일 탭을 닫아 주세요.');
+        const documentId = randomUUID();
+        // The connection-scoped grant keeps an opened file editable after cd or pane selection changes.
+        const openedRoot = await realpath(p.root);
+        check();
+        this.fileDocuments.set(documentId, { client: originalClient!, root: openedRoot, path: p.path, absolutePath: result.absolutePath });
+        return { ...result, documentId };
+      }
       return result;
+    } finally {
+      const remaining = (this.fileReads.get(ctx.id) || 1) - 1;
+      if (remaining) this.fileReads.set(ctx.id, remaining); else this.fileReads.delete(ctx.id);
+    }
+  }
+  private async editFile(method: string, params: unknown, ctx: ConnectionContext) {
+    const reference = hostRef.extend({ documentId: idSchema });
+    const p = method === 'files.save' ? reference.extend({ version: z.string().regex(/^[a-f0-9]{64}$/), contentBase64: z.string().max(87384) }).strict().parse(params) : reference.strict().parse(params);
+    const grant = this.fileDocuments.get(p.documentId);
+    const check = () => {
+      if (this.closing || this.shutdownPrepared) throw new AppError('HOST_UNAVAILABLE', '호스트가 종료 중입니다.');
+      const client = this.clients.get(ctx.id);
+      if (!client || client.ctx.deviceId !== ctx.deviceId) throw new AppError('NOT_CONNECTED', '컴퓨터에 다시 연결해 주세요.');
+      if (p.hostId !== this.hostId || p.bootId !== this.bootId) throw new AppError('HOST_CHANGED', '접속한 컴퓨터가 바뀌었습니다.');
+      if (!grant || grant.client !== client || this.fileDocuments.get(p.documentId) !== grant) throw new AppError('FILES_DOCUMENT_EXPIRED', '연결이 바뀌어 파일을 다시 열어야 합니다. 내 수정 내용을 복사한 뒤 디스크 파일을 다시 열어 주세요.');
+    };
+    check();
+    if (method === 'files.close') { this.fileDocuments.delete(p.documentId); return { ok: true }; }
+    const count = this.fileReads.get(ctx.id) || 0;
+    if (count >= 2 || [...this.fileReads.values()].reduce((a, b) => a + b, 0) >= 8) throw new AppError('FILES_BUSY', '파일 작업 중입니다. 잠시 후 다시 시도해 주세요.');
+    this.fileReads.set(ctx.id, count + 1);
+    try {
+      if (method === 'files.reload') {
+        const result = await openFileDocument(grant!.root, grant!.path, this.options.dataDir);
+        check();
+        return { ...result, documentId: p.documentId };
+      }
+      if (!('version' in p) || typeof p.version !== 'string' || !('contentBase64' in p) || typeof p.contentBase64 !== 'string') throw new AppError('INVALID_REQUEST', '저장할 내용을 확인해 주세요.');
+      const result = await saveFileDocument(grant!.root, grant!.path, this.options.dataDir, p.version, p.contentBase64, check);
+      return { ...result, documentId: p.documentId };
     } finally {
       const remaining = (this.fileReads.get(ctx.id) || 1) - 1;
       if (remaining) this.fileReads.set(ctx.id, remaining); else this.fileReads.delete(ctx.id);
