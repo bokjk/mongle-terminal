@@ -36,7 +36,7 @@ async function bundleFingerprint(directory: string) {
     }
   }
   await visit(''); entries.sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
-  return { files: entries.length, sha256: sha(Buffer.from(JSON.stringify(entries))) };
+  return { files: entries.length, sha256: sha(Buffer.from(JSON.stringify(entries))), entries };
 }
 const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
 const proof: Record<string, any> = { passed: false, oldVersion, newVersion: version, stages: [] };
@@ -112,8 +112,15 @@ try {
   const installedAsar = sha(await readFile(path.join(installDir, 'resources/app.asar')));
   assert.equal(installedAsar, sha(await readFile('release/win-unpacked/resources/app.asar')));
   const installedBundle = await bundleFingerprint(path.join(installDir, 'resources/hostbundle'));
-  assert.deepEqual(installedBundle, await bundleFingerprint('release/win-unpacked/resources/hostbundle'));
-  proof.installedAsarSha256 = installedAsar; proof.installedHostBundle = installedBundle;
+  const candidateBundle = await bundleFingerprint('release/win-unpacked/resources/hostbundle');
+  const installedFiles = new Map(installedBundle.entries), candidateFiles = new Map(candidateBundle.entries);
+  proof.bundleDifference = {
+    missing: candidateBundle.entries.filter(([file]) => !installedFiles.has(file)).map(([file]) => file),
+    extra: installedBundle.entries.filter(([file]) => !candidateFiles.has(file)).map(([file]) => file),
+    changed: candidateBundle.entries.filter(([file, hash]) => installedFiles.has(file) && installedFiles.get(file) !== hash).map(([file]) => file),
+  };
+  assert.deepEqual(proof.bundleDifference, { missing: [], extra: [], changed: [] });
+  proof.installedAsarSha256 = installedAsar; proof.installedHostBundle = { files: installedBundle.files, sha256: installedBundle.sha256 };
   proof.stages.push('new real NSIS replaced desktop archive and complete host/web bundle with exact candidate bytes');
   const newInfo = await start(version);
   const restored = await until(() => owner!.request<HostState>('state.get'), s => s.terminals.length === 2 && s.terminals.every(t => t.status === 'running' && !!t.pid), 'automatic workspace restore');
