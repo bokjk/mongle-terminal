@@ -139,14 +139,8 @@ export function safeShellEnvironment(source: NodeJS.ProcessEnv = process.env): R
   }
   result.TERM = 'xterm-256color';
   result.COLORTERM = 'truecolor';
-  // Claude's fullscreen selection can copy cells obscured by its floating
-  // scroll overlay. Classic rendering gives our native selection the complete
-  // scrollback instead. Scope the default to new shell children, never global
-  // Claude settings, and retain an explicit environment override (Windows
-  // environment names are case-insensitive).
-  if (!Object.keys(result).some(key => (WINDOWS ? key.toUpperCase() : key) === 'CLAUDE_CODE_NO_FLICKER')) {
-    result.CLAUDE_CODE_NO_FLICKER = '0';
-  }
+  // Preserve each CLI's renderer choice; copying a transcript must not force
+  // Claude out of its fixed-input fullscreen layout.
   // Git Bash's login profile otherwise changes an explicitly chosen cwd to HOME.
   result.CHERE_INVOKING = '1';
   return result;

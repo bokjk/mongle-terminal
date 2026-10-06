@@ -14,6 +14,8 @@ import { terminalThemes as themes, terminalMinimumContrast } from './terminal-th
 import { terminalLabel, outsideWorktree } from './worktree-labels';
 import { useTerminalWorktree, type TerminalWorktreeActions } from './use-terminal-worktree';
 import { TerminalInputQueue } from './terminal-input-queue';
+import { collectCopySnapshot, CopySnapshotError } from '../../../packages/terminal/copy-snapshot';
+import { TerminalCopyView, type CopyRecord } from './TerminalCopyView';
 
 export interface PaneActions { key(data:string):void; paste(text:string):void; focus():void; search():void; }
 export interface PaneProps {
@@ -60,8 +62,11 @@ export function TerminalPane(props:PaneProps) {
   const [searchMatch,setSearchMatch] = useState(true);
   const [frameError,setFrameError] = useState('');
   const [historyTruncated,setHistoryTruncated] = useState(false);
+  const historyTruncatedRef=useRef(false);
   const [clipboardMenu,setClipboardMenu] = useState<{x:number;y:number}|null>(null);
   const [copied,setCopied] = useState(false);
+  const [copyViewOpen,setCopyViewOpen] = useState(false);
+  useEffect(()=>setCopyViewOpen(false),[client,state.hostId,state.bootId,info.id,info.generation]);
   // A slower earlier copy must not overwrite the latest attempt's feedback.
   const copyRequest = useRef(0);
   const connectionId = useRef<string | undefined>(undefined);
@@ -170,7 +175,7 @@ export function TerminalPane(props:PaneProps) {
       while(pendingFrame&&!disposed){
         const item=pendingFrame;pendingFrame=undefined;let applied=false;
         try{
-          if(item.event.seq>=lastSeq.current){await adapter.applySnapshot(item.event.snapshot);if(disposed)break;lastSeq.current=item.event.seq;setHistoryTruncated(Boolean((item.event.snapshot as any).historyTruncated));}
+          if(item.event.seq>=lastSeq.current){await adapter.applySnapshot(item.event.snapshot);if(disposed)break;lastSeq.current=item.event.seq;historyTruncatedRef.current=Boolean((item.event.snapshot as any).historyTruncated);setHistoryTruncated(historyTruncatedRef.current);}
           const ackEpoch=item.lease??epoch.current;
           await client.request('terminal.ack',{...targetRef.current(),seq:lastSeq.current,...(ackEpoch!==undefined?{epoch:ackEpoch}:{})});
           if(disposed)break;
@@ -320,6 +325,24 @@ export function TerminalPane(props:PaneProps) {
   },[clipboardMenu]);
   async function copy(){const request=++copyRequest.current;setCopied(false);const text=termRef.current?.getSelection();setClipboardMenu(null);if(!text){current.current.onError('복사할 내용을 먼저 드래그로 선택해 주세요.');return;}try{if(window.mongle?.writeClipboard)await window.mongle.writeClipboard(text);else await navigator.clipboard.writeText(text);if(request===copyRequest.current)setCopied(true);}catch{if(request===copyRequest.current){setCopied(false);current.current.onError('복사하지 못했습니다. 내용을 선택한 뒤 Ctrl+C를 사용해 주세요.');}}}
   async function paste(){const input=pasteInputRef.current;setClipboardMenu(null);try{const text=window.mongle?.readClipboard?await window.mongle.readClipboard():await navigator.clipboard.readText();if(await current.current.confirmPaste(text)&&input===pasteInputRef.current&&await input(text))termRef.current?.focus();}catch{current.current.onError('클립보드를 읽을 수 없습니다. 터미널을 선택한 뒤 Ctrl+V를 사용해 주세요.');}}
+  async function captureCopyRecord():Promise<CopyRecord>{
+    const terminal=termRef.current,adapter=adapterRef.current;
+    if(!terminal||!adapter||!current.current.connected)throw new Error('터미널에 연결한 뒤 다시 가져오세요.');
+    const deadline=Date.now()+3000;
+    // Read only between complete frames; never copy reset()'s partial buffer.
+    while(adapter.pendingPresentation){
+      if(Date.now()>deadline)throw new Error('화면 갱신 중입니다. 잠시 뒤 다시 가져오세요.');
+      let timeout:ReturnType<typeof setTimeout>|undefined;
+      try{await Promise.race([adapter.pendingPresentation,new Promise<never>((_,reject)=>{timeout=setTimeout(()=>reject(new Error('화면 갱신 중입니다. 잠시 뒤 다시 가져오세요.')),Math.max(1,deadline-Date.now()));})]);}
+      finally{clearTimeout(timeout);}
+      if(terminal!==termRef.current||adapter!==adapterRef.current||!current.current.connected)throw new Error('터미널 연결이 바뀌었습니다. 다시 가져오세요.');
+    }
+    if(terminal.buffer.active.type!=='normal')throw new Error('전체화면의 일부만 가져올 수는 없습니다. Claude에서 Ctrl+O → [로 기록을 연 뒤 다시 눌러 주세요.');
+    let snapshot;
+    try{snapshot=collectCopySnapshot(terminal);}
+    catch(error){if(error instanceof CopySnapshotError&&error.code==='LINE_TOO_LONG')throw new Error('한 줄이 너무 길어 안전하게 가져올 수 없습니다. 필요한 부분을 터미널에서 나눠 복사해 주세요.');throw error;}
+    return {...snapshot,truncated:Boolean(snapshot.historyTruncated)||historyTruncatedRef.current||terminal.buffer.active.baseY>=5000,capturedAt:Date.now()};
+  }
   function doSearch(backward=false){if(!query){searchRef.current?.clearDecorations();setSearchMatch(true);return;}setSearchMatch(Boolean(backward ? searchRef.current?.findPrevious(query) : searchRef.current?.findNext(query)));}
   function focusTitle(){if(props.dragClickAllowed?.()===false)return;props.onSelect();startInputRef.current();}
   // A leftover lease of this same window is not another device; a tap re-acquires it.
@@ -338,9 +361,10 @@ export function TerminalPane(props:PaneProps) {
           <button className="menu-item" onClick={props.onRename}><Pencil size={14}/>이름 변경</button>
           <button className="menu-item" onClick={props.onMove}>다른 그룹으로 이동</button>
           <button className="menu-item" title="드래그로 선택한 뒤 Ctrl+C · Ctrl+Shift+C" onClick={()=>void copy()}><Copy size={14}/>선택 내용 복사 <kbd className="shortcut-key">Ctrl+C</kbd></button>
+          <button className="menu-item" onClick={event=>{event.currentTarget.closest('details')?.removeAttribute('open');setCopyViewOpen(true);}}>기록 복사 보기</button>
           <button className="menu-item" title="Ctrl+V · Ctrl+Shift+V" disabled={!props.connected||info.status!=='running'||inputUncertain||controlError} onClick={()=>void paste()}><ClipboardPaste size={14}/>붙여넣기 <kbd className="shortcut-key">Ctrl+V</kbd></button>
           <button className="menu-item" onClick={props.onRestart}><RotateCcw size={14}/>새 셸로 다시 열기</button>
-          <button className="menu-item" onClick={props.onClearHistory}>저장된 출력 지우기</button>
+          <button className="menu-item" onClick={()=>{setCopyViewOpen(false);props.onClearHistory();}}>저장된 출력 지우기</button>
           {info.status==='running'&&<button className="menu-item danger" onClick={props.onTerminate}>작업 종료 · 기록 유지</button>}
         </div></details>
         <button className="icon-button" title={props.maximized?'분할로 돌아가기':'최대화'} aria-label={props.maximized?'분할로 돌아가기':'최대화'} onClick={props.onMaximize}>{props.maximized?<Minimize2 size={14}/>:<Maximize2 size={14}/>}</button>
@@ -349,13 +373,14 @@ export function TerminalPane(props:PaneProps) {
     </header>
     {worktreeLauncher.dialog}
     {searchOpen&&<form className="searchbar" onSubmit={e=>{e.preventDefault();doSearch();}}><Search size={14}/><input autoFocus className="input" placeholder="출력에서 찾기" aria-label="출력 검색" value={query} onChange={e=>setQuery(e.target.value)} onKeyDown={e=>{if(e.key==='Escape'){setSearchOpen(false);termRef.current?.focus();}if(e.key==='Enter'&&e.shiftKey){e.preventDefault();doSearch(true);}}}/><span>{!searchMatch?'결과 없음':''}</span><button className="button subtle" type="button" onClick={()=>doSearch(true)}>이전</button><button className="button subtle">다음</button><button className="icon-button" type="button" aria-label="검색 닫기" onClick={()=>setSearchOpen(false)}><X size={14}/></button></form>}
-    <div className="pane-body"><div className="terminal-canvas" ref={mount} onContextMenuCapture={event=>{
+    <div className={`pane-content ${copyViewOpen?'with-copy-view':''} ${narrow?'stacked-copy':''}`}><div className="pane-body"><div className="terminal-canvas" ref={mount} onContextMenuCapture={event=>{
       if(termRef.current?.modes.mouseTrackingMode!=='none'&&!event.shiftKey)return;
       event.preventDefault();event.stopPropagation();props.onSelect();
       // A touch long press is browsing, not the desktop right-click paste action.
       if(!event.shiftKey&&contextPointer.current!=='touch'&&(event.nativeEvent as PointerEvent).pointerType!=='touch'){if(props.connected&&info.status==='running'&&!inputUncertain&&!controlError)void paste();return;}
       setClipboardMenu({x:Math.max(8,Math.min(event.clientX,window.innerWidth-244)),y:Math.max(8,Math.min(event.clientY,window.innerHeight-104))});
     }}/></div>
+    {copyViewOpen&&<TerminalCopyView key={`${state.hostId}:${state.bootId}:${info.id}:${info.generation}`} capture={captureCopyRecord} onClose={()=>setCopyViewOpen(false)}/>}</div>
     {clipboardMenu&&createPortal(<div className="terminal-clipboard-menu" role="dialog" aria-label="터미널 복사와 붙여넣기" style={{left:clipboardMenu.x,top:clipboardMenu.y}}>
       <button autoFocus className="menu-item" disabled={!termRef.current?.hasSelection()} onClick={()=>void copy()}><Copy size={14}/>복사 <kbd className="shortcut-key">Ctrl+C</kbd></button>
       <button className="menu-item" disabled={!props.connected||info.status!=='running'||inputUncertain||controlError} onClick={()=>void paste()}><ClipboardPaste size={14}/>붙여넣기 <kbd className="shortcut-key">Ctrl+V</kbd></button>

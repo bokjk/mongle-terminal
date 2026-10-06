@@ -329,6 +329,24 @@ button.host-select:hover { background: var(--surface-hover); border-color: var(-
 .pane-tab-header .new-tab { font-size: 21px; font-weight: 300; }
 .sidebar-workspace-title { align-self: stretch; padding: 5px 12px; color: var(--text-muted); }
 .pane-body { position: relative; display: flex; flex: 1; min-height: 0; min-width: 0; padding: 12px 6px 7px 12px; overflow: auto; background: var(--terminal); }
+.pane-content { display:flex; flex:1; min-width:0; min-height:0; }
+.terminal-copy-view { display:flex; flex-direction:column; width:46%; min-width:260px; max-width:600px; min-height:0; border-left:1px solid var(--border); background:var(--surface); color:var(--text); }
+.terminal-copy-view > header { display:flex; align-items:center; justify-content:space-between; flex-shrink:0; padding:5px 10px; border-bottom:1px solid var(--border-subtle); font-size:12px; }
+.copy-view-guide { flex-shrink:0; padding:8px 12px; font-size:11px; color:var(--text-secondary); line-height:1.6; }
+.copy-view-guide p { margin:0 0 6px; }
+.copy-view-guide kbd { font-family:var(--mono); color:var(--text); }
+.copy-view-guide .button, .copy-view-actions .button { display:inline-flex; align-items:center; gap:5px; font-size:11px; }
+.copy-view-meta { padding:4px 12px; color:var(--text-muted); font-size:10px; }
+.terminal-copy-view textarea { flex:1; min-width:0; min-height:80px; margin:5px 10px; padding:10px; resize:none; border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--terminal); color:var(--text); font:12px/1.6 var(--mono); white-space:pre; tab-size:8; user-select:text; }
+.terminal-copy-view textarea:focus { outline:2px solid var(--accent); outline-offset:-1px; }
+.copy-view-actions { display:flex; gap:6px; flex-wrap:wrap; padding:6px 10px; }
+.copy-view-empty { flex:1; padding:24px 14px; color:var(--text-muted); font-size:12px; line-height:1.7; }
+.copy-view-message, .copy-view-warning { margin:0; padding:5px 12px 10px; font-size:11px; line-height:1.6; color:var(--text-secondary); }
+.copy-view-warning { color:var(--text); }
+@media(max-width:700px) { .pane-content.with-copy-view { flex-direction:column; } .terminal-copy-view { width:100%; max-width:none; min-width:0; height:55%; border-left:0; border-top:1px solid var(--border); } .copy-view-guide { max-height:130px; overflow:auto; } }
+.pane-content.with-copy-view.stacked-copy { flex-direction:column; }
+.stacked-copy .terminal-copy-view { width:100%; max-width:none; min-width:0; height:55%; border-left:0; border-top:1px solid var(--border); }
+.stacked-copy .copy-view-guide { max-height:130px; overflow:auto; }
 .terminal-canvas { position: relative; width: 100%; height: 100%; min-width: 0; min-height: 0; }
 .terminal-canvas > .xterm { height: 100%; padding: 0; }
 /* A read-only pane may be taller than the host grid. Theme its unused viewport too. */
