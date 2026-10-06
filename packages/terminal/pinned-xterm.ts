@@ -64,7 +64,13 @@ interface PinnedCore {
   _renderService?: { _renderer: { value: PresentationRenderer | undefined } };
   _selectionService?: SelectionService;
   coreService: CoreService;
-  coreMouseService: { activeEncoding: string; activeProtocol: string; _onProtocolChange: { fire(events: number): void } };
+  coreMouseService: {
+    activeEncoding: string; activeProtocol: string;
+    _onProtocolChange: { fire(events: number): void };
+    _lastEvent: object | null;
+    _wheelPartialScroll: number;
+    reset(): void;
+  };
   _bufferService: { buffers: { normal: {
     ybase: number; ydisp: number;
     lines: { trimStart(count: number): void };
@@ -241,19 +247,48 @@ const mouseProtocols = { none: 'NONE', x10: 'X10', vt200: 'VT200', drag: 'DRAG',
  * movement and release. Apply the real mode once, then hide parser-only mode
  * changes until the authoritative picture has been restored.
  */
-export function beginMousePresentation(terminal: unknown, modes: TerminalModes): () => void {
+export function beginMousePresentation(terminal: unknown, modes: TerminalModes, resetInputState = false): () => void {
   const service = coreOf(terminal).coreMouseService;
   const emitter = service._onProtocolChange;
-  if (typeof emitter?.fire !== 'function') throw new Error('Unsupported xterm mouse internals.');
+  const publicTerminal = terminal as Pick<Terminal, 'onResize'>;
+  if (typeof emitter?.fire !== 'function' || typeof service.reset !== 'function' ||
+      !('_lastEvent' in service) || typeof service._wheelPartialScroll !== 'number' ||
+      typeof publicTerminal.onResize !== 'function') throw new Error('Unsupported xterm mouse internals.');
   const protocol = mouseProtocols[modes.mouseTrackingMode];
+  const clearInputState = () => {
+    service._lastEvent = null;
+    service._wheelPartialScroll = 0;
+  };
+  const matchesModes = () => service.activeProtocol === protocol && service.activeEncoding === modes.mouseEncoding;
+  // The authoritative mode change is real; the NONE/DEFAULT inside reset is
+  // not. Never carry an old context's deduplication or wheel fraction into it.
+  if (resetInputState || !matchesModes()) clearInputState();
+  service.activeEncoding = modes.mouseEncoding;
   if (service.activeProtocol !== protocol) service.activeProtocol = protocol;
   const fire = emitter.fire;
+  const reset = service.reset;
+  const resize = publicTerminal.onResize(clearInputState);
+  service.reset = () => {
+    const preserve = matchesModes();
+    const lastEvent = service._lastEvent;
+    const wheelPartialScroll = service._wheelPartialScroll;
+    reset.call(service);
+    // Restore immediately in the synchronous reset, never at finish: input
+    // can arrive during terminal.write's await and must remain the latest.
+    if (preserve) {
+      service._lastEvent = lastEvent;
+      service._wheelPartialScroll = wheelPartialScroll;
+    }
+  };
   emitter.fire = () => {};
   let finished = false;
   return () => {
     if (finished) return;
     finished = true;
+    resize.dispose();
+    service.reset = reset;
     emitter.fire = fire;
+    if (!matchesModes()) clearInputState();
     // On failure, publish whatever mode remains instead of leaving stale DOM
     // listeners. Successful frames already restored the authoritative mode.
     if (service.activeProtocol !== protocol) service.activeProtocol = service.activeProtocol;

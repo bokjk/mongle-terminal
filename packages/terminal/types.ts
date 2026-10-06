@@ -3,6 +3,8 @@ export interface PresentationSnapshot {
   kind: 'presentation-v1';
   version: string;
   revision?: number;
+  /** Live-engine RIS generation. Absent on older hosts; never restored into a new PTY. */
+  inputResetGeneration?: number;
   cols: number;
   rows: number;
   data: string;

@@ -7,6 +7,7 @@ import type { TerminalInputEncoding, TerminalModes } from './types.js';
 interface Frame {
   kind: 'presentation-v1'; version: string; data: string;
   cols: number; rows: number; modes: Record<string, unknown>;
+  inputResetGeneration?: number;
 }
 
 interface PendingFrame {
@@ -41,6 +42,7 @@ export class BrowserPresentationAdapter {
   private enabled = false;
   private disposed = false;
   private modes: TerminalModes | undefined;
+  private inputResetGeneration: number | undefined;
   private readonly subscriptions: Array<{ dispose(): void }> = [];
   private readonly removeBoundary: () => void;
   private compositionEndTimer: ReturnType<typeof setTimeout> | undefined;
@@ -99,7 +101,9 @@ export class BrowserPresentationAdapter {
   applySnapshot(frame: Frame): Promise<void> {
     if (this.disposed) return Promise.reject(new Error('Terminal renderer is disposed.'));
     if (frame.kind !== 'presentation-v1' || frame.version !== PRESENTATION_VERSION ||
-        typeof frame.data !== 'string' || frame.data.length > 16 * 1024 * 1024) {
+        typeof frame.data !== 'string' || frame.data.length > 16 * 1024 * 1024 ||
+        (frame.inputResetGeneration !== undefined &&
+          (!Number.isSafeInteger(frame.inputResetGeneration) || frame.inputResetGeneration < 0))) {
       return Promise.reject(new Error('Unsupported or oversized terminal presentation.'));
     }
     assertGeometry(frame.cols, frame.rows);
@@ -192,7 +196,10 @@ export class BrowserPresentationAdapter {
     let finishMousePresentation: (() => void) | undefined;
     let complete = false;
     try {
-      finishMousePresentation = beginMousePresentation(this.terminal, modes);
+      // Equal final modes cannot reveal an intervening real RIS. Older hosts
+      // have no generation: keep their conservative per-frame invalidation.
+      finishMousePresentation = beginMousePresentation(this.terminal, modes,
+        frame.inputResetGeneration === undefined || frame.inputResetGeneration !== this.inputResetGeneration);
       selectionDrag = captureSelectionDrag(this.terminal);
       this.terminal.reset();
       setPresentationPending(this.terminal, true);
@@ -219,6 +226,7 @@ export class BrowserPresentationAdapter {
         // coordinates. Never retain a selection that silently selects new text.
         if (this.terminal.getSelection() !== selectedText) this.terminal.clearSelection();
       }
+      this.inputResetGeneration = frame.inputResetGeneration;
       complete = true;
     } finally {
       finishMousePresentation?.();

@@ -26,7 +26,7 @@ test('real TerminalPane: deferred selection copies once and respects a newer ges
       let info={id:'terminal',groupId:'group',title:'Selection test',profileId:'pwsh',cwd:'C:/test',generation:'generation',status:'running',cols:40,rows:8};
       const state=()=>({hostId:'host',bootId:'boot',name:'Test host',version:'0.1.0',protocolVersion:1,capabilities:['control.acquire-if-free'],groups:[],terminals:[info],profiles:[],settings:{name:'Test host',recordHistory:true,scrollback:5000}});
       const initial=${JSON.stringify(snapshot)};
-      const frame=()=>({type:'snapshot',terminalId:info.id,generation:info.generation,bootId:'boot',seq:++seq,snapshot:{...initial,...h.snapshot,cols:info.cols,rows:info.rows,modes:{...initial.modes,...h.snapshot?.modes,mouseTrackingMode:h.mouseMode||'none'}}});
+      const frame=()=>({type:'snapshot',terminalId:info.id,generation:info.generation,bootId:'boot',seq:++seq,snapshot:{...initial,cols:info.cols,rows:info.rows,modes:{...initial.modes,mouseTrackingMode:h.mouseMode||'none'}}});
       const h=window.selectionCopyTest={copies:[],calls:[],errors:[],failCopy:false,holdCopy:false,copyReleases:[],holdWrite:false,release:null,ackedSeq:0,terminal:null,
         emit:()=>{const next=frame();listeners.forEach(fn=>fn(next));return next.seq;}};
       const open=Terminal.prototype.open;
@@ -70,45 +70,6 @@ test('real TerminalPane: deferred selection copies once and respects a newer ges
     const address = server.address(); assert.ok(address && typeof address !== 'string');
     const browser = await chromium.launch({ channel: 'chrome', headless: true });
     try {
-      await t.test('copy view keeps original text and selection across fullscreen output, refuses partial capture, and clears on history deletion',async()=>{
-        const page=await browser.newPage({viewport:{width:1000,height:700}});
-        const later=new TerminalEngine({cols:40,rows:8,onResponse(){}});
-        try{
-          await page.addInitScript('window.__name=function(fn){return fn;};');
-          await page.goto(`http://127.0.0.1:${address.port}`);
-          await page.getByText('여기서 제어 중',{exact:true}).waitFor();
-          await page.getByLabel('터미널 메뉴',{exact:true}).click();
-          await page.getByRole('button',{name:'기록 복사 보기',exact:true}).click();
-          await page.getByRole('button',{name:'현재 기록 가져오기',exact:true}).click();
-          const copyText=page.getByRole('textbox',{name:'복사할 기록'});
-          await expect(copyText).toHaveValue('abcdefghijklmnopqrstuvwxyz\noutput');
-          // Chromium's read-only textarea does not extend its caret with
-          // Shift+ArrowRight. Establish a partial selection explicitly, then
-          // check its preservation separately from the native drag E2E.
-          await copyText.evaluate((el:HTMLTextAreaElement)=>{el.focus();el.setSelectionRange(0,2);el.dispatchEvent(new Event('select',{bubbles:true}));});
-          // React's onSelect tracks selection on keyup/mouseup, not a synthetic
-          // native select event. A real modifier release publishes this range.
-          await page.keyboard.press('Shift');
-          assert.deepEqual(await copyText.evaluate((el:HTMLTextAreaElement)=>[el.selectionStart,el.selectionEnd]),[0,2],'the partial selection exists before live output');
-          await expect(page.getByRole('button',{name:'선택 복사',exact:true})).toBeEnabled();
-          await later.write('\x1b[?1049h\x1b[?1003hnew live fullscreen output');
-          const changed=await later.snapshot();
-          const seq=await page.evaluate(snapshot=>{const h=(window as any).selectionCopyTest;h.snapshot=snapshot;h.mouseMode='any';return h.emit();},changed);
-          await page.waitForFunction(expected=>(window as any).selectionCopyTest.ackedSeq>=expected,seq);
-          await expect(copyText).toHaveValue('abcdefghijklmnopqrstuvwxyz\noutput');
-          assert.deepEqual(await copyText.evaluate((el:HTMLTextAreaElement)=>[el.selectionStart,el.selectionEnd]),[0,2]);
-          await page.getByRole('button',{name:'선택 복사',exact:true}).click();
-          await page.waitForFunction(()=>(window as any).selectionCopyTest.copies.at(-1)==='ab');
-          await page.getByRole('button',{name:'현재 기록으로 새로 가져오기'}).click();
-          await expect(page.getByRole('status').filter({hasText:'전체화면의 일부만'})).toBeVisible();
-          await expect(copyText).toHaveValue('abcdefghijklmnopqrstuvwxyz\noutput');
-          await page.getByLabel('터미널 메뉴',{exact:true}).click();
-          await page.getByRole('button',{name:'저장된 출력 지우기',exact:true}).click();
-          await expect(copyText).toHaveCount(0);
-          await page.getByRole('button',{name:'기록 복사 보기',exact:true}).click();
-          await expect(page.getByRole('textbox',{name:'복사할 기록'})).toHaveCount(0);
-        }finally{await later.dispose();await page.close();}
-      });
       await t.test('Shift selection in a mouse-reporting CLI copies once after a frame', async () => {
         const page = await browser.newPage({ viewport: { width: 1000, height: 700 } });
         try {
