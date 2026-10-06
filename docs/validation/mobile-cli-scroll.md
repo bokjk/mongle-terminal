@@ -1,4 +1,6 @@
-# 실제 CLI 연결의 합성 DOM 터치 스크롤 검증
+# 실제 CLI 연결의 모바일 터치 스크롤 검증
+
+최초 Aside 합성 DOM 터치 검사와, 사용자가 Chrome 기준을 승인한 뒤 수행한 [Chrome 모바일 trusted touch 추가 검사](#chrome-모바일-trusted-touch-추가-검증)를 구분해 기록한다. 아래 최초 검사에서 미확인으로 적은 Android viewport·trusted touch·모바일 보조키는 마지막 절의 추가 결과를 함께 참고한다.
 
 검사일: 2026-10-07. 담당: gpt-6-astra. 최종 웹 번들: `index-c7s--fBY.js`(Aside 페이지가 실제 로드한 script URL 확인). 문서 작성 시 HEAD: `ec5ac59`.
 
@@ -77,3 +79,56 @@ DOM 화면만 움직인 것으로 판단하지 않도록 OwnerPipe에서 실제 
 - `a24617b`는 프레임 보존 검사 시작 좌표를 실제 텍스트 위로 옮겼다. 제품 코드는 동일하며 최종 전체 CI 결과는 아래에 기록한다. 위 합성 DOM 터치의 실제 CLI 검사와 CI의 Chrome Android 에뮬레이션을 구분한다.
 
 최종 검사 커밋 `1677690`은 [전체 Windows 검사](https://github.com/bokjk/mongle-terminal/actions/runs/37504040757)에서 회귀 467개 중 **452 통과·실패 0·선택 15 생략**, 별도 네이티브 클립보드·업데이트 브리지 **2/2**, 타입·빌드·배포 문서 검사를 통과했다. 새 trusted touch 3개와 글자 위 시작·프레임 갱신 검사도 통과했다. [실제 NSIS 교체·복원](https://github.com/bokjk/mongle-terminal/actions/runs/37504040812)은 app.asar 및 hostbundle 694개 파일 일치(누락·추가·변경 0)와 작업 자동 복원을 확인했다. 이것은 격리 CI 후보 검사이며 공개 배포 또는 실물 삼성 인터넷 검증이 아니다.
+
+## Chrome 모바일 trusted touch 추가 검증
+
+2026-10-07, gpt-6-astra가 사용자의 “크롬기준으로해줘도돼” 승인에 따라 전용 Chrome 세션에서 추가 검사했다. **실제 Claude·Codex에 연결한 모바일 몽글 UI에서 trusted touch 양방향 스크롤을 확인했다.** 이번 완료 기준은 Chrome 모바일 에뮬레이션이며 삼성 갤럭시·삼성 인터넷 실물 검사는 수행하지 않았다.
+
+### 환경과 관찰 방법
+
+- Playwright CLI의 별도 Chrome 프로필을 사용했다. 실제 브라우저 버전은 `154.0.8037.93`, 모바일 프리셋 UA는 Android 16 / Pixel 10 / Chrome `155.0.8059.12`다. UA와 실행 브라우저 버전은 다르다.
+- viewport `360×732`, DPR `3`, `navigator.maxTouchPoints=1`. 몽글 모바일 보조키 UI가 실제 렌더됐다. 최종 제품 웹 번들 `index-c7s--fBY.js` 로드를 확인했다. 제품 코드는 `ec5ac59`와 동일한 수정본이다.
+- 새 TEMP `MONGLE_DATA_DIR`, 실제 OwnerPipe 호스트와 loopback 게이트웨이, 표준 기기 연결·승인을 사용했다. 기존 합성 대화를 실제 Claude·Codex 프로세스에서 재개했다. UI/CLI 응답을 모의 구현하거나 새 모델 요청을 보내지 않았다.
+- CLI `run-code`에서 CDP `Input.dispatchTouchEvent`로 터미널 글자 영역을 세로로 움직였다. 각 제스처의 touchstart 1개·touchmove 10개·touchend 1개, 총 12개 모두 페이지에서 **`isTrusted: true`**로 관측됐다. DOM `dispatchEvent(new TouchEvent(...))` 방식과 구분된다.
+- 페이지의 이벤트·포커스와 원래 전송을 그대로 호출하는 WebSocket 관찰기로 `control.acquire` 및 `terminal.input`을 기록했다. 화면의 합성 행 번호 변화와 실제 호스트 프레임도 대조했다. 두 CLI 모두 alternate 화면과 **ANY/SGR** 모드였다.
+
+### 실제 결과
+
+표의 범위는 화면에 보이는 `LIVE`/`CX-L` 행 머리글 기준이다. 좁은 화면에서는 한 논리 행이 여러 화면 줄로 감긴다.
+
+| 사례 | 시작 → 종료 | 입력·포커스 관측 |
+| --- | --- | --- |
+| Claude 보기 전용 첫 pan | `LIVE-263~300` → `LIVE-292~300` | 제어권 획득, `38열×26행` 크기 요청. SGR wheel 0개, `BODY` 유지 |
+| Claude 이전 대화 방향 | `LIVE-292~300` → `LIVE-276~284` | SGR wheel 10개, `BODY` 유지 |
+| Claude 최신 대화 방향 | `LIVE-276~284` → `LIVE-292~300` | SGR wheel 10개, `BODY` 유지 |
+| Codex 보기 전용 첫 pan | `CX-L-265~300` → `CX-L-296~300` | 제어권 획득, `38열×26행` 크기 요청. SGR wheel 0개, 기존 `BUTTON` 포커스 유지 |
+| Codex 이전 대화 방향 | `CX-L-296~300` → `CX-L-286~291` | SGR wheel 10개, 기존 `BUTTON` 포커스 유지 |
+| Codex 최신 대화 방향 | `CX-L-286~291` → `CX-L-296~300` | SGR wheel 10개, 기존 `BUTTON` 포커스 유지 |
+| Codex 모바일 Ctrl·Alt 모두 ON, 이전 방향 | `CX-L-296~300` → `CX-L-286~291` | SGR wheel 10개, 바이트 변형 없음 |
+| Codex 모바일 Ctrl·Alt 모두 ON, 최신 방향 | `CX-L-286~291` → `CX-L-296~300` | SGR wheel 10개, 바이트 변형 없음 |
+
+첫 pan 두 건에서 관측한 `terminal.input`은 focus-out 시퀀스 `ESC [ O` 한 개씩이며 SGR wheel은 없었다. 첫 화면 범위 변화는 제어권 획득에 따른 크기 변경이므로 스크롤 성공으로 세지 않았다. 크기가 안정된 다음 pan부터 양방향 이동을 확인했다. 최종 호스트 크기는 자동 맞춤 후 `39열×26행`이었다. 따라서 최초 접속의 첫 pan에서 크기가 바뀌면 다음 swipe가 필요할 수 있다는 실제 동작도 확인했다.
+
+보조키는 실제 모바일 Ctrl·Alt 버튼을 클릭하고 둘 다 `[pressed]`인 snapshot을 보존했다. 이 상태의 두 Codex pan에서 전송된 20개 입력 모두 `ESC [ < 64/65 ; 열 ; 행 M` 형태의 표준 SGR wheel이었다. 추가 Alt ESC 접두사나 Ctrl 변형이 없었다. Claude의 보조키 ON 조합까지 추가 검사한 것은 아니다.
+
+모든 8개 제스처에서 `focusin` 발생 0개였으며 input/textarea로 포커스가 이동하지 않았다. Claude는 `BODY`, Codex는 터미널 전환·보조키 조작 후의 `BUTTON`에 머물렀다. `.xterm-screen`의 `touch-action: pinch-zoom`도 유지됐다. 이는 브라우저 포커스와 CSS 관측이며 실물 OS 키보드나 pinch 동작 검증을 뜻하지 않는다.
+
+### 추가 검사의 한계와 증거
+
+실물 휴대폰의 손가락·관성·OS 키보드·삼성 인터넷·휴대폰 네트워크는 검사하지 않았다. 모든 재접속/승인 경합, RIS·이전 프레임 폐기, 미지원 mouse mode NONE, normal buffer의 보기 전용 history는 이번 실제 CLI Chrome 검사에 추가하지 않았다. 첫 크기 변경 중 wheel 미전송 관측과 해당 조건의 전체 자동 회귀 검증은 구분한다.
+
+무시된 `output/playwright/chrome-mobile-cli/`에 다음 원본 관찰 결과를 보존했다.
+
+- `chrome-meta.json`: 실제 Chrome 버전, 모바일 프리셋 UA·viewport·최종 웹 번들
+- `claude-first-pan.json`, `claude-older.json`, `claude-newer.json`
+- `codex-first-pan.json`, `codex-older.json`, `codex-newer.json`
+- `modifiers-on.txt`, `codex-modifiers-older.json`, `codex-modifiers-newer.json`
+- `.playwright-cli/`의 모바일 화면 snapshot 및 초기 실제 viewport screenshot
+
+실제 호스트 프레임은 `.test-data/chrome-claude-frame.json`, `.test-data/chrome-codex-before-frame.json`, `.test-data/chrome-codex-final-frame.json`에 보존했다. 계측 준비 파일은 `.test-data/chrome-mobile-*.js`이며 제품 코드에 포함하지 않았다.
+
+### 추가 검사 정리 완료
+
+전용 Chrome 세션을 닫고 시험 앱·OwnerPipe 호스트를 정상 종료했다. 이번 시험 실행 파일·TEMP 프로필·두 합성 CLI 세션의 남은 프로세스가 0개이며 전용 Chrome 세션 프로세스도 종료됐음을 확인했다. 시험 unpacked의 web index와 host main을 기존 `native-original-index.html`, `native-original-host-main.cjs`로 복원하고 각각 SHA-256 일치를 확인했다. 기존 백업은 덮어쓰지 않았다.
+
+설치 사용자 앱·실사용 세션·인증·Serve·전역 설정을 변경하지 않았다. 제품 코드 수정·커밋·push·배포 없이 추가 검증과 이 문서 기록을 완료했다.

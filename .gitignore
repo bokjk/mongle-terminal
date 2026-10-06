@@ -6,6 +6,7 @@ release-stage/
 .test-data/
 .backups/
 test-results/
+output/playwright/
 *.log
 .env
 .env.*
