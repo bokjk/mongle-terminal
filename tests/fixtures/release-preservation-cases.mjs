@@ -1,0 +1,112 @@
+// tests/platform/release-preservation.test.ts invokes this through node --test.
+// Full main flow runs in pwsh with only its external-process boundary mocked.
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { tmpdir } from 'node:os';
+import { createRequire } from 'node:module';
+import vm from 'node:vm';
+const require = createRequire(import.meta.url);
+const yaml = require('js-yaml');
+const here = path.dirname(fileURLToPath(import.meta.url));
+const repositoryRoot = path.resolve(here, '../..');
+const proposal = path.join(repositoryRoot, 'scripts/preserve-release-draft.ps1');
+const driver = path.join(here, 'release-preservation-driver.ps1');
+const workflow = yaml.load(fs.readFileSync(path.join(repositoryRoot, '.github/workflows/release.yml'), 'utf8'));
+const fixtureParent = fs.realpathSync(tmpdir());
+const steps = workflow.jobs.build.steps;
+const byId = Object.fromEntries(steps.filter(s => s.id).map(s => [s.id, s]));
+const gates = ['release', 'typecheck', 'runtime_build', 'regression', 'package', 'native', 'native_evidence', 'recheck', 'nsis', 'installed_evidence'];
+const keys = ['releaseDocuments', 'typecheck', 'build', 'regression', 'package', 'native', 'nativeEvidence', 'postPackageDocuments', 'nsis', 'installedEvidence'];
+const outcomes = Object.fromEntries(keys.map(k => [k, 'success']));
+const sha = value => crypto.createHash('sha256').update(value).digest('hex');
+function fixture(mode = 'success') {
+  const root = fs.mkdtempSync(path.join(fixtureParent, 'mongle-release-preservation-'));
+  fs.mkdirSync(path.join(root, 'release'));
+  fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'mongle-terminal', version: '0.3.13' }));
+  const names = ['MongleTerminal-Setup-0.3.13-x64.exe', 'MongleTerminal-Setup-0.3.13-x64.exe.blockmap', 'MongleTerminal-0.3.13-x64.zip', 'latest.yml'];
+  for (const name of names) fs.writeFileSync(path.join(root, 'release', name), `synthetic ${name}`);
+  fs.writeFileSync(path.join(root, 'release/SHA256SUMS.txt'), names.map(name => `${sha(fs.readFileSync(path.join(root, 'release', name)))}  ${name}`).join('\n') + '\n');
+  fs.writeFileSync(path.join(root, 'release/RELEASE-NOTES.md'), 'Synthetic reviewed notes.\n');
+  for (const relative of ['e2e/clipboard', 'e2e/update-desktop', 'installed-upgrade']) {
+    const dir = path.join(root, 'test-results', relative); fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'result.json'), JSON.stringify({ passed: true, cleanedUp: true,
+      ...(relative === 'installed-upgrade' ? { newVersion: '0.3.13', newInstallerSha256: sha(fs.readFileSync(path.join(root, 'release', names[0]))), installedAsarSha256: 'e'.repeat(64), installedHostBundle: { files: 20, sha256: 'f'.repeat(64) }, bundleDifference: { missing: [], extra: [], changed: [] } } : {}),
+      privateField: 'SYNTHETIC_PRIVATE_DO_NOT_LOG' }));
+  }
+  const release = ['published', 'mixed'].includes(mode) ? { id: 11, tag_name: 'v0.3.13', draft: mode !== 'published', body: 'another run attempt' } : null;
+  fs.writeFileSync(path.join(root, 'state.json'), JSON.stringify({ mode, release, assets: [], calls: [], createCalls: 0, uploadCalls: 0 }));
+  // No credential is inherited by the child. The mock has no real subprocess path.
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/(TOKEN|SECRET|PASSWORD|GH_|GITHUB_|ACTIONS_)/i.test(key)));
+  Object.assign(env, { GITHUB_ACTIONS: 'true', GITHUB_REPOSITORY: 'bokjk/mongle-terminal', GITHUB_SERVER_URL: 'https://github.com', GITHUB_API_URL: 'https://api.github.com', GITHUB_EVENT_NAME: 'push', GITHUB_REF: 'refs/tags/v0.3.13', GITHUB_SHA: 'a'.repeat(40), GITHUB_RUN_ID: '123', GITHUB_RUN_ATTEMPT: '1', GITHUB_WORKSPACE: root, GH_TOKEN: 'synthetic-not-a-credential', GITHUB_STEP_SUMMARY: path.join(root, 'summary.md'), GITHUB_OUTPUT: path.join(root, 'outputs.txt'), MOCK_STATE: path.join(root, 'state.json') });
+  return { root, env, state: () => JSON.parse(fs.readFileSync(path.join(root, 'state.json'))),
+    invoke: (changes = {}) => spawnSync('pwsh', ['-NoProfile', '-NonInteractive', '-File', driver, '-ProposalPath', proposal, '-FixtureRoot', root, '-OutcomesJson', JSON.stringify({ ...outcomes, ...changes })], { env, encoding: 'utf8', timeout: 30000, windowsHide: true }),
+    dispose: () => { assert.equal(path.dirname(fs.realpathSync(root)), fixtureParent); assert.ok(path.basename(root).startsWith('mongle-release-preservation-')); fs.rmSync(root, { recursive: true, force: true }); } };
+}
+function expression(value, context) {
+  return vm.runInNewContext(value.replace(/^\$\{\{\s*|\s*\}\}$/g, ''), { cancelled: () => false, startsWith: (a,b) => a.startsWith(b), format: (s,a) => s.replace('{0}',a), ...context }, { timeout: 100 });
+}
+function state(artifact = 'success', fallback = 'skipped') {
+  return { ...Object.fromEntries(gates.map(id => [id, { outcome: 'success' }])), release_artifact: { outcome: artifact }, private_preservation: { outcome: fallback, outputs: { 'manifest-sha256': 'b'.repeat(64) } } };
+}
+test('build and public draft check out the same immutable source SHA', () => {
+  const buildCheckouts = steps.filter(step => step.uses?.startsWith('actions/checkout@'));
+  const draftCheckouts = workflow.jobs.draft.steps.filter(step => step.uses?.startsWith('actions/checkout@'));
+  assert.equal(buildCheckouts.length, 1);
+  assert.equal(draftCheckouts.length, 1);
+  assert.equal(buildCheckouts[0].with.ref, '${{ github.sha }}');
+  assert.equal(workflow.jobs.build.outputs['source-sha'], '${{ github.sha }}');
+  assert.equal(draftCheckouts[0].with.ref, '${{ needs.build.outputs.source-sha }}');
+  for (const checkout of [...buildCheckouts, ...draftCheckouts]) assert.equal(checkout.with['persist-credentials'], false);
+});
+test('workflow keeps mandatory tests hard-failing, original artifact route automatic, token only in fallback env', () => {
+  for (const id of gates) assert.notEqual(byId[id]['continue-on-error'], true);
+  assert.equal(byId.release_artifact['continue-on-error'], true);
+  assert.equal(workflow.jobs.build.permissions.contents, 'write');
+  assert.ok(!JSON.stringify(workflow.jobs.build).includes('RELEASE_REPO_TOKEN'));
+  for (const step of steps) if (step.id !== 'private_preservation') assert.ok(!step.env?.GH_TOKEN);
+  assert.equal(expression(workflow.jobs.draft.if, { needs: { build: { result: 'success', outputs: { preservation: 'artifact' } } } }), true);
+  assert.equal(expression(workflow.jobs.draft.if, { needs: { build: { result: 'success', outputs: { preservation: 'private-draft' } } } }), false);
+  assert.equal(expression(workflow.jobs.draft.if, { needs: { build: { result: 'failure', outputs: { preservation: 'artifact' } } } }), false);
+});
+test('workflow rejects branch/foreign repo dispatch and fallback on any failed/skipped gate', () => {
+  const github = { repository: 'bokjk/mongle-terminal', ref: 'refs/tags/v0.3.13', event_name: 'push' };
+  assert.equal(expression(workflow.jobs.build.if, { github, inputs: {} }), true);
+  for (const change of [{ ref: 'refs/heads/main' }, { repository: 'other/repo' }, { event_name: 'pull_request' }]) assert.equal(expression(workflow.jobs.build.if, { github: { ...github, ...change }, inputs: {} }), false);
+  assert.equal(expression(workflow.jobs.build.if, { github: { ...github, event_name: 'workflow_dispatch' }, inputs: { tag: 'v0.3.13' } }), true);
+  assert.equal(expression(workflow.jobs.build.if, { github: { ...github, event_name: 'workflow_dispatch' }, inputs: { tag: 'v0.3.12' } }), false);
+  assert.equal(expression(byId.private_preservation.if, { steps: state('failure') }), true);
+  assert.equal(expression(byId.private_preservation.if, { steps: state() }), false);
+  for (const id of gates) for (const outcome of ['failure', 'skipped', 'cancelled']) { const s = state('failure'); s[id].outcome = outcome; assert.equal(expression(byId.private_preservation.if, { steps: s }), false); }
+});
+test('actual final storage gate accepts artifact/fallback only, rejects both-failed and failed checks', () => {
+  const f = fixture(); try {
+    for (const [artifact, fallback, good] of [['success','skipped',true], ['failure','success',true], ['failure','failure',false], ['skipped','skipped',false]]) {
+      const r = spawnSync('pwsh', ['-NoProfile','-NonInteractive','-Command',byId.preservation.run], { env: { ...f.env, STEPS_JSON: JSON.stringify(state(artifact,fallback)) }, encoding:'utf8', windowsHide:true });
+      assert.equal(r.status === 0, good, r.stderr);
+    }
+    const s=state();s.regression.outcome='failure';const r=spawnSync('pwsh',['-NoProfile','-NonInteractive','-Command',byId.preservation.run],{env:{...f.env,STEPS_JSON:JSON.stringify(s)},encoding:'utf8',windowsHide:true});assert.notEqual(r.status,0);
+  } finally { f.dispose(); }
+});
+test('whole main success saves seven exact assets, logs trusted manifest and installed hashes; same-attempt retry uploads nothing', () => {
+  const f=fixture();try {
+    const r=f.invoke();assert.equal(r.status,0,r.stderr);assert.equal(f.state().createCalls,1);assert.equal(f.state().uploadCalls,7);
+    const bytes=fs.readFileSync(path.join(f.root,'release/PRESERVATION-MANIFEST.json'));const m=JSON.parse(bytes);
+    assert.equal(m.sha,'a'.repeat(40));assert.equal(m.runId,'123');assert.equal(m.attempt,'1');assert.equal(m.artifactStorageFailure,'upload-failed');assert.equal(m.installedVerification.installedAsarSha256,'e'.repeat(64));
+    assert.equal(m.installedVerification.newInstallerSha256,m.files[0].sha256);
+    for(const asset of f.state().assets){const bytes=fs.readFileSync(path.join(f.root,'release',asset.name));assert.equal(asset.digest,`sha256:${sha(bytes)}`);assert.equal(asset.size,bytes.length);}
+    assert.ok(r.stdout.includes(sha(bytes)));const summary=fs.readFileSync(f.env.GITHUB_STEP_SUMMARY,'utf8');assert.ok(summary.includes(sha(bytes)));assert.ok(summary.includes('gh release download v0.3.13'));assert.ok(!summary.includes('SYNTHETIC_PRIVATE_DO_NOT_LOG'));assert.ok(!r.stdout.includes('synthetic-not-a-credential'));
+    assert.ok(fs.readFileSync(f.env.GITHUB_OUTPUT,'utf8').includes(`manifest-sha256=${sha(bytes)}`));
+    const again=f.invoke();assert.equal(again.status,0,again.stderr);assert.equal(f.state().uploadCalls,7);assert.equal(f.state().createCalls,1);
+  }finally{f.dispose();}
+});
+for(const mode of ['upload-failure','published','mixed','tag-mismatch'])test(`whole main ${mode} remains failed and cannot report preserved success`,()=>{
+  const f=fixture(mode);try{const r=f.invoke();assert.notEqual(r.status,0);assert.ok(!fs.existsSync(f.env.GITHUB_OUTPUT));if(mode!=='upload-failure'){assert.equal(f.state().uploadCalls,0);assert.equal(f.state().createCalls,0);}else{assert.equal(f.state().assets.length,1);}}finally{f.dispose();}
+});
+test('whole main rejects failed verification and mismatched installed installer before remote writes',()=>{
+  const f=fixture();try{let r=f.invoke({regression:'failure'});assert.notEqual(r.status,0);assert.equal(f.state().createCalls,0);const p=path.join(f.root,'test-results/installed-upgrade/result.json');const v=JSON.parse(fs.readFileSync(p));v.newInstallerSha256='0'.repeat(64);fs.writeFileSync(p,JSON.stringify(v));r=f.invoke();assert.notEqual(r.status,0);assert.equal(f.state().createCalls,0);assert.equal(f.state().uploadCalls,0);}finally{f.dispose();}
+});
