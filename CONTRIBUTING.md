@@ -131,6 +131,8 @@ AI 도구로 작성한 코드도 제출자가 설명하고 검증할 책임이 �
 
 ### 자동 검사와 병합 제한의 현재 상태
 
+공개 협업 기준으로 모든 코드 PR의 전체 회귀 검사를 유지하며, 변경 파일에 해당하는 일부 테스트만 선택하지 않습니다. 별도 [설치 업그레이드 검사](.github/workflows/installer-validation.yml)는 `apps/web/` UI와 알려진 개발 문서의 추가·수정만 있는 PR에서 생략합니다. Windows 아이콘 원본(`apps/web/public/mongle-terminal-icon.png`), 설치본에 포함되는 `docs/USER-GUIDE.md`·`docs/THIRD-PARTY-NOTICES.md`·`docs/licenses/`는 예외로 반드시 검사합니다. 데스크톱·호스트·플랫폼·스크립트·의존성·설정·시험·미확인 경로, 삭제·파일 유형 변경도 설치 검사를 수행합니다. 배포 PR과 수동 실행은 항상 전체 설치 검사를 수행하며, 범위 판정 실패는 검사 실패로 처리합니다. 생략 시 요약에 실제 설치 미실행을 표시합니다. 이 정책은 저장소 공개 범위나 라이선스를 변경하지 않습니다.
+
 [PR description](.github/workflows/pr-description.yml)은 PR을 열거나 커밋·설명을 수정할 때 Linux에서 필수 섹션·검증 설명·확인 체크리스트와 문서 동반 여부를 검사합니다. 앱 의존성 설치나 빌드를 하지 않습니다. 내부 변경은 README/CHANGELOG 수정을 일괄 강제하지 않고 문서 영향 설명을 요구합니다. 자동 검사는 설명의 진실성이나 변경 분류의 정확성까지 판단할 수 없으므로 리뷰가 필요합니다.
 
 [Contribution checks](.github/workflows/ci.yml)는 PR 개설·커밋 갱신·재개·대상 브랜치 변경 때 범위를 판정합니다. `dev` 대상이며 루트 README·CHANGELOG·CONTRIBUTING·SECURITY·AGENTS 문서 또는 `docs/`의 Markdown만 바뀌면 Linux에서 배포 문서 정합성을 검사하고 **Windows checks** 요약에 런타임 검사를 하지 않았다고 명시합니다. 코드·설정·의존성·시험·워크플로 변경, 삭제·이름 변경에 포함된 코드, 빈 변경 목록, 수동 실행, `dev` → `main` 배포 PR은 기존 Windows 타입·빌드·네이티브·전체 회귀 검사를 유지합니다. 범위 판정이나 문서 검사가 실패하면 필수 검사도 실패합니다.

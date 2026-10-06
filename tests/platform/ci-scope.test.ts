@@ -6,10 +6,23 @@ import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { changedFiles, comparison, requiresWindows } from '../../scripts/ci-scope.ts';
+import { changedFiles, comparison, requiresWindows, requiresInstaller } from '../../scripts/ci-scope.ts';
 
 const exec = promisify(execFile);
 const yaml = createRequire(import.meta.url)('js-yaml') as { load(text: string): any };
+
+test('all code keeps full regression while UI-only changes omit the extra installer rehearsal', () => {
+  assert.equal(requiresWindows(['apps/web/TerminalPane.tsx']), true);
+  assert.equal(requiresInstaller(['apps/web/TerminalPane.tsx', 'README.md']), false);
+  assert.equal(requiresInstaller(['docs/validation/example.md']), false);
+  assert.equal(requiresInstaller(['apps/web/public/mongle-terminal-icon.png']), true);
+  for (const file of ['apps/desktop/main.ts', 'packages/host/main.ts', 'platform/windows/installer.nsh', 'scripts/build.ts', 'package-lock.json', 'docs/USER-GUIDE.md', 'docs/THIRD-PARTY-NOTICES.md', 'docs/licenses/library.md', 'new-config.json', '.github/workflows/installer-validation.yml', 'tests/e2e/installed.test.ts', 'apps/web/../../scripts/a.ts']) {
+    assert.equal(requiresInstaller([file]), true, file);
+  }
+  assert.equal(requiresInstaller([]), true);
+  assert.equal(requiresInstaller(['apps/web/main.ts'], true), true);
+  assert.equal(requiresInstaller(['apps/web/main.ts'], false, ['apps/web/main.ts']), true);
+});
 
 test('only known prose paths skip runtime verification; empty and unknown changes require it', () => {
   assert.equal(requiresWindows(['README.md', 'CHANGELOG.md', 'docs/validation/a.md']), false);
@@ -52,7 +65,7 @@ test('real git diff retains deleted code and both sides of a code-to-doc rename;
 
     await copyFile('scripts/ci-scope.ts', path.join(parent, 'ci-scope.ts'));
     const eventPath = path.join(parent, 'event.json'), output = path.join(parent, 'output');
-    const run = (extra: NodeJS.ProcessEnv = {}) => exec(process.execPath, ['ci-scope.ts'], { cwd: parent, windowsHide: true, env: { ...process.env, GITHUB_EVENT_NAME: 'pull_request', GITHUB_EVENT_PATH: eventPath, GITHUB_OUTPUT: output, ...extra } });
+    const run = (extra: NodeJS.ProcessEnv = {}, args: string[] = []) => exec(process.execPath, ['ci-scope.ts', ...args], { cwd: parent, windowsHide: true, env: { ...process.env, GITHUB_EVENT_NAME: 'pull_request', GITHUB_EVENT_PATH: eventPath, GITHUB_OUTPUT: output, ...extra } });
     await writeFile(eventPath, JSON.stringify({ pull_request: { base: { sha: base, ref: 'dev' }, head: { sha: head } } }));
     await run(); assert.equal(await readFile(output, 'utf8'), 'windows_required=true\n');
     await writeFile(path.join(parent, 'docs/guide.md'), 'Documentation only\n');
@@ -60,6 +73,9 @@ test('real git diff retains deleted code and both sides of a code-to-doc rename;
     const docsHead = await git('rev-parse', 'HEAD');
     await writeFile(eventPath, JSON.stringify({ pull_request: { base: { sha: head, ref: 'dev' }, head: { sha: docsHead } } }));
     await writeFile(output, ''); await run(); assert.equal(await readFile(output, 'utf8'), 'windows_required=false\n');
+    await writeFile(output, ''); await run({}, ['--installer']); assert.equal(await readFile(output, 'utf8'), 'installer_required=false\n');
+    await writeFile(output, ''); await run({ GITHUB_EVENT_NAME: 'workflow_dispatch' }, ['--installer']); assert.equal(await readFile(output, 'utf8'), 'installer_required=true\n');
+    await writeFile(output, ''); await assert.rejects(() => run({}, ['--unknown'])); assert.equal(await readFile(output, 'utf8'), '');
     await writeFile(output, ''); await run({ GITHUB_EVENT_NAME: 'workflow_dispatch' });
     assert.equal(await readFile(output, 'utf8'), 'windows_required=true\n');
     await rm(path.join(parent, 'docs/guide.md'));
@@ -101,4 +117,15 @@ test('CI routes metadata separately, keeps full release checks and fails a missi
   const release = yaml.load(await readFile('.github/workflows/release.yml', 'utf8'));
   assert.deepEqual(release.on.push.tags, ['v*']);
   assert.equal(release.jobs.build['runs-on'], 'windows-2022');
+  const installer = yaml.load(await readFile('.github/workflows/installer-validation.yml', 'utf8'));
+  assert.equal(installer.on.pull_request.paths, undefined);
+  assert.deepEqual(installer.permissions, { contents: 'read' });
+  assert.match(installer.concurrency.group, /'metadata' \|\| 'code'/);
+  assert.equal(installer.jobs.scope.steps.at(-1).run, 'node scripts/ci-scope.ts --installer');
+  const installation = installer.jobs['installed-upgrade'];
+  assert.match(installation.if, /always\(\).*github.event.changes.base/);
+  assert.match(installation.name, /'Installed upgrade \(PR text only\)' \|\| 'Real NSIS upgrade and restore'/);
+  assert.match(installation.steps[0].run, /test "\$SCOPE_RESULT" = success/);
+  assert.match(installation.steps[0].run, /exit 1/);
+  for (const step of installation.steps.slice(1)) assert.match(step.if, /needs.scope.outputs.installer_required == 'true'/);
 });
