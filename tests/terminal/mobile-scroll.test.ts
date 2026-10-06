@@ -306,7 +306,9 @@ test('real Chrome Android emulation: live pans survive presentation frames but s
       }, frame);
       const rect = await page.locator('.xterm-screen').boundingBox();
       assert.ok(rect);
-      const x = rect.x + rect.width / 2, y = rect.y + 12;
+      // Start on painted text, not empty background, so replacing row spans
+      // during presentation also exercises native touch target continuity.
+      const x = rect.x + 20, y = rect.y + 12;
       const moveTo = (offset: number) => touch.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y: y + offset, id: 1 }] });
       await touch.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y, id: 1 }] });
       await moveTo(30);
