@@ -38,13 +38,13 @@ function fixture(mode = 'success') {
       ...(relative === 'installed-upgrade' ? { newVersion: '0.3.13', newInstallerSha256: sha(fs.readFileSync(path.join(root, 'release', names[0]))), installedAsarSha256: 'e'.repeat(64), installedHostBundle: { files: 20, sha256: 'f'.repeat(64) }, bundleDifference: { missing: [], extra: [], changed: [] } } : {}),
       privateField: 'SYNTHETIC_PRIVATE_DO_NOT_LOG' }));
   }
-  const release = ['published', 'mixed'].includes(mode) ? { id: 11, tag_name: 'v0.3.13', draft: mode !== 'published', body: 'another run attempt' } : null;
-  fs.writeFileSync(path.join(root, 'state.json'), JSON.stringify({ mode, release, assets: [], calls: [], createCalls: 0, uploadCalls: 0 }));
+  const release = ['published', 'mixed', 'graphql-duplicate'].includes(mode) ? { id: 11, tag_name: 'v0.3.13', draft: mode !== 'published', body: 'another run attempt' } : null;
+  fs.writeFileSync(path.join(root, 'state.json'), JSON.stringify({ mode, release, assets: [], calls: [], createCalls: 0, uploadCalls: 0, listCalls: 0, postCreateLookups: 0, restListCalls: 0 }));
   // No credential is inherited by the child. The mock has no real subprocess path.
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/(TOKEN|SECRET|PASSWORD|GH_|GITHUB_|ACTIONS_)/i.test(key)));
   Object.assign(env, { GITHUB_ACTIONS: 'true', GITHUB_REPOSITORY: 'bokjk/mongle-terminal', GITHUB_SERVER_URL: 'https://github.com', GITHUB_API_URL: 'https://api.github.com', GITHUB_EVENT_NAME: 'push', GITHUB_REF: 'refs/tags/v0.3.13', GITHUB_SHA: 'a'.repeat(40), GITHUB_RUN_ID: '123', GITHUB_RUN_ATTEMPT: '1', GITHUB_WORKSPACE: root, GH_TOKEN: 'synthetic-not-a-credential', GITHUB_STEP_SUMMARY: path.join(root, 'summary.md'), GITHUB_OUTPUT: path.join(root, 'outputs.txt'), MOCK_STATE: path.join(root, 'state.json') });
   return { root, env, state: () => JSON.parse(fs.readFileSync(path.join(root, 'state.json'))),
-    invoke: (changes = {}) => spawnSync('pwsh', ['-NoProfile', '-NonInteractive', '-File', driver, '-ProposalPath', proposal, '-FixtureRoot', root, '-OutcomesJson', JSON.stringify({ ...outcomes, ...changes })], { env, encoding: 'utf8', timeout: 30000, windowsHide: true }),
+    invoke: (changes = {}) => spawnSync('pwsh', ['-NoProfile', '-NonInteractive', '-File', driver, '-ProposalPath', proposal, '-FixtureRoot', root, '-OutcomesJson', JSON.stringify({ ...outcomes, ...changes })], { env, encoding: 'utf8', timeout: 60000, windowsHide: true }),
     dispose: () => { assert.equal(path.dirname(fs.realpathSync(root)), fixtureParent); assert.ok(path.basename(root).startsWith('mongle-release-preservation-')); fs.rmSync(root, { recursive: true, force: true }); } };
 }
 function expression(value, context) {
@@ -92,7 +92,7 @@ test('actual final storage gate accepts artifact/fallback only, rejects both-fai
     const s=state();s.regression.outcome='failure';const r=spawnSync('pwsh',['-NoProfile','-NonInteractive','-Command',byId.preservation.run],{env:{...f.env,STEPS_JSON:JSON.stringify(s)},encoding:'utf8',windowsHide:true});assert.notEqual(r.status,0);
   } finally { f.dispose(); }
 });
-test('whole main success saves seven exact assets, logs trusted manifest and installed hashes; same-attempt retry uploads nothing', () => {
+test('whole main GraphQL discovery saves exact assets despite REST draft omission; same-attempt retry uploads nothing', () => {
   const f=fixture();try {
     const r=f.invoke();assert.equal(r.status,0,r.stderr);assert.equal(f.state().createCalls,1);assert.equal(f.state().uploadCalls,7);
     const bytes=fs.readFileSync(path.join(f.root,'release/PRESERVATION-MANIFEST.json'));const m=JSON.parse(bytes);
@@ -102,6 +102,8 @@ test('whole main success saves seven exact assets, logs trusted manifest and ins
     assert.ok(r.stdout.includes(sha(bytes)));const summary=fs.readFileSync(f.env.GITHUB_STEP_SUMMARY,'utf8');assert.ok(summary.includes(sha(bytes)));assert.ok(summary.includes('gh release download v0.3.13'));assert.ok(!summary.includes('SYNTHETIC_PRIVATE_DO_NOT_LOG'));assert.ok(!r.stdout.includes('synthetic-not-a-credential'));
     assert.ok(fs.readFileSync(f.env.GITHUB_OUTPUT,'utf8').includes(`manifest-sha256=${sha(bytes)}`));
     const again=f.invoke();assert.equal(again.status,0,again.stderr);assert.equal(f.state().uploadCalls,7);assert.equal(f.state().createCalls,1);
+    assert.equal(f.state().restListCalls,0);
+    assert.ok(f.state().calls.some(call=>call.operation.includes(' graphql ')));
   }finally{f.dispose();}
 });
 for(const mode of ['upload-failure','published','mixed','tag-mismatch'])test(`whole main ${mode} remains failed and cannot report preserved success`,()=>{
@@ -109,4 +111,87 @@ for(const mode of ['upload-failure','published','mixed','tag-mismatch'])test(`wh
 });
 test('whole main rejects failed verification and mismatched installed installer before remote writes',()=>{
   const f=fixture();try{let r=f.invoke({regression:'failure'});assert.notEqual(r.status,0);assert.equal(f.state().createCalls,0);const p=path.join(f.root,'test-results/installed-upgrade/result.json');const v=JSON.parse(fs.readFileSync(p));v.newInstallerSha256='0'.repeat(64);fs.writeFileSync(p,JSON.stringify(v));r=f.invoke();assert.notEqual(r.status,0);assert.equal(f.state().createCalls,0);assert.equal(f.state().uploadCalls,0);}finally{f.dispose();}
+});
+
+test('whole main waits only for genuine absence in GraphQL after creating a draft', () => {
+  const f = fixture('delayedvisibility');
+  try {
+    const r = f.invoke();
+    assert.ifError(r.error);
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(f.state().createCalls, 1);
+    assert.equal(f.state().postCreateLookups, 3);
+    assert.equal(f.state().listCalls, 4);
+    assert.equal(f.state().uploadCalls, 7);
+    assert.ok(fs.readFileSync(f.env.GITHUB_OUTPUT, 'utf8').includes('manifest-sha256='));
+  } finally { f.dispose(); }
+});
+
+test('whole main follows GraphQL cursor pages for initial discovery and same-attempt retry', () => {
+  const f = fixture('graphql-pages');
+  try {
+    let r = f.invoke(); assert.ifError(r.error); assert.equal(r.status, 0, r.stderr);
+    assert.equal(f.state().createCalls, 1);
+    assert.equal(f.state().listCalls, 4);
+    assert.equal(f.state().uploadCalls, 7);
+    r = f.invoke(); assert.ifError(r.error); assert.equal(r.status, 0, r.stderr);
+    assert.equal(f.state().listCalls, 6);
+    assert.equal(f.state().createCalls, 1);
+    assert.equal(f.state().uploadCalls, 7);
+    assert.equal(f.state().restListCalls, 0);
+  } finally { f.dispose(); }
+});
+
+for (const [mode, expected, lookups] of [
+  ['graphql-errors', /GraphQL release query failed/, 1],
+  ['graphql-null-repository', /GraphQL repository unavailable/, 1],
+  ['graphql-duplicate', /Ambiguous release tag/, 2],
+  ['graphql-bad-cursor', /Invalid or repeated GraphQL cursor/, 2],
+]) test(`whole main ${mode} refuses mutations instead of treating failure as absence`, () => {
+  const f = fixture(mode);
+  try {
+    const r = f.invoke(); assert.ifError(r.error); assert.notEqual(r.status, 0);
+    assert.match(r.stderr, expected);
+    assert.ok(!(r.stdout + r.stderr).includes('SYNTHETIC_PRIVATE_DO_NOT_LOG'));
+    assert.equal(f.state().listCalls, lookups);
+    assert.equal(f.state().createCalls, 0);
+    assert.equal(f.state().uploadCalls, 0);
+    assert.equal(f.state().restListCalls, 0);
+    assert.ok(!fs.existsSync(f.env.GITHUB_OUTPUT));
+  } finally { f.dispose(); }
+});
+
+test('whole main stops after exactly twelve missing post-create lookups without reporting success', () => {
+  const f = fixture('nevervisible');
+  try {
+    const r = f.invoke();
+    assert.ifError(r.error); // A process timeout is not evidence of bounded failure.
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr, /Created release is still missing after 12 lookups/);
+    assert.equal(f.state().createCalls, 1);
+    assert.equal(f.state().postCreateLookups, 12);
+    assert.equal(f.state().listCalls, 13);
+    assert.equal(f.state().uploadCalls, 0);
+    assert.ok(!fs.existsSync(f.env.GITHUB_OUTPUT));
+    assert.ok(!fs.existsSync(f.env.GITHUB_STEP_SUMMARY));
+  } finally { f.dispose(); }
+});
+
+for (const [mode, expected] of [
+  ['published-aftercreate', /An existing published release must never be changed/],
+  ['mixed-aftercreate', /Draft belongs to another run\/attempt\/SHA\/manifest/],
+  ['api-error-aftercreate', /Synthetic listing API failure/],
+]) test(`whole main ${mode} fails on the first lookup without retry`, () => {
+  const f = fixture(mode);
+  try {
+    const r = f.invoke();
+    assert.ifError(r.error);
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr, expected);
+    assert.equal(f.state().createCalls, 1);
+    assert.equal(f.state().postCreateLookups, 1);
+    assert.equal(f.state().listCalls, 2);
+    assert.equal(f.state().uploadCalls, 0);
+    assert.ok(!fs.existsSync(f.env.GITHUB_OUTPUT));
+  } finally { f.dispose(); }
 });

@@ -20,10 +20,43 @@ function Invoke-Captured([string]$Tool, [string[]]$Arguments) {
     if ($Arguments[0] -ceq 'release' -and $Arguments[1] -ceq 'create') {
       if ($s.release) { throw 'Existing release.' }
       $s.createCalls++
-      $s.release = @{ id = 11; tag_name = $Arguments[2]; draft = $true; body = $Arguments[[array]::IndexOf($Arguments, '--notes') + 1] }
+      # Keep the saved GitHub REST response shape (including null fields/assets),
+      # with synthetic identity. Creation state and listing visibility differ.
+      $s.release = @{ id = 11; tag_name = $Arguments[2]; draft = $true; body = $Arguments[[array]::IndexOf($Arguments, '--notes') + 1];
+        url = 'https://api.github.com/repos/bokjk/mongle-terminal/releases/11';
+        assets_url = 'https://api.github.com/repos/bokjk/mongle-terminal/releases/11/assets';
+        html_url = 'https://github.com/bokjk/mongle-terminal/releases/tag/untagged-synthetic';
+        target_commitish = 'dev'; name = 'Private verified preservation'; immutable = $false;
+        prerelease = $false; published_at = $null; assets = @(); tarball_url = $null; zipball_url = $null }
+      if ($s.mode -ceq 'published-aftercreate') { $s.release.draft = $false }
+      if ($s.mode -ceq 'mixed-aftercreate') { $s.release.body = 'another run attempt' }
       return ''
     }
     if ($Arguments[0] -cne 'api') { throw 'Unexpected gh mock command.' }
+    if ($Arguments -contains 'graphql') {
+      $s.listCalls++
+      $queries = @($Arguments | Where-Object { $_.StartsWith('query=') })
+      if ($queries.Count -ne 1 -or !$queries[0].Contains('databaseId tagName isDraft description') -or !$queries[0].Contains('releases(first: 100, after: $endCursor)')) { throw 'Unexpected GraphQL query.' }
+      $cursorArgs = @($Arguments | Where-Object { $_.StartsWith('endCursor=') })
+      if ($cursorArgs.Count -gt 1 -or ($cursorArgs.Count -eq 1 -and $cursorArgs[0] -cne 'endCursor=synthetic-page-2')) { throw 'Unexpected GraphQL cursor.' }
+      if ($s.mode -ceq 'graphql-errors') { return '{"errors":[{"message":"SYNTHETIC_PRIVATE_DO_NOT_LOG"}],"data":{"repository":null}}' }
+      if ($s.mode -ceq 'graphql-null-repository') { return '{"data":{"repository":null}}' }
+      if ($s.createCalls -gt 0) {
+        $s.postCreateLookups++
+        if ($s.mode -ceq 'api-error-aftercreate') { throw 'Synthetic listing API failure.' }
+      }
+      $hidden = !$s.release -or $s.mode -ceq 'nevervisible' -or ($s.mode -ceq 'delayedvisibility' -and $s.postCreateLookups -le 2)
+      $nodes = @()
+      if (!$hidden) { $nodes += @{ databaseId = $s.release.id; tagName = $s.release.tag_name; isDraft = $s.release.draft; description = $s.release.body } }
+      $more = $false
+      $endCursor = $null
+      if ($s.mode -cin @('graphql-pages', 'graphql-duplicate', 'graphql-bad-cursor')) {
+        $more = $cursorArgs.Count -eq 0 -or $s.mode -ceq 'graphql-bad-cursor'
+        if ($more) { $endCursor = 'synthetic-page-2' }
+        if ($cursorArgs.Count -eq 0 -and $s.mode -cne 'graphql-duplicate') { $nodes = @(@{ databaseId = 99; tagName = 'v0.0.1'; isDraft = $false; description = $null }) }
+      }
+      return (@{ data = @{ repository = @{ releases = @{ nodes = @($nodes); pageInfo = @{ hasNextPage = $more; endCursor = $endCursor } } } } } | ConvertTo-Json -Depth 10 -Compress)
+    }
     $endpoints = @($Arguments | Where-Object { $_.StartsWith('repos/') -or $_.StartsWith('https://uploads.github.com/') })
     if ($endpoints.Count -ne 1) { throw 'Unexpected mock API shape.' }
     $endpoint = $endpoints[0]
@@ -41,8 +74,10 @@ function Invoke-Captured([string]$Tool, [string[]]$Arguments) {
       return (@{ ref = 'refs/tags/v0.3.13'; object = @{ type = 'commit'; sha = $sha } } | ConvertTo-Json -Depth 5 -Compress)
     }
     if ($endpoint.Contains('/releases?')) {
-      if (!$s.release) { return '[[]]' }
-      return '[[' + ($s.release | ConvertTo-Json -Depth 5 -Compress) + ']]'
+      # Installation-token regression: REST discovery never exposes drafts,
+      # while GraphQL and REST GET by the known ID remain usable.
+      $s.restListCalls++
+      return '[[]]'
     }
     if ($endpoint.Contains('/assets?')) {
       return '[' + (ConvertTo-Json -InputObject @($s.assets) -Depth 6 -Compress) + ']'
