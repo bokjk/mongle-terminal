@@ -243,3 +243,95 @@ test('real Chrome Android emulation: alternate screen swipes send no keys and di
     assert.deepEqual(disposed.inputs, []);
     recordEvidence('alternate-and-disposal', { alternate, normalBeforeSwipe: live, scrolled, disposed });
   }));
+
+test('real Chrome Android emulation: fullscreen mouse applications receive touch wheels through xterm encodings', browserOptions,
+  async () => withMobileTerminal(async (page, touch, engine) => {
+    for (const encoding of ['SGR', 'DEFAULT', 'SGR_PIXELS']) {
+      await engine.write('\x1bc\x1b[?1049h\x1b[?1003h' +
+        (encoding === 'DEFAULT' ? '' : encoding === 'SGR' ? '\x1b[?1006h' : '\x1b[?1016h') + 'touch application');
+      await page.evaluate(async frame => {
+        const h = (window as any).mongleTerminalTest;
+        await h.adapter.applySnapshot(frame); h.adapter.setInputEnabled(true); h.inputs.length = 0; h.inputSources.length = 0;
+      }, await engine.snapshot());
+      await swipe(page, touch, 'history');
+      const up = (await position(page)).inputs as Array<[string, string]>;
+      assert.ok(up.length > 1, `${encoding}: a pan spans multiple wheel steps`);
+      assert.ok(await page.evaluate(() => (window as any).mongleTerminalTest.inputSources.every((source: string) => source === 'touch-scroll')),
+        'Pane must distinguish touch wheel bytes from keyboard Alt/Ctrl input');
+      assert.ok(up.every(([data, kind]) => encoding === 'DEFAULT'
+        ? kind === 'binary' && data.startsWith('\x1b[M`')
+        : kind === 'utf8' && /^\x1b\[<64;\d+;\d+M$/.test(data)), `${encoding}: use xterm wheel-up encoding, never arrows`);
+      await page.evaluate(() => { (window as any).mongleTerminalTest.inputs.length = 0; });
+      await swipe(page, touch, 'latest');
+      const down = (await position(page)).inputs as Array<[string, string]>;
+      assert.ok(down.length > 1);
+      assert.ok(down.every(([data, kind]) => encoding === 'DEFAULT'
+        ? kind === 'binary' && data.startsWith('\x1b[Ma')
+        : kind === 'utf8' && /^\x1b\[<65;\d+;\d+M$/.test(data)));
+      recordEvidence(`application-${encoding}`, { up, down });
+
+      await page.evaluate(() => {
+        const h = (window as any).mongleTerminalTest;
+        h.inputs.length = 0; h.adapter.setInputEnabled(false, { preserveKeyboard: true });
+      });
+      await swipe(page, touch, 'history');
+      assert.deepEqual((await position(page)).inputs, [], 'a writable editor is not an open transport gate');
+      await page.evaluate(() => { (window as any).mongleTerminalTest.adapter.setInputEnabled(true); });
+      assert.deepEqual((await position(page)).inputs, [], 'closed-gate movements are never replayed');
+    }
+  }));
+
+test('real Chrome Android emulation: unsupported alternate mouse modes do not generate keyboard history navigation', browserOptions,
+  async () => withMobileTerminal(async (page, touch, engine) => {
+    for (const mouseMode of ['', '\x1b[?9h']) {
+      await engine.write('\x1bc\x1b[?1049h\x1b[?1h' + mouseMode + 'no wheel protocol');
+      await page.evaluate(async frame => {
+        const h = (window as any).mongleTerminalTest;
+        await h.adapter.applySnapshot(frame); h.adapter.setInputEnabled(true); h.inputs.length = 0;
+      }, await engine.snapshot());
+      await swipe(page, touch, 'history'); await swipe(page, touch, 'latest');
+      assert.deepEqual((await position(page)).inputs, [], 'none/x10 never turns a swipe into CSI or SS3 arrows');
+    }
+  }));
+
+test('real Chrome Android emulation: live pans survive presentation frames but stop at real input boundaries', browserOptions,
+  async () => withMobileTerminal(async (page, touch, engine) => {
+    for (const boundary of ['gate', 'protocol', 'RIS', 'resize']) {
+      await engine.resize(40, 8);
+      await engine.write('\x1bc\x1b[?1049h\x1b[?1003h\x1b[?1006hpan boundaries');
+      const frame = await engine.snapshot();
+      await page.evaluate(async value => {
+        const h = (window as any).mongleTerminalTest;
+        await h.adapter.applySnapshot(value); h.adapter.setInputEnabled(true); h.inputs.length = 0;
+      }, frame);
+      const rect = await page.locator('.xterm-screen').boundingBox();
+      assert.ok(rect);
+      const x = rect.x + rect.width / 2, y = rect.y + 12;
+      const moveTo = (offset: number) => touch.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y: y + offset, id: 1 }] });
+      await touch.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y, id: 1 }] });
+      await moveTo(30);
+      const beforeFrame = (await position(page)).inputs.length;
+      assert.ok(beforeFrame > 0);
+      await page.evaluate(async value => {
+        const h = (window as any).mongleTerminalTest;
+        for (let index = 0; index < 3; index++) await h.adapter.applySnapshot(value);
+      }, frame);
+      await moveTo(60);
+      const beforeBoundary = (await position(page)).inputs.length;
+      assert.ok(beforeBoundary > beforeFrame, 'ordinary full-frame reconstruction does not cancel a pan');
+      if (boundary === 'gate') {
+        await page.evaluate(() => {
+          const h = (window as any).mongleTerminalTest;
+          h.adapter.setInputEnabled(false, { preserveKeyboard: true }); h.adapter.setInputEnabled(true);
+        });
+      } else {
+        if (boundary === 'protocol') await engine.write('\x1b[?1003l');
+        if (boundary === 'RIS') await engine.write('\x1bc\x1b[?1049h\x1b[?1003h\x1b[?1006h');
+        if (boundary === 'resize') await engine.resize(42, 9);
+        await page.evaluate(async value => { await (window as any).mongleTerminalTest.adapter.applySnapshot(value); }, await engine.snapshot());
+      }
+      await moveTo(100);
+      await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+      assert.equal((await position(page)).inputs.length, beforeBoundary, `${boundary} invalidates the old gesture`);
+    }
+  }));

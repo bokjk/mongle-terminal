@@ -43,6 +43,8 @@ export class BrowserPresentationAdapter {
   private disposed = false;
   private modes: TerminalModes | undefined;
   private inputResetGeneration: number | undefined;
+  private touchContext = 0;
+  private touchWheelInput = false;
   private readonly subscriptions: Array<{ dispose(): void }> = [];
   private readonly removeBoundary: () => void;
   private compositionEndTimer: ReturnType<typeof setTimeout> | undefined;
@@ -75,21 +77,33 @@ export class BrowserPresentationAdapter {
 
   constructor(
     private readonly terminal: Terminal,
-    private readonly onInput: (data: string, encoding: TerminalInputEncoding) => void,
+    private readonly onInput: (data: string, encoding: TerminalInputEncoding, source?: 'touch-scroll') => void,
+    options: { onTouchScrollInput?: () => void } = {},
   ) {
     this.removeBoundary = suppressRendererResponses(terminal);
     terminal.options.disableStdin = true;
+    const touchScreen = terminal.element?.querySelector('.xterm-screen');
     this.subscriptions.push(
-      attachTouchScrollback(terminal),
+      attachTouchScrollback(terminal, {
+        context: () => this.modes && ['vt200', 'drag', 'any'].includes(this.modes.mouseTrackingMode)
+          ? this.touchContext : undefined,
+        enabled: () => this.acceptsTerminalInput(),
+        request: options.onTouchScrollInput,
+        dispatchWheel: event => {
+          this.touchWheelInput = true;
+          try { touchScreen?.dispatchEvent(event); }
+          finally { this.touchWheelInput = false; }
+        },
+      }),
       terminal.onData(data => {
         if (!this.acceptsTerminalInput()) return;
-        onInput(data, 'utf8');
+        onInput(data, 'utf8', this.touchWheelInput ? 'touch-scroll' : undefined);
         // A following key can force xterm's deferred composition to commit
         // before our timer. Emit the queued Enter immediately after that text,
         // before xterm proceeds with the following key.
         if (this.compositionEndTimer !== undefined) this.flushModifiedEnter();
       }),
-      terminal.onBinary(data => { if (this.acceptsTerminalInput()) onInput(data, 'binary'); }),
+      terminal.onBinary(data => { if (this.acceptsTerminalInput()) onInput(data, 'binary', this.touchWheelInput ? 'touch-scroll' : undefined); }),
     );
     terminal.textarea?.addEventListener('compositionstart', this.composing);
     terminal.textarea?.addEventListener('compositionend', this.composed);
@@ -187,6 +201,11 @@ export class BrowserPresentationAdapter {
     const oldOffset = old.baseY - old.viewportY;
     const oldViewportY = old.viewportY;
     const sameGeometry = this.terminal.cols === frame.cols && this.terminal.rows === frame.rows;
+    if (!sameGeometry || this.modes?.mouseTrackingMode !== modes.mouseTrackingMode ||
+        this.modes?.mouseEncoding !== modes.mouseEncoding ||
+        (frame.inputResetGeneration !== undefined && frame.inputResetGeneration !== this.inputResetGeneration)) {
+      this.touchContext += 1;
+    }
     const viewedLines = !atBottom && sameGeometry && old.type === 'normal'
       ? Array.from({ length: frame.rows }, (_, row) => old.getLine(oldViewportY + row)?.translateToString()) : undefined;
     const selection = sameGeometry ? this.terminal.getSelectionPosition?.() : undefined;
@@ -245,6 +264,7 @@ export class BrowserPresentationAdapter {
    * Input during a closed gate is discarded, never buffered for later replay.
    */
   setInputEnabled(enabled: boolean, options: { preserveKeyboard?: boolean } = {}): void {
+    if (this.enabled && !enabled) this.touchContext += 1;
     this.enabled = enabled && !this.disposed;
     if (!this.enabled) {
       this.pendingModifiedEnter=undefined;

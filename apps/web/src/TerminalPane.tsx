@@ -122,12 +122,12 @@ export function TerminalPane(props:PaneProps) {
       });
       inputQueue=queue;
     };
-    const adapter = new BrowserPresentationAdapter(terminal,(data,encoding) => {
+    const adapter = new BrowserPresentationAdapter(terminal,(data,encoding,source) => {
       if (epoch.current===undefined||!leaseActive(epoch.current))return;
-      const transformed=transformInput(data,current.current.ctrl,current.current.alt);
+      const transformed=transformInput(data,current.current.ctrl,current.current.alt,source);
       if(!ready.current&&resizeInput.current?.epoch!==epoch.current)return;
       inputQueue?.enqueue(transformed,encoding);
-    });
+    }, { onTouchScrollInput: () => { void acquireRef.current(false,'intent'); } });
     adapterRef.current = adapter;
     // Match the Windows console workflow: finish a mouse selection to copy it.
     // Copy on release, never on every selection event (snapshots restore the
@@ -373,5 +373,3 @@ export function TerminalPane(props:PaneProps) {
       :<button className="button subtle" onClick={props.onRestart}>새 셸 열기 {info.exitCode!==undefined?`· 종료 ${info.exitCode}`:''}</button>}</footer>
   </section>;
 }
-
-
