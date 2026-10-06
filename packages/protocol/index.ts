@@ -24,6 +24,9 @@ export interface FilePreview { path: string; absolutePath: string; text: string;
 /** Editing is explicitly granted by the host for this connection and document. */
 export interface FileDocument extends FilePreview { documentId?: string; version?: string; readOnlyReason?: string; }
 export const FILE_EDIT_BYTES = 64 * 1024;
+export const PDF_PREVIEW_BYTES = 8 * 1024 * 1024;
+export const PDF_CHUNK_BYTES = 64 * 1024;
+export interface PdfChunk { path: string; absolutePath: string; size: number; version: string; offset: number; contentBase64: string; }
 export type GitStatusCode = '' | 'M' | 'A' | 'D' | 'R' | 'C' | 'T';
 export interface GitChange { path: string; originalPath?: string; index: GitStatusCode; worktree: GitStatusCode; untracked: boolean; conflicted: boolean; }
 export type GitListing = { state: 'not-repository' | 'unavailable'; root: string; message: string } | { state: 'repository'; root: string; repositoryRoot: string; branch: string; detached: boolean; changes: GitChange[]; truncated: boolean };

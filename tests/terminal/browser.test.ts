@@ -11,6 +11,52 @@ const chrome = process.platform === 'win32' && existsSync('C:/Program Files/Goog
 
 const browserOptions = { skip: chrome ? false : 'Requires installed Windows Chrome for the real DOM check.', timeout: 30000 };
 
+for (const direction of ['up', 'down'] as const) {
+  test(`real Chrome: ${direction} drag scroll cannot be starved by rapid full frames`, browserOptions,
+    async () => withTerminalBrowser(async (page, engine) => {
+      await engine.write(Array.from({ length: 120 }, (_, i) => `line ${String(i).padStart(3, '0')} abcdefghijklmnopqrstuvwxyz`).join('\r\n'));
+      const frame = await engine.snapshot();
+      await page.evaluate(async snapshot => {
+        const h = (window as any).mongleTerminalTest;
+        await h.adapter.applySnapshot(snapshot);
+        h.terminal.element.style.margin = '100px';
+        h.terminal.scrollToLine(60);
+      }, frame);
+      const rect = await page.locator('.xterm-screen').boundingBox(); assert.ok(rect);
+      const x = rect.x + rect.width / 40 * 2.1;
+      await page.mouse.move(x, rect.y + rect.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(x, direction === 'up' ? rect.y - 30 : rect.y + rect.height + 30);
+      const result = await page.evaluate(async snapshot => {
+        const h = (window as any).mongleTerminalTest;
+        const before = h.terminal.buffer.active.viewportY;
+        const start = performance.now();
+        let frames = 0;
+        while (performance.now() - start < 600) {
+          await h.adapter.applySnapshot(snapshot);
+          frames++;
+          await new Promise(resolve => setTimeout(resolve, 8));
+        }
+        return { before, after: h.terminal.buffer.active.viewportY, frames, selection: h.terminal.getSelection(), inputs: h.inputs };
+      }, frame);
+      await page.mouse.up();
+      assert.ok(result.frames > 10, 'exercise a sustained stream of full frames');
+      assert.ok(direction === 'up' ? result.after < result.before - 20 : result.after > result.before + 20,
+        `selection must keep scrolling during output: ${JSON.stringify(result)}`);
+      assert.ok(result.selection.includes(direction === 'up' ? 'line 040' : 'line 090'), 'intermediate rows are selected without gaps');
+      assert.deepEqual(result.inputs, []);
+      const released = await page.evaluate(async snapshot => {
+        const h = (window as any).mongleTerminalTest;
+        const before = { viewport: h.terminal.buffer.active.viewportY, text: h.terminal.getSelection() };
+        await h.adapter.applySnapshot(snapshot);
+        await new Promise(resolve => setTimeout(resolve, 120));
+        return { before, after: { viewport: h.terminal.buffer.active.viewportY, text: h.terminal.getSelection() }, timer: h.terminal._core._selectionService._dragScrollIntervalTimer };
+      }, frame);
+      assert.deepEqual(released.after, released.before, 'release stops scrolling and preserves the copied range');
+      assert.equal(released.timer, undefined, 'release cancels the replacement timer');
+    }));
+}
+
 for (const direction of ['forward', 'reverse'] as const) {
   test(`real Chrome: active ${direction} selection keeps its anchor across output frames`, browserOptions,
     async () => withTerminalBrowser(async (page, engine) => {

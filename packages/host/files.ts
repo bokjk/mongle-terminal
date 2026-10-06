@@ -27,17 +27,22 @@ function failure(error: unknown): never {
   throw new AppError('FILES_UNAVAILABLE', code === 'EACCES' || code === 'EPERM' ? '이 항목을 읽을 권한이 없습니다.' : '파일이나 폴더를 읽지 못했습니다. 새로고침해 주세요.');
 }
 
+export async function resolvePreviewTarget(root: string, relative: string, dataDir: string) {
+  if (!localPath(root)) throw new AppError('FILES_UNSUPPORTED', '이 셸의 경로는 파일 탐색기에서 열 수 없습니다. 로컬 Windows 폴더를 선택해 주세요.');
+  if (relative.length > 4096 || /[\x00-\x1f:]/.test(relative) || path.isAbsolute(relative) || path.win32.isAbsolute(relative) || relative.split(/[\\/]/).some(part => part === '..' || /^(con|prn|aux|nul|com[0-9]|lpt[0-9])(?:\.|$)/i.test(part))) throw new AppError('FILES_OUTSIDE_ROOT', '현재 터미널 폴더 안의 항목만 열 수 있습니다.');
+  const { base, protectedRoot } = await resolveFileRoot(root, dataDir);
+  const candidate = path.resolve(base, relative);
+  if (!within(base, candidate)) throw new AppError('FILES_OUTSIDE_ROOT', '현재 터미널 폴더 안의 항목만 열 수 있습니다.');
+  const target = await realpath(candidate);
+  if (!localPath(target) || !within(base, target)) throw new AppError('FILES_OUTSIDE_ROOT', '폴더 밖을 가리키는 링크는 열 수 없습니다.');
+  if (within(protectedRoot, target)) throw new AppError('FILES_PROTECTED', '앱의 인증·세션 데이터 폴더는 탐색할 수 없습니다.');
+  return { candidate, target, protectedRoot };
+}
+
 /** Read-only, bounded local filesystem access below the selected terminal cwd. */
 export async function inspectFiles(root: string, relative: string, dataDir: string, preview: boolean): Promise<DirectoryListing | FilePreview> {
   try {
-    if (!localPath(root)) throw new AppError('FILES_UNSUPPORTED', '이 셸의 경로는 파일 탐색기에서 열 수 없습니다. 로컬 Windows 폴더를 선택해 주세요.');
-    if (relative.length > 4096 || /[\x00-\x1f:]/.test(relative) || path.isAbsolute(relative) || path.win32.isAbsolute(relative) || relative.split(/[\\/]/).some(part => part === '..' || /^(con|prn|aux|nul|com[0-9]|lpt[0-9])(?:\.|$)/i.test(part))) throw new AppError('FILES_OUTSIDE_ROOT', '현재 터미널 폴더 안의 항목만 열 수 있습니다.');
-    const { base, protectedRoot } = await resolveFileRoot(root, dataDir);
-    const candidate = path.resolve(base, relative);
-    if (!within(base, candidate)) throw new AppError('FILES_OUTSIDE_ROOT', '현재 터미널 폴더 안의 항목만 열 수 있습니다.');
-    const target = await realpath(candidate);
-    if (!localPath(target) || !within(base, target)) throw new AppError('FILES_OUTSIDE_ROOT', '폴더 밖을 가리키는 링크는 열 수 없습니다.');
-    if (within(protectedRoot, target)) throw new AppError('FILES_PROTECTED', '앱의 인증·세션 데이터 폴더는 탐색할 수 없습니다.');
+    const { candidate, target, protectedRoot } = await resolvePreviewTarget(root, relative, dataDir);
     if (!preview) {
       const entries: DirectoryListing['entries'] = [];
       let truncated = false;
