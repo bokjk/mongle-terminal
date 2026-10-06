@@ -74,4 +74,6 @@ DOM 화면만 움직인 것으로 판단하지 않도록 OwnerPipe에서 실제 
 - 제품 코드 `ec5ac59`의 타입 검사·빌드와 Node 터치/레이아웃 27개 검사를 통과했다. Opus 최종 코드 재검토에서 남은 중요 결함은 발견하지 못했다.
 - 같은 커밋의 [실제 NSIS 설치·교체·복원 검사](https://github.com/bokjk/mongle-terminal/actions/runs/37502851371)는 통과했다.
 - 같은 커밋의 전체 회귀는 후속 커밋으로 취소됐다. 취소 전 새 trusted touch 3개(휠 인코딩, 미지원 모드 무입력, 프레임 보존·실제 경계 취소)는 통과했지만 전체 회귀 완료로 세지 않는다.
-- `a24617b`는 프레임 보존 검사 시작 좌표를 실제 텍스트 위로 옮겼다. 제품 코드는 동일하며, 최종 전체 CI 결과는 PR #44 Checks에서 확인한다. 위 합성 DOM 터치의 실제 CLI 검사와 CI의 Chrome Android 에뮬레이션을 구분한다.
+- `a24617b`는 프레임 보존 검사 시작 좌표를 실제 텍스트 위로 옮겼다. 제품 코드는 동일하며 최종 전체 CI 결과는 아래에 기록한다. 위 합성 DOM 터치의 실제 CLI 검사와 CI의 Chrome Android 에뮬레이션을 구분한다.
+
+최종 검사 커밋 `1677690`은 [전체 Windows 검사](https://github.com/bokjk/mongle-terminal/actions/runs/37504040757)에서 회귀 467개 중 **452 통과·실패 0·선택 15 생략**, 별도 네이티브 클립보드·업데이트 브리지 **2/2**, 타입·빌드·배포 문서 검사를 통과했다. 새 trusted touch 3개와 글자 위 시작·프레임 갱신 검사도 통과했다. [실제 NSIS 교체·복원](https://github.com/bokjk/mongle-terminal/actions/runs/37504040812)은 app.asar 및 hostbundle 694개 파일 일치(누락·추가·변경 0)와 작업 자동 복원을 확인했다. 이것은 격리 CI 후보 검사이며 공개 배포 또는 실물 삼성 인터넷 검증이 아니다.
