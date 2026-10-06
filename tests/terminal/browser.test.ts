@@ -11,6 +11,32 @@ const chrome = process.platform === 'win32' && existsSync('C:/Program Files/Goog
 
 const browserOptions = { skip: chrome ? false : 'Requires installed Windows Chrome for the real DOM check.', timeout: 30000 };
 
+for (const protocol of [1002, 1003]) {
+  test(`real Chrome: CLI mouse protocol ${protocol} keeps slow drag and release across full frames`, browserOptions,
+    async () => withTerminalBrowser(async (page, engine) => {
+      await engine.write(`\x1b[?1006h\x1b[?${protocol}hCLI output`);
+      const frame = await engine.snapshot();
+      await page.evaluate(async snapshot => {
+        const h = (window as any).mongleTerminalTest;
+        await h.adapter.applySnapshot(snapshot);
+        h.adapter.setInputEnabled(true);
+      }, frame);
+      const cell = await terminalCellGeometry(page);
+      await page.mouse.move(cell.x + 2.1 * cell.width, cell.y);
+      await page.mouse.down();
+      for (const column of [5, 8, 12]) {
+        await page.evaluate(async snapshot => {
+          await (window as any).mongleTerminalTest.adapter.applySnapshot(snapshot);
+        }, frame);
+        await page.mouse.move(cell.x + (column + 0.1) * cell.width, cell.y);
+      }
+      await page.mouse.up();
+      const reports = await page.evaluate(() => (window as any).mongleTerminalTest.inputs.map(([data]: [string]) => data));
+      assert.equal(reports.filter((data: string) => /^\x1b\[<32;/.test(data)).length, 3, 'every post-frame drag move must reach the CLI');
+      assert.match(reports.at(-1), /^\x1b\[<0;\d+;\d+m$/, 'release must reach the CLI, not leave selection held');
+    }));
+}
+
 for (const direction of ['up', 'down'] as const) {
   test(`real Chrome: ${direction} drag scroll cannot be starved by rapid full frames`, browserOptions,
     async () => withTerminalBrowser(async (page, engine) => {

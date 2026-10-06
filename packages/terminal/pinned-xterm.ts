@@ -64,7 +64,7 @@ interface PinnedCore {
   _renderService?: { _renderer: { value: PresentationRenderer | undefined } };
   _selectionService?: SelectionService;
   coreService: CoreService;
-  coreMouseService: { activeEncoding: string; activeProtocol: string };
+  coreMouseService: { activeEncoding: string; activeProtocol: string; _onProtocolChange: { fire(events: number): void } };
   _bufferService: { buffers: { normal: {
     ybase: number; ydisp: number;
     lines: { trimStart(count: number): void };
@@ -233,6 +233,33 @@ export function isPresentationPending(terminal: unknown): boolean {
   return coreOf(terminal).coreService.decPrivateModes.synchronizedOutput === true;
 }
 
+const mouseProtocols = { none: 'NONE', x10: 'X10', vt200: 'VT200', drag: 'DRAG', any: 'ANY' } as const;
+
+/** A full-picture reset is not an application mouse-mode change. xterm removes
+ * document mousemove/mouseup listeners when reset briefly selects NONE; setting
+ * ANY again only restores element listeners, so an active CLI drag loses its
+ * movement and release. Apply the real mode once, then hide parser-only mode
+ * changes until the authoritative picture has been restored.
+ */
+export function beginMousePresentation(terminal: unknown, modes: TerminalModes): () => void {
+  const service = coreOf(terminal).coreMouseService;
+  const emitter = service._onProtocolChange;
+  if (typeof emitter?.fire !== 'function') throw new Error('Unsupported xterm mouse internals.');
+  const protocol = mouseProtocols[modes.mouseTrackingMode];
+  if (service.activeProtocol !== protocol) service.activeProtocol = protocol;
+  const fire = emitter.fire;
+  emitter.fire = () => {};
+  let finished = false;
+  return () => {
+    if (finished) return;
+    finished = true;
+    emitter.fire = fire;
+    // On failure, publish whatever mode remains instead of leaving stale DOM
+    // listeners. Successful frames already restored the authoritative mode.
+    if (service.activeProtocol !== protocol) service.activeProtocol = service.activeProtocol;
+  };
+}
+
 /** Restore only state used by input encoding and cursor drawing, never parser state. */
 export function applyPresentationModes(terminal: unknown, modes: TerminalModes): void {
   const core = coreOf(terminal);
@@ -246,9 +273,7 @@ export function applyPresentationModes(terminal: unknown, modes: TerminalModes):
   });
   core.coreService.isCursorHidden = modes.cursorHidden;
   core.coreMouseService.activeEncoding = modes.mouseEncoding;
-  core.coreMouseService.activeProtocol = {
-    none: 'NONE', x10: 'X10', vt200: 'VT200', drag: 'DRAG', any: 'ANY',
-  }[modes.mouseTrackingMode];
+  core.coreMouseService.activeProtocol = mouseProtocols[modes.mouseTrackingMode];
 }
 
 /** Install before registering any input callback or processing any frame. */

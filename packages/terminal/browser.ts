@@ -1,5 +1,5 @@
 import type { Terminal } from '@xterm/xterm';
-import { applyPresentationModes, beginPresentation, captureSelectionDrag, setPresentationPending, suppressRendererResponses } from './pinned-xterm.js';
+import { applyPresentationModes, beginMousePresentation, beginPresentation, captureSelectionDrag, setPresentationPending, suppressRendererResponses } from './pinned-xterm.js';
 import { assertGeometry, PRESENTATION_VERSION } from './types.js';
 import { attachTouchScrollback } from './touch-scrollback.js';
 import type { TerminalInputEncoding, TerminalModes } from './types.js';
@@ -189,8 +189,10 @@ export class BrowserPresentationAdapter {
     const selectedText = selection ? this.terminal.getSelection() : '';
     const finishPresentation = beginPresentation(this.terminal);
     let selectionDrag: ReturnType<typeof captureSelectionDrag>;
+    let finishMousePresentation: (() => void) | undefined;
     let complete = false;
     try {
+      finishMousePresentation = beginMousePresentation(this.terminal, modes);
       selectionDrag = captureSelectionDrag(this.terminal);
       this.terminal.reset();
       setPresentationPending(this.terminal, true);
@@ -219,6 +221,7 @@ export class BrowserPresentationAdapter {
       }
       complete = true;
     } finally {
+      finishMousePresentation?.();
       selectionDrag?.finish(false);
       setPresentationPending(this.terminal, false);
       finishPresentation(complete && !this.disposed, frame.rows, this.terminal.getSelectionPosition?.());
