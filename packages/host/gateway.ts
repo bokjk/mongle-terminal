@@ -208,7 +208,7 @@ export async function startGateway({core, dataDir, webRoot, port = 0, allowedOri
     let pathname: string;
     try { pathname = decodeURIComponent((req.url || '/').split('?')[0]); } catch { throw new AppError('NOT_FOUND', '페이지를 찾을 수 없습니다.'); }
     if (pathname.split('/').includes('..') || /[\\:\x00]/.test(pathname)) throw new AppError('NOT_FOUND', '페이지를 찾을 수 없습니다.');
-    const mime: Record<string,string> = {'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.json':'application/json','.webmanifest':'application/manifest+json','.png':'image/png','.svg':'image/svg+xml','.ico':'image/x-icon','.woff2':'font/woff2','.woff':'font/woff'};
+    const mime: Record<string,string> = {'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.json':'application/json','.webmanifest':'application/manifest+json','.png':'image/png','.svg':'image/svg+xml','.ico':'image/x-icon','.bcmap':'application/octet-stream','.pfb':'application/octet-stream','.ttf':'font/ttf','.woff2':'font/woff2','.woff':'font/woff'};
     let filePath = resolve(webRoot, pathname.replace(/^\/+/, '') || 'index.html');
     try { if ((await stat(filePath)).isDirectory()) filePath = resolve(filePath, 'index.html'); }
     catch { if (!extname(pathname)) filePath = resolve(webRoot, 'index.html'); }

@@ -29,6 +29,8 @@
 | @lezer/markdown | 1.7.2 | MIT | [LICENSE](licenses/lezer__markdown1.7.2/LICENSE) |
 | @lezer/python | 1.1.19 | MIT | [LICENSE](licenses/lezer__python1.1.19/LICENSE) |
 | @marijn/find-cluster-break | 1.0.4 | MIT | [LICENSE](licenses/marijn__find-cluster-break1.0.4/LICENSE) |
+| @napi-rs/canvas | 1.0.10 | MIT | [LICENSE](licenses/napi-rs__canvas1.0.10/LICENSE) |
+| @napi-rs/canvas-win32-x64-msvc | 1.0.10 | MIT | [LICENSE](licenses/napi-rs__canvas-win32-x64-msvc1.0.10/LICENSE) |
 | @types/debug | 4.1.13 | MIT | [LICENSE](licenses/types__debug4.1.13/LICENSE) |
 | @types/estree | 1.0.9 | MIT | [LICENSE](licenses/types__estree1.0.9/LICENSE) |
 | @types/estree-jsx | 1.0.5 | MIT | [LICENSE](licenses/types__estree-jsx1.0.5/LICENSE) |
@@ -132,6 +134,7 @@
 | node-pty | 1.1.0 | MIT | [LICENSE](licenses/node-pty1.1.0/LICENSE) · [LICENSE](licenses/node-pty1.1.0/deps/winpty/LICENSE) |
 | parse-entities | 4.0.2 | MIT | [license](licenses/parse-entities4.0.2/license) |
 | @types/unist | 2.0.11 | MIT | [LICENSE](licenses/types__unist2.0.11/LICENSE) |
+| pdfjs-dist | 6.4.299 | Apache-2.0 | [LICENSE](licenses/pdfjs-dist6.4.299/LICENSE) · [LICENSE](licenses/pdfjs-dist6.4.299/cmaps/LICENSE) · [LICENSE_FOXIT](licenses/pdfjs-dist6.4.299/standard_fonts/LICENSE_FOXIT) · [LICENSE_LIBERATION](licenses/pdfjs-dist6.4.299/standard_fonts/LICENSE_LIBERATION) · [LICENSE_JBIG2](licenses/pdfjs-dist6.4.299/wasm/LICENSE_JBIG2) · [LICENSE_OPENJPEG](licenses/pdfjs-dist6.4.299/wasm/LICENSE_OPENJPEG) · [LICENSE_PDFJS_JBIG2](licenses/pdfjs-dist6.4.299/wasm/LICENSE_PDFJS_JBIG2) · [LICENSE_PDFJS_OPENJPEG](licenses/pdfjs-dist6.4.299/wasm/LICENSE_PDFJS_OPENJPEG) · [LICENSE_PDFJS_QCMS](licenses/pdfjs-dist6.4.299/wasm/LICENSE_PDFJS_QCMS) · [LICENSE_QCMS](licenses/pdfjs-dist6.4.299/wasm/LICENSE_QCMS) |
 | property-information | 7.2.0 | MIT | [license](licenses/property-information7.2.0/license) |
 | qrcode.react | 4.2.0 | ISC AND MIT (bundled qrcodegen) | [LICENSE](licenses/qrcode.react4.2.0/LICENSE) · [qrcodegen-LICENSE](licenses/qrcode.react4.2.0/qrcodegen-LICENSE) |
 | react | 19.3.0 | MIT | [LICENSE](licenses/react19.3.0/LICENSE) |
@@ -168,7 +171,7 @@
 | Node.js independent host runtime | v24.11.1 | Node.js MIT and bundled third-party licenses | [LICENSE](licenses/node-v24.11.1/LICENSE) |
 | Microsoft.Windows.Console.ConPTY / OpenConsole | 1.23.251008001 | MIT plus upstream notices (conservative superset) | [LICENSE](licenses/conpty-1.23.251008001/LICENSE) · [NOTICE.md](licenses/conpty-1.23.251008001/NOTICE.md) · [Microsoft.Windows.Console.ConPTY.nuspec](licenses/conpty-1.23.251008001/Microsoft.Windows.Console.ConPTY.nuspec) |
 
-Production 직접·전이 의존성 158개와 별도 런타임 고지를 수집했습니다. 번들링 과정에서 제거된 코드에 대한 고지가 포함될 수 있습니다. 빌드 도구 자체는 배포하지 않는 범위에서 제외하며, Electron/Chromium은 개발 의존성에 선언되어도 실제 앱에 들어가므로 별도로 포함합니다. `node-addon-api`와 node-pty의 winpty 고지 역시 실제 설치 패키지에서 보존합니다.
+Production 직접·전이 의존성 161개와 별도 런타임 고지를 수집했습니다. 번들링 과정에서 제거된 코드에 대한 고지가 포함될 수 있습니다. 빌드 도구 자체는 배포하지 않는 범위에서 제외하며, Electron/Chromium은 개발 의존성에 선언되어도 실제 앱에 들어가므로 별도로 포함합니다. `node-addon-api`와 node-pty의 winpty 고지 역시 실제 설치 패키지에서 보존합니다.
 
 ## 바이너리와 출처
 
@@ -183,6 +186,19 @@ xterm 어댑터는 xterm.js 6.0.0 내부 구조에 의존하는 몽글 코드입
 ## 생성 검증
 
 고정한 수집 기준에서 누락·버전·바이너리 불일치를 발견하지 않았습니다. 이는 자동 수집 검사 결과이며 별도 법률 검토를 뜻하지 않습니다.
+
+이 플랫폼에 설치되지 않은 optional 패키지:
+
+- node_modules/@napi-rs/canvas-android-arm64@1.0.10 (this platform not installed)
+- node_modules/@napi-rs/canvas-darwin-arm64@1.0.10 (this platform not installed)
+- node_modules/@napi-rs/canvas-darwin-x64@1.0.10 (this platform not installed)
+- node_modules/@napi-rs/canvas-linux-arm-gnueabihf@1.0.10 (this platform not installed)
+- node_modules/@napi-rs/canvas-linux-arm64-gnu@1.0.10 (this platform not installed)
+- node_modules/@napi-rs/canvas-linux-arm64-musl@1.0.10 (this platform not installed)
+- node_modules/@napi-rs/canvas-linux-riscv64-gnu@1.0.10 (this platform not installed)
+- node_modules/@napi-rs/canvas-linux-x64-gnu@1.0.10 (this platform not installed)
+- node_modules/@napi-rs/canvas-linux-x64-musl@1.0.10 (this platform not installed)
+- node_modules/@napi-rs/canvas-win32-arm64-msvc@1.0.10 (this platform not installed)
 
 ## 별도 원문 파일이 없는 의존성
 

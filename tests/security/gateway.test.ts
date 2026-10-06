@@ -164,7 +164,7 @@ test('file and Git RPC use the paired WebSocket context and cannot bypass first-
   const f = await fixture();
   try {
     const auth = await f.paired();
-    for (const method of ['files.list', 'files.open', 'files.save', 'files.reload', 'git.status']) {
+    for (const method of ['files.list', 'files.open', 'files.pdf', 'files.save', 'files.reload', 'git.status']) {
       const unauthenticated = f.socket(auth.cookie); await unauthenticated.open();
       unauthenticated.send({ type: 'request', id: 'premature-read', method, params: {} });
       await unauthenticated.closed(); assert.equal(f.core.calls.length, 0);
@@ -172,7 +172,7 @@ test('file and Git RPC use the paired WebSocket context and cannot bypass first-
     const socket = f.socket(auth.cookie); await socket.open();
     socket.send({ type: 'authenticate', ticket: await f.ticket(auth) });
     await socket.message(message => message.type === 'authenticated');
-    for (const method of ['files.list', 'files.preview', 'files.open', 'files.save', 'files.reload', 'files.close', 'git.status']) {
+    for (const method of ['files.list', 'files.preview', 'files.open', 'files.pdf', 'files.save', 'files.reload', 'files.close', 'git.status']) {
       socket.send({ type: 'request', id: method, method, params: { path: 'src/readme.txt' } });
       const reply = await socket.message(message => message.id === method);
       assert.equal(reply.ok, true); assert.equal(reply.result.owner, false);
@@ -336,6 +336,11 @@ test('static serving confines requests to webRoot and API responses disable cach
     const index = await f.request('GET', '/index.html');
     assert.equal(index.status, 200);
     assert.match(index.text, /Mongle security fixture/);
+    for (const [extension, mime] of [['bcmap', 'application/octet-stream'], ['pfb', 'application/octet-stream'], ['ttf', 'font/ttf']]) {
+      await writeFile(join(f.webRoot, `pdf-font.${extension}`), 'local PDF resource');
+      const asset = await f.request('GET', `/pdf-font.${extension}`);
+      assert.equal(asset.status, 200); assert.equal(asset.headers['content-type'], mime); assert.equal(asset.text, 'local PDF resource');
+    }
     for (const path of ['/../private-secret.txt', '/%2e%2e/private-secret.txt', '/..%5cprivate-secret.txt', '/%2e%2e%2fprivate-secret.txt', '/%252e%252e%252fprivate-secret.txt']) {
       const response = await f.request('GET', path);
       assert.ok(!response.text.includes('MONGLE_OUTSIDE_WEBROOT_SECRET'), `${path} escaped webRoot`);

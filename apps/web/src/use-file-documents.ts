@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { FILE_EDIT_BYTES, type FileDocument, type HostState, type Transport } from '../../../packages/protocol';
 import type { EditorSession } from './CodeEditor';
+import { loadPdfDocument, type PdfDocument } from './pdf-document';
+import type { ExplorerClient } from './explorer-queue';
 
 export type FileReference = { id: string; hostId: string; bootId: string; generation: string; root: string };
 export type OpenDocument = {
@@ -8,9 +10,11 @@ export type OpenDocument = {
   text: string; baseline: string; busy: boolean; saving: boolean; error?: string; changedOnDisk?: boolean;
   mode: 'edit' | 'preview' | 'split'; loadId: number; connectionId?: string;
   editorSession: EditorSession;
+  pdf?: PdfDocument; pdfPage?: number; pdfZoom?: number; progress?: number;
 };
 const normalize = (value: string) => value.replaceAll('\\', '/').replace(/\/+$/, '').toLowerCase();
 export const isMarkdown = (path: string) => /\.(md|markdown|mdown)$/i.test(path);
+export const isPdf = (path: string) => /\.pdf$/i.test(path);
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : '파일 작업을 완료하지 못했습니다.';
 export const dirtyDocument = (doc: OpenDocument) => doc.text !== doc.baseline;
 function encodeText(text: string) {
@@ -28,6 +32,9 @@ export function useFileDocuments(client: Transport, state: HostState | undefined
   const [visible, setVisible] = useState(false);
   const context = useRef({ state, connected, connectionId }); context.current = { state, connected, connectionId };
   const sequence = useRef(0);
+  const pdfReads = useRef(new Map<string, AbortController>());
+  useEffect(() => () => { for (const read of pdfReads.current.values()) read.abort(); pdfReads.current.clear(); }, []);
+  useEffect(() => { for (const read of pdfReads.current.values()) read.abort(); }, [state?.hostId, state?.bootId, connected, connectionId]);
   function update(transform: (docs: OpenDocument[]) => OpenDocument[]) { current.current = transform(current.current); setDocuments(current.current); }
   function patch(key: string, changes: Partial<OpenDocument>) { update(docs => docs.map(doc => doc.key === key ? { ...doc, ...changes } : doc)); }
   const active = documents.find(doc => doc.key === activeKey);
@@ -47,6 +54,23 @@ export function useFileDocuments(client: Transport, state: HostState | undefined
     let reference = { ...doc.reference, bootId: context.current.state!.bootId };
     if (replace) patch(key, { busy: true, error: undefined, loadId });
     try {
+      if (isPdf(doc.path)) {
+        if (!context.current.state?.capabilities?.includes('files.pdf')) throw new Error('이 컴퓨터를 업데이트하면 PDF 미리보기를 사용할 수 있습니다.');
+        const terminal = context.current.state.terminals.find(info => normalize(info.currentCwd || info.cwd) === normalize(doc.reference.root));
+        if (!terminal) throw new Error('처음 PDF를 연 폴더의 터미널로 이동한 뒤 다시 열어 주세요.');
+        reference = { ...reference, id: terminal.id, generation: terminal.generation };
+        const controller = new AbortController(); pdfReads.current.set(key, controller);
+        const check = () => {
+          const latest = current.current.find(item => item.key === key);
+          if (!latest || latest.loadId !== loadId || !available(latest) || context.current.connectionId !== startConnection || context.current.state?.bootId !== reference.bootId) throw new Error('연결이 바뀌어 PDF 읽기를 취소했습니다. 다시 열어 주세요.');
+        };
+        try {
+          patch(key, { progress: 0 });
+          const pdf = await loadPdfDocument(client as ExplorerClient, reference, doc.path, controller.signal, check, progress => patch(key, { progress }));
+          check(); patch(key, { pdf, reference, busy: false, error: undefined, connectionId: startConnection });
+        } finally { if (pdfReads.current.get(key) === controller) pdfReads.current.delete(key); }
+        return;
+      }
       let result: FileDocument;
       if (doc.file?.documentId && doc.connectionId === startConnection && doc.reference.bootId === reference.bootId) {
         result = await client.request<FileDocument>('files.reload', { hostId: doc.reference.hostId, bootId: doc.reference.bootId, documentId: doc.file.documentId });
@@ -75,6 +99,9 @@ export function useFileDocuments(client: Transport, state: HostState | undefined
     const key = `${reference.hostId}:${normalize(reference.root + '/' + path)}`;
     setActiveKey(key); setVisible(true);
     if (current.current.some(doc => doc.key === key)) return;
+    if (isPdf(path) && current.current.filter(doc => isPdf(doc.path)).length >= 4) {
+      const last = current.current.at(-1)!; setActiveKey(last.key); patch(last.key, { error: 'PDF는 최대 4개까지 열 수 있습니다. 사용하지 않는 PDF 탭을 닫아 주세요.' }); return;
+    }
     if (current.current.length >= 24) { const last = current.current.at(-1)!; setActiveKey(last.key); patch(last.key, { error: '파일은 최대 24개까지 열 수 있습니다. 사용하지 않는 파일 탭을 닫아 주세요.' }); return; }
     update(docs => [...docs, { key, name: path.split(/[\\/]/).at(-1) || path, path, reference, text: '', baseline: '', busy: false, saving: false, mode: isMarkdown(path) ? 'preview' : 'edit', loadId: 0, editorSession: {} }]);
     await load(key);
@@ -95,6 +122,7 @@ export function useFileDocuments(client: Transport, state: HostState | undefined
   }
   function close(key: string) {
     const doc = current.current.find(item => item.key === key); if (!doc || doc.saving) return;
+    pdfReads.current.get(key)?.abort(); pdfReads.current.delete(key);
     if (doc.file?.documentId && available(doc)) void client.request('files.close', { hostId: doc.reference.hostId, bootId: doc.reference.bootId, documentId: doc.file.documentId }).catch(() => {});
     update(docs => docs.filter(item => item.key !== key));
     if (activeKey === key) setActiveKey(current.current.at(-1)?.key || '');

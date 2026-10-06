@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "lockfileSha256": "29cf7de075a26148da436d2d3520512c86f64e9aee828d9e05dd7343e98b82c3",
-  "productionPackages": 158,
+  "lockfileSha256": "81db8d307ae3150db679f808e5ddde61c0f9b002c9cd059af1b388cc46750e80",
+  "productionPackages": 161,
   "notices": [
     {
       "name": "@codemirror/autocomplete",
@@ -231,6 +231,27 @@
       "integrity": "sha512-Wy0V7+SGUjnF9/TkiM1hKVDPj7jKXduPNboMVtHTA8dySMURWqfg/JZ9E2Sq8JgSJmkl7k7Qe9FLeMSrSraWmQ==",
       "files": [
         "licenses/marijn__find-cluster-break1.0.4/LICENSE"
+      ]
+    },
+    {
+      "name": "@napi-rs/canvas",
+      "version": "1.0.10",
+      "license": "MIT",
+      "source": "git+https://github.com/Brooooooklyn/canvas.git",
+      "integrity": "sha512-V+qptzsGnPMFxEbhwc6eDNMe5eDrfiBIp8qGpuRjAVIX4Kn2zxvwQ1Xco6Fwe+3tYIe3iLW8LM9D+SvjyJhqbQ==",
+      "files": [
+        "licenses/napi-rs__canvas1.0.10/LICENSE"
+      ]
+    },
+    {
+      "name": "@napi-rs/canvas-win32-x64-msvc",
+      "version": "1.0.10",
+      "license": "MIT",
+      "source": "git+https://github.com/Brooooooklyn/canvas.git",
+      "licenseOrigin": "npm @napi-rs/canvas@1.0.10/LICENSE (same-version repository parent; native package omits license file)",
+      "integrity": "sha512-9WtzW85PaIhtB27iXaR/9RrLCqHLbqD3Z8Q+kh17NjFxwQXFXU5vWbYH4vEH+drM307TTyK3hidZgpt09G5T3g==",
+      "files": [
+        "licenses/napi-rs__canvas-win32-x64-msvc1.0.10/LICENSE"
       ]
     },
     {
@@ -1269,6 +1290,25 @@
       ]
     },
     {
+      "name": "pdfjs-dist",
+      "version": "6.4.299",
+      "license": "Apache-2.0",
+      "source": "git+https://github.com/mozilla/pdf.js.git",
+      "integrity": "sha512-AVl138zALtfaAPvADulE0PZThbYzCBS79nL4pOSL/6Sm/4AH5A21BD9VHt97OlCuzJuCpmeZtAtkinisF4Vb1g==",
+      "files": [
+        "licenses/pdfjs-dist6.4.299/LICENSE",
+        "licenses/pdfjs-dist6.4.299/cmaps/LICENSE",
+        "licenses/pdfjs-dist6.4.299/standard_fonts/LICENSE_FOXIT",
+        "licenses/pdfjs-dist6.4.299/standard_fonts/LICENSE_LIBERATION",
+        "licenses/pdfjs-dist6.4.299/wasm/LICENSE_JBIG2",
+        "licenses/pdfjs-dist6.4.299/wasm/LICENSE_OPENJPEG",
+        "licenses/pdfjs-dist6.4.299/wasm/LICENSE_PDFJS_JBIG2",
+        "licenses/pdfjs-dist6.4.299/wasm/LICENSE_PDFJS_OPENJPEG",
+        "licenses/pdfjs-dist6.4.299/wasm/LICENSE_PDFJS_QCMS",
+        "licenses/pdfjs-dist6.4.299/wasm/LICENSE_QCMS"
+      ]
+    },
+    {
       "name": "property-information",
       "version": "7.2.0",
       "license": "MIT",
@@ -1621,7 +1661,18 @@
       ]
     }
   ],
-  "skippedOptionalPackages": [],
+  "skippedOptionalPackages": [
+    "node_modules/@napi-rs/canvas-android-arm64@1.0.10 (this platform not installed)",
+    "node_modules/@napi-rs/canvas-darwin-arm64@1.0.10 (this platform not installed)",
+    "node_modules/@napi-rs/canvas-darwin-x64@1.0.10 (this platform not installed)",
+    "node_modules/@napi-rs/canvas-linux-arm-gnueabihf@1.0.10 (this platform not installed)",
+    "node_modules/@napi-rs/canvas-linux-arm64-gnu@1.0.10 (this platform not installed)",
+    "node_modules/@napi-rs/canvas-linux-arm64-musl@1.0.10 (this platform not installed)",
+    "node_modules/@napi-rs/canvas-linux-riscv64-gnu@1.0.10 (this platform not installed)",
+    "node_modules/@napi-rs/canvas-linux-x64-gnu@1.0.10 (this platform not installed)",
+    "node_modules/@napi-rs/canvas-linux-x64-musl@1.0.10 (this platform not installed)",
+    "node_modules/@napi-rs/canvas-win32-arm64-msvc@1.0.10 (this platform not installed)"
+  ],
   "errors": [],
   "conptyProvenance": {
     "release": "v1.23.12811.0",
