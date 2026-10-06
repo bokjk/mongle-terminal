@@ -64,6 +64,9 @@ async function install(file: string) {
   assert.deepEqual(JSON.parse(await readFile(path.join(installDir, 'resources/mongle-installed.json'), 'utf8')), { installed: true });
 }
 async function start(expectedVersion: string) {
+  // Every previous stage completed fullExit; do not track reusable numeric
+  // PIDs from an earlier installation in the next stage's cleanup assertion.
+  pids.clear();
   endpoint = '';
   const env: NodeJS.ProcessEnv = { ...process.env, MONGLE_DATA_DIR: dataDir }; delete env.ELECTRON_RUN_AS_NODE;
   child = spawn(exe, ['--inspect=127.0.0.1:0'], { env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -125,7 +128,12 @@ try {
   const newInfo = await start(version);
   const restored = await until(() => owner!.request<HostState>('state.get'), s => s.terminals.length === 2 && s.terminals.every(t => t.status === 'running' && !!t.pid), 'automatic workspace restore');
   assert.deepEqual(metadata(restored), expectedMetadata); assert.equal(restored.hostId, before.hostId); assert.notEqual(newInfo.bootId, oldInfo.bootId);
-  for (const terminal of restored.terminals) assert.notEqual(terminal.pid, before.terminals.find(t => t.id === terminal.id)!.pid);
+  // fullExit already proved the old OS processes exited. Windows may reuse a
+  // numeric PID for a new process; the host's session generation must be fresh.
+  for (const terminal of restored.terminals) {
+    assert.notEqual(terminal.generation, before.terminals.find(t => t.id === terminal.id)!.generation);
+    assert.ok(terminal.pid && alive(terminal.pid), 'Restored shell must be a live process');
+  }
   assert.equal(await readFile(path.join(workspace, 'README.md'), 'utf8'), '# 설치 교체 검증\n\n보존할 문서입니다.\n');
   proof.stages.push('same workspace metadata and document restored automatically with fresh host and shells');
   await fullExit(); proof.cleanedUp = [...pids].every(pid => !alive(pid)); assert.equal(proof.cleanedUp, true);

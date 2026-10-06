@@ -69,8 +69,12 @@ jobs:
           $env:MONGLE_E2E_UPDATE_DESKTOP = '1'
           node --import tsx --test --test-concurrency=1 tests/e2e/clipboard.test.ts tests/e2e/update-desktop.test.ts
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Record native verification in job logs
+        if: always()
+        run: node --import tsx scripts/record-validation-summary.ts native
       - name: Preserve native desktop results
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: native-clipboard-result

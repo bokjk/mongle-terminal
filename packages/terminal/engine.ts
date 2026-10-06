@@ -14,6 +14,7 @@ export class TerminalEngine {
   private pendingWrites: { data: Array<string | Uint8Array>; length: number; promise: Promise<void> } | undefined;
   private closing = false;
   private revision = 0;
+  private inputResetGeneration = 0;
   private title = '';
   private readonly scrollback: number;
   private hasOutput = false;
@@ -55,7 +56,11 @@ export class TerminalEngine {
       if(params.length!==1||params[0]!==9001)return false;
       reply(`\x1b[?9001;${this.win32InputMode?1:2}$y`);return true;
     });
-    this.terminal.parser.registerEscHandler({final:'c'},()=>{this.win32InputMode=false;return false;});
+    this.terminal.parser.registerEscHandler({final:'c'},()=>{
+      this.win32InputMode=false;
+      this.inputResetGeneration += 1;
+      return false;
+    });
     for (const osc of [7, 9] as const) {
       this.terminal.parser.registerOscHandler(osc, data => {
         const directory = reportedDirectory(data, osc);
@@ -182,6 +187,7 @@ export class TerminalEngine {
         const available = this.terminal.buffer.normal.baseY;
         const make = (scrollback: number): PresentationSnapshot => ({
           kind: 'presentation-v1', version: PRESENTATION_VERSION,
+          inputResetGeneration: this.inputResetGeneration,
           revision: this.revision, cols: this.terminal.cols, rows: this.terminal.rows,
           data: this.serializer.serialize({ excludeModes: true, scrollback })
           // SerializeAddon ends normal-buffer serialization with the *active*

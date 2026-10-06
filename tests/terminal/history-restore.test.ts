@@ -20,6 +20,29 @@ function textOf(terminal: Terminal): string {
   return Array.from({ length: buffer.length }, (_, row) => buffer.getLine(row)!.translateToString(true)).join('\n');
 }
 
+test('cold history accepts old/new snapshot metadata without resuming the old RIS generation', async () => {
+  const source = makeEngine();
+  try {
+    await source.write('\x1bc\x1bcold synthetic output');
+    const saved = JSON.parse(JSON.stringify(await source.snapshot())) as PresentationSnapshot;
+    assert.equal(saved.inputResetGeneration, 2);
+    const { inputResetGeneration: _, ...legacy } = saved;
+    for (const record of [saved, legacy]) {
+      const restored = makeEngine();
+      let view: Terminal | undefined;
+      try {
+        await restored.restoreHistory(record);
+        const fresh = await restored.snapshot();
+        assert.equal(fresh.inputResetGeneration, 0, 'new engine must not inherit saved live input state');
+        view = await readSnapshot(fresh);
+        assert.match(textOf(view), /old synthetic output/);
+        await restored.write('\x1bc');
+        assert.equal((await restored.snapshot()).inputResetGeneration, 1);
+      } finally { view?.dispose(); await restored.dispose(); }
+    }
+  } finally { await source.dispose(); }
+});
+
 test('cold history is retained below an old cursor and new shell screen clears only the fresh viewport', async () => {
   const source = makeEngine();
   const restored = makeEngine();

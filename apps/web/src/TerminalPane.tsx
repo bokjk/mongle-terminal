@@ -122,12 +122,12 @@ export function TerminalPane(props:PaneProps) {
       });
       inputQueue=queue;
     };
-    const adapter = new BrowserPresentationAdapter(terminal,(data,encoding) => {
+    const adapter = new BrowserPresentationAdapter(terminal,(data,encoding,source) => {
       if (epoch.current===undefined||!leaseActive(epoch.current))return;
-      const transformed=transformInput(data,current.current.ctrl,current.current.alt);
+      const transformed=transformInput(data,current.current.ctrl,current.current.alt,source);
       if(!ready.current&&resizeInput.current?.epoch!==epoch.current)return;
       inputQueue?.enqueue(transformed,encoding);
-    });
+    }, { onTouchScrollInput: () => { void acquireRef.current(false,'intent'); } });
     adapterRef.current = adapter;
     // Match the Windows console workflow: finish a mouse selection to copy it.
     // Copy on release, never on every selection event (snapshots restore the
@@ -143,7 +143,9 @@ export function TerminalPane(props:PaneProps) {
       const pending=adapter.pendingPresentation;
       if(pending)void pending.then(copySelection,()=>{});else copySelection();
     };
-    mount.current.addEventListener('mousedown',beginSelection);
+    // Shift-selection in a mouse-reporting CLI stops bubbling inside xterm.
+    // Capture its start so release still performs the promised automatic copy.
+    mount.current.addEventListener('mousedown',beginSelection,true);
     window.addEventListener('mouseup',finishSelection);
     const handlePaste=(event:ClipboardEvent)=>{const text=event.clipboardData?.getData('text/plain');if(text===undefined)return;event.preventDefault();event.stopImmediatePropagation();void current.current.confirmPaste(text).then(approved=>{if(approved&&!disposed)void runInputIntent(()=>adapter.paste(text));});};
     mount.current.addEventListener('paste',handlePaste,true);
@@ -296,7 +298,7 @@ export function TerminalPane(props:PaneProps) {
     const keyMap:Record<string,'ArrowUp'|'ArrowDown'|'ArrowLeft'|'ArrowRight'>={'\x1b[A':'ArrowUp','\x1b[B':'ArrowDown','\x1b[C':'ArrowRight','\x1b[D':'ArrowLeft'};
     current.current.register(info.id,{key:data=>{void runInputIntent(()=>keyMap[data]?adapter.sendKey(keyMap[data]):adapter.sendInput(data));},paste:text=>{void current.current.confirmPaste(text).then(approved=>{if(approved&&!disposed)void runInputIntent(()=>adapter.paste(text));});},focus:()=>startInputRef.current(),search:()=>setSearchOpen(true)});
     const pasteTarget=mount.current;
-    return()=>{disposed=true;stopInput(true);removeTap();resizeInput.current=undefined;ready.current=false;epoch.current=undefined;connectionId.current=undefined;pendingFrame?.waiters.forEach(resolve=>resolve(false));pendingFrame=undefined;unsubscribe();observer.disconnect();clearTimeout(resizeTimer);pasteTarget?.removeEventListener('paste',handlePaste,true);pasteTarget?.removeEventListener('mousedown',beginSelection);window.removeEventListener('mouseup',finishSelection);osc52.dispose();adapter.dispose();terminal.dispose();current.current.register(info.id,null);void client.request('terminals.detach',{id:info.id}).catch(()=>{});};
+    return()=>{disposed=true;stopInput(true);removeTap();resizeInput.current=undefined;ready.current=false;epoch.current=undefined;connectionId.current=undefined;pendingFrame?.waiters.forEach(resolve=>resolve(false));pendingFrame=undefined;unsubscribe();observer.disconnect();clearTimeout(resizeTimer);pasteTarget?.removeEventListener('paste',handlePaste,true);pasteTarget?.removeEventListener('mousedown',beginSelection,true);window.removeEventListener('mouseup',finishSelection);osc52.dispose();adapter.dispose();terminal.dispose();current.current.register(info.id,null);void client.request('terminals.detach',{id:info.id}).catch(()=>{});};
   },[client,info.id,info.generation,state.hostId,state.bootId,props.connected]);
 
   useEffect(()=>{if(termRef.current){termRef.current.options.fontSize=props.fontSize;termRef.current.options.theme=themes[props.theme];}const frame=requestAnimationFrame(()=>void resizeRef.current());return()=>cancelAnimationFrame(frame);},[props.fontSize,props.theme]);
@@ -371,5 +373,3 @@ export function TerminalPane(props:PaneProps) {
       :<button className="button subtle" onClick={props.onRestart}>새 셸 열기 {info.exitCode!==undefined?`· 종료 ${info.exitCode}`:''}</button>}</footer>
   </section>;
 }
-
-

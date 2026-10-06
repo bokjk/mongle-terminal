@@ -5,6 +5,7 @@ import { terminalThemes, terminalMinimumContrast } from '../../apps/web/src/term
 const terminal = new Terminal({ cols: 40, rows: 8, allowProposedApi: true, fontSize: 14 });
 terminal.open(document.querySelector('#terminal') as HTMLElement);
 const inputs: Array<[string, string]> = [];
-const adapter = new BrowserPresentationAdapter(terminal, (data, encoding) => inputs.push([data, encoding]));
+const inputSources: Array<string | undefined> = [];
+const adapter = new BrowserPresentationAdapter(terminal, (data, encoding, source) => { inputs.push([data, encoding]); inputSources.push(source); });
 terminal.attachCustomKeyEventHandler(event=>adapter.handleKeyEvent(event));
-(window as any).mongleTerminalTest = { terminal, adapter, inputs, terminalThemes, terminalMinimumContrast };
+(window as any).mongleTerminalTest = { terminal, adapter, inputs, inputSources, terminalThemes, terminalMinimumContrast };

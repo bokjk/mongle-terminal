@@ -12,7 +12,8 @@ test('history deletion and settings commit roll back together on a database erro
   t.after(async()=>{store.close();await rm(dir,{recursive:true,force:true});});
   const state:PersistedHost={schemaVersion:1,hostId:randomUUID(),settings:{name:'PC',recordHistory:true,scrollback:5000},groups:[],terminals:[]};
   const id=randomUUID(),generation=randomUUID();
-  store.save(state);store.saveSnapshot(id,generation,{kind:'presentation-v1',version:'test',data:'retained output',cols:80,rows:24,modes:{}});
+  store.save(state);store.saveSnapshot(id,generation,{kind:'presentation-v1',version:'test',data:'retained output',cols:80,rows:24,modes:{},inputResetGeneration:3});
+  assert.equal(store.getSnapshot(id,generation)?.inputResetGeneration,3,'snapshot JSON retains additive input metadata without a DB migration');
   // A SQLite trigger gives a deterministic real transactional failure without
   // filling a user's disk or changing filesystem permissions.
   (store as any).db.exec("CREATE TRIGGER refuse_history_delete BEFORE DELETE ON snapshots BEGIN SELECT RAISE(ABORT, 'simulated storage error'); END;");

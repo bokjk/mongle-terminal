@@ -32,7 +32,7 @@ export interface GitChange { path: string; originalPath?: string; index: GitStat
 export type GitListing = { state: 'not-repository' | 'unavailable'; root: string; message: string } | { state: 'repository'; root: string; repositoryRoot: string; branch: string; detached: boolean; changes: GitChange[]; truncated: boolean };
 export interface RpcRequest { type: 'request'; id: string; method: string; params: unknown; }
 export type RpcResponse = { type: 'response'; id: string; ok: true; result: any } | { type: 'response'; id: string; ok: false; error: { code: string; message: string } };
-export interface PresentationSnapshot { kind: 'presentation-v1'; data: string; cols: number; rows: number; modes: Record<string, unknown>; version: string; }
+export interface PresentationSnapshot { kind: 'presentation-v1'; data: string; cols: number; rows: number; modes: Record<string, unknown>; version: string; inputResetGeneration?: number; }
 export interface SnapshotEvent { type: 'snapshot'; terminalId: string; generation: string; bootId: string; seq: number; snapshot: PresentationSnapshot; }
 export type HostEvent = { type: 'state'; state: HostState } | SnapshotEvent | { type: 'pairings'; requests: unknown[] } | { type: 'notice'; code: string; message: string };
 export type ServerMessage = RpcResponse | HostEvent;

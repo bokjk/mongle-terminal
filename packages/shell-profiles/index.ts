@@ -127,9 +127,9 @@ export async function resolveShellLaunch(profile: ShellProfile, cwd?: string): P
 }
 
 /** Keep the user's CLI configuration, but do not inherit host secrets or launcher hooks. */
-export function safeShellEnvironment(): Record<string, string> {
+export function safeShellEnvironment(source: NodeJS.ProcessEnv = process.env): Record<string, string> {
   const result: Record<string, string> = {};
-  for (const [key, value] of Object.entries(process.env)) {
+  for (const [key, value] of Object.entries(source)) {
     if (value === undefined) continue;
     const upper = key.toUpperCase();
     if (/^(MONGLE_|ELECTRON_|NPM_|VSCODE_|CODEX_|TSX_)/.test(upper)) continue;
@@ -139,6 +139,8 @@ export function safeShellEnvironment(): Record<string, string> {
   }
   result.TERM = 'xterm-256color';
   result.COLORTERM = 'truecolor';
+  // Preserve each CLI's renderer choice; copying a transcript must not force
+  // Claude out of its fixed-input fullscreen layout.
   // Git Bash's login profile otherwise changes an explicitly chosen cwd to HOME.
   result.CHERE_INVOKING = '1';
   return result;
