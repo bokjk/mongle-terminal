@@ -21,3 +21,11 @@
 모바일 기준은 사용자와 합의한 Chrome 에뮬레이션이다. 실물 갤럭시·삼성 인터넷·OS 키보드·외부 Tailscale 네트워크는 전수 검사하지 않았다. Claude의 Jump to bottom 안내에 가린 글자 복사 누락은 허용된 제약으로 남는다. 실사용 앱·세션·인증·Tailscale Serve를 변경하지 않으며 소스 비공개·라이선스·코드 서명 상태를 유지한다.
 
 실제 CI 토큰의 읽기 전용 초안 조회 검사를 별도로 실행한 뒤 태그를 생성한다. 개인 토큰을 CI secret에 복제하지 않는다. 참고: [GitHub CLI 보고](https://github.com/cli/cli/issues/5252).
+
+## Actions 예산으로 실행 차단
+
+수정 PR #47의 제품/보존 코드 `807d98f2287a6fd4ca06b90173ce2dd2731f320a`에서 로컬 전체 보존 흐름 20개(기존 회귀에 포함되는 wrapper 1개), 타입·버전/문서·diff 검사를 통과했다. 별도 코드 리뷰에서 추가 blocker를 발견하지 못했다. 개인 인증으로 GraphQL의 기존 비공개 draft ID·태그·상태 조회는 확인했으나 CI job-token probe는 아직 실행하지 못했다.
+
+GitHub [Windows 검사 37521930313](https://github.com/bokjk/mongle-terminal/actions/runs/37521930313)는 단계가 하나도 시작되지 않았고 `The job was not started because an Actions budget is preventing further use.`라는 annotation으로 실패했다. 같은 커밋의 실제 설치 검사와 대상 정책, 별도 수동 실행도 같은 시점에 실행 전 실패했다. 이 결과를 제품 테스트 실패나 새 버전 CI 통과로 해석하지 않는다.
+
+0.3.14 태그·공개 Release는 아직 만들지 않았다. 현재 공개 버전은 0.3.12다. [공개 README PR #7](https://github.com/bokjk/mongle-terminal-releases/pull/7)은 draft이며 공개 확인 뒤 병합한다. 예산 설정이나 결제 수단·저장소 공개 범위를 변경하지 않았다. 예산 한도 해제 후 현재 PR의 필수 Windows·설치·대상 정책, 실제 job-token 조회 probe, dev→main 배포 PR과 최종 태그·공개 다운로드 검증을 완료해야 한다.
