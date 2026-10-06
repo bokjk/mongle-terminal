@@ -19,11 +19,21 @@ concurrency:
 
 jobs:
   build:
+    # contents:write is job-scoped. Execute only a source-repository tag context.
+    # workflow_dispatch must select the SAME tag as its workflow ref, not main.
+    if: ${{ github.repository == 'bokjk/mongle-terminal' && startsWith(github.ref, 'refs/tags/v') && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.ref == format('refs/tags/{0}', inputs.tag))) }}
+    permissions:
+      contents: write
     runs-on: windows-2022
     timeout-minutes: 45
     outputs:
       version: ${{ steps.release.outputs.version }}
       tag: ${{ steps.release.outputs.tag }}
+      preservation: ${{ steps.preservation.outputs.status }}
+      manifest-sha256: ${{ steps.private_preservation.outputs.manifest-sha256 }}
+      source-sha: ${{ github.sha }}
+      run-id: ${{ github.run_id }}
+      run-attempt: ${{ github.run_attempt }}
     env:
       MONGLE_DATA_DIR: ${{ github.workspace }}\.test-data\release-profile
       RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
@@ -31,7 +41,7 @@ jobs:
       - name: Check out release tag
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
       - name: Install Node.js 24
@@ -59,16 +69,21 @@ jobs:
         shell: pwsh
         run: node --import tsx scripts/release-check.ts "$env:RELEASE_TAG"
       - name: Typecheck
+        id: typecheck
         run: npm.cmd run typecheck
       - name: Build runtime and web UI for integration tests
+        id: runtime_build
         run: npm.cmd run build
       - name: Test
+        id: regression
         env:
           MONGLE_E2E_UPDATES: '1'
         run: npx.cmd tsx --test --test-concurrency=1 tests/**/*.test.ts
       - name: Build and package without publishing
+        id: package
         run: npm.cmd run package
       - name: Verify packaged native Windows clipboard and update bridge
+        id: native
         shell: pwsh
         run: |
           $env:MONGLE_E2E_DATA_ROOT = Join-Path $env:TEMP 'mongle-clipboard-release'
@@ -78,6 +93,7 @@ jobs:
           node --import tsx --test --test-concurrency=1 tests/e2e/clipboard.test.ts tests/e2e/update-desktop.test.ts
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Record native verification in job logs
+        id: native_evidence
         if: always()
         run: node --import tsx scripts/record-validation-summary.ts native
       - name: Preserve packaged desktop results
@@ -92,11 +108,14 @@ jobs:
             test-results/e2e/clipboard/result.json
             test-results/e2e/update-desktop/result.json
       - name: Recheck release documents after packaging
+        id: recheck
         shell: pwsh
         run: node --import tsx scripts/release-check.ts "$env:RELEASE_TAG"
       - name: Verify actual NSIS replacement and workspace restore
+        id: nsis
         run: node --import tsx scripts/verify-installed-upgrade.ts
       - name: Record installed verification in job logs
+        id: installed_evidence
         if: always()
         run: node --import tsx scripts/record-validation-summary.ts installed
       - name: Preserve installed upgrade results
@@ -109,6 +128,9 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
       - name: Preserve verified release files
+        id: release_artifact
+        # A later mandatory storage gate requires artifact OR verified fallback.
+        continue-on-error: true
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: windows-release
@@ -122,8 +144,43 @@ jobs:
             release/SHA256SUMS.txt
             release/RELEASE-NOTES.md
 
+      - name: Preserve verified bytes in a private source draft after artifact failure
+        id: private_preservation
+        if: ${{ !cancelled() && steps.release_artifact.outcome == 'failure' && steps.release.outcome == 'success' && steps.typecheck.outcome == 'success' && steps.runtime_build.outcome == 'success' && steps.regression.outcome == 'success' && steps.package.outcome == 'success' && steps.native.outcome == 'success' && steps.native_evidence.outcome == 'success' && steps.recheck.outcome == 'success' && steps.nsis.outcome == 'success' && steps.installed_evidence.outcome == 'success' }}
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+          ARTIFACT_OUTCOME: ${{ steps.release_artifact.outcome }}
+          VERIFICATION_OUTCOMES: >-
+            {"releaseDocuments":"${{ steps.release.outcome }}","typecheck":"${{ steps.typecheck.outcome }}","build":"${{ steps.runtime_build.outcome }}","regression":"${{ steps.regression.outcome }}","package":"${{ steps.package.outcome }}","native":"${{ steps.native.outcome }}","nativeEvidence":"${{ steps.native_evidence.outcome }}","postPackageDocuments":"${{ steps.recheck.outcome }}","nsis":"${{ steps.nsis.outcome }}","installedEvidence":"${{ steps.installed_evidence.outcome }}"}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          ./scripts/preserve-release-draft.ps1 -Version $env:RELEASE_VERSION -VerificationOutcomesJson $env:VERIFICATION_OUTCOMES -ArtifactUploadOutcome $env:ARTIFACT_OUTCOME -ArtifactStorageFailure upload-failed
+      - name: Require successful verification and one complete preservation path
+        id: preservation
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        env:
+          STEPS_JSON: ${{ toJSON(steps) }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $s = ConvertFrom-Json -InputObject $env:STEPS_JSON -AsHashtable
+          foreach ($id in @('release','typecheck','runtime_build','regression','package','native','native_evidence','recheck','nsis','installed_evidence')) {
+            if (!$s.ContainsKey($id) -or $s[$id].outcome -cne 'success') { throw 'A mandatory release verification did not pass.' }
+          }
+          if ($s.release_artifact.outcome -ceq 'success') {
+            'status=artifact' >> $env:GITHUB_OUTPUT
+          } elseif ($s.release_artifact.outcome -ceq 'failure' -and $s.private_preservation.outcome -ceq 'success' -and $s.private_preservation.outputs['manifest-sha256'] -cmatch '^[a-f0-9]{64}$') {
+            'status=private-draft' >> $env:GITHUB_OUTPUT
+          } else {
+            throw 'No complete verified release preservation path; release remains blocked.'
+          }
+
   draft:
     needs: build
+    # Private fallback intentionally requires separate verified manual retrieval.
+    if: ${{ needs.build.result == 'success' && needs.build.outputs.preservation == 'artifact' }}
     runs-on: windows-2022
     timeout-minutes: 10
     steps:
@@ -144,8 +201,21 @@ jobs:
         if: steps.credentials.outputs.available == 'true'
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ needs.build.outputs.tag }}
+          ref: ${{ needs.build.outputs.source-sha }}
+          fetch-depth: 0
           persist-credentials: false
+      - name: Confirm distribution script and tag still match the verified source
+        if: steps.credentials.outputs.available == 'true'
+        shell: pwsh
+        env:
+          VERIFIED_SHA: ${{ needs.build.outputs.source-sha }}
+          VERIFIED_TAG: ${{ needs.build.outputs.tag }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $head = git rev-parse HEAD
+          if ($LASTEXITCODE -or $head -cne $env:VERIFIED_SHA) { throw 'Distribution checkout differs from verified source.' }
+          $tagged = git rev-parse --verify "refs/tags/$($env:VERIFIED_TAG)^{commit}"
+          if ($LASTEXITCODE -or $tagged -cne $env:VERIFIED_SHA) { throw 'Release tag no longer matches verified source.' }
       - name: Download verified release files
         if: steps.credentials.outputs.available == 'true'
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
