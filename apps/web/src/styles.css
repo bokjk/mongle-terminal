@@ -766,6 +766,26 @@ details.command-menu { flex: 0 0 auto; width: auto; max-height: none; overflow: 
 .main-area { position: relative; }
 .orphan-file-editor { position: absolute; inset: 0 0 25px; display: flex; z-index: 34; }
 .open-files-status { border: 0; padding: 0 4px; background: none; font-size: inherit; color: var(--accent); }
+.pdf-preview { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; position: relative; color: var(--text); }
+.pdf-toolbar { display: flex; align-items: center; justify-content: center; gap: 5px; padding: 6px 8px; flex-wrap: wrap; border-bottom: 1px solid var(--border); background: var(--surface); font-size: 12px; }
+.pdf-toolbar form { display: flex; margin: 0; }
+.pdf-page-number { width: 52px; height: 28px; border: 1px solid var(--border); border-radius: 4px; padding: 2px 4px; background: var(--surface-raised); color: var(--text); text-align: center; }
+.pdf-toolbar-divider { height: 18px; width: 1px; background: var(--border); margin: 0 5px; }
+.pdf-zoom-value { min-width: 38px; text-align: center; font-variant-numeric: tabular-nums; }
+.pdf-viewport { flex: 1; min-height: 0; overflow: auto; scrollbar-gutter: stable; padding: 16px; background: var(--bg); overscroll-behavior: contain; }
+.pdf-page { position: relative; margin: 0 auto; background: white; box-shadow: 0 2px 12px #0003; color-scheme: light; }
+.pdf-page canvas { display: block; }
+.pdf-loading { position: absolute; inset: 70px 16px auto; z-index: 2; padding: 10px; text-align: center; background: var(--surface); border-radius: 6px; pointer-events: none; }
+.pdf-password { margin: 24px; display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+.pdf-password p { flex-basis: 100%; }
+.pdf-password label { display: flex; align-items: center; gap: 8px; }
+.pdf-password input { min-width: 0; width: 160px; padding: 7px; color: var(--text); background: var(--surface-raised); border: 1px solid var(--border); border-radius: 4px; }
+/* PDF.js 6 text-layer layout (Apache-2.0); scoped to the read-only PDF surface. */
+.pdf-text-layer { position: absolute; inset: 0; overflow: clip; line-height: 1; text-align: initial; letter-spacing: normal; word-spacing: normal; text-size-adjust: none; forced-color-adjust: none; transform-origin: 0 0; --min-font-size: 1; --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size)); --min-font-size-inv: calc(1 / var(--min-font-size)); }
+.pdf-text-layer :is(span, br) { color: transparent; position: absolute; white-space: pre; cursor: text; transform-origin: 0 0; user-select: text; }
+.pdf-text-layer > :not(.markedContent), .pdf-text-layer .markedContent span:not(.markedContent) { z-index: 1; --font-height: 0; font-size: calc(var(--text-scale-factor) * var(--font-height)); --scale-x: 1; --rotate: 0deg; transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv)); }
+.pdf-text-layer .markedContent { display: contents; }
+.pdf-text-layer ::selection { background: #70a2e980; color: transparent; }
 @container(max-width:560px) {
   .document-body.mode-split { flex-direction: column; }
   .document-body.mode-split > .source-pane { border-right: 0; border-bottom: 1px solid var(--border); }

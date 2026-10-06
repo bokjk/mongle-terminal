@@ -32,9 +32,32 @@ interface SelectionService {
   _activeSelectionMode: number;
   _dragScrollIntervalTimer: number | undefined;
   _addMouseDownListeners(): void;
+  _dragScroll(): void;
   _handleMouseMove(event: MouseEvent): void;
   _handleMouseUp(event: MouseEvent): void;
   refresh(): void;
+}
+
+// xterm 6 SelectionService uses a 50 ms drag-scroll interval. reset() cancels
+// that timer on every full frame. Restarting a fresh interval on each restore
+// starves scrolling whenever frames arrive faster than the interval.
+const DRAG_SCROLL_INTERVAL = 50;
+const dragScrollClocks = new WeakMap<SelectionService, { timer: number; due: number }>();
+
+function resumeSelectionDrag(selection: SelectionService, window: Window, due: number): void {
+  selection._addMouseDownListeners();
+  window.clearInterval(selection._dragScrollIntervalTimer);
+  const schedule = (deadline: number) => {
+    const timer = window.setTimeout(() => {
+      // Schedule first so xterm can cancel the next tick even from a scroll
+      // callback. clearInterval also cancels timeouts (the shared DOM ID pool).
+      schedule(window.performance.now() + DRAG_SCROLL_INTERVAL);
+      selection._dragScroll();
+    }, Math.max(0, deadline - window.performance.now()));
+    selection._dragScrollIntervalTimer = timer;
+    dragScrollClocks.set(selection, { timer, due: deadline });
+  };
+  schedule(due);
 }
 
 interface PinnedCore {
@@ -56,10 +79,14 @@ interface PinnedCore {
 export function captureSelectionDrag(terminal: Terminal): { finish(commit: boolean): void } | undefined {
   const selection = coreOf(terminal)._selectionService;
   const document = terminal.element?.ownerDocument;
-  if (!selection || !document || selection._dragScrollIntervalTimer === undefined) return undefined;
+  const window = document?.defaultView;
+  if (!selection || !document || !window || selection._dragScrollIntervalTimer === undefined) return undefined;
   if (!selection._model || typeof selection._addMouseDownListeners !== 'function' ||
       typeof selection._handleMouseMove !== 'function' || typeof selection._handleMouseUp !== 'function' ||
-      typeof selection.refresh !== 'function') throw new Error('Unsupported xterm selection internals.');
+      typeof selection.refresh !== 'function' || typeof selection._dragScroll !== 'function') throw new Error('Unsupported xterm selection internals.');
+  const clock = dragScrollClocks.get(selection);
+  const scrollDue = clock?.timer === selection._dragScrollIntervalTimer
+    ? clock.due : window.performance.now() + DRAG_SCROLL_INTERVAL;
   const model: SelectionModel = {
     selectionStart: selection._model.selectionStart?.slice() as [number, number] | undefined,
     selectionEnd: selection._model.selectionEnd?.slice() as [number, number] | undefined,
@@ -105,7 +132,7 @@ export function captureSelectionDrag(terminal: Terminal): { finish(commit: boole
     }
     if (lastMove) selection._handleMouseMove(lastMove);
     if (mouseUp) selection._handleMouseUp(mouseUp);
-    else if (!ended) selection._addMouseDownListeners();
+    else if (!ended) resumeSelectionDrag(selection, window, scrollDue);
     selection.refresh();
   } };
 }

@@ -31,7 +31,7 @@ async function licenseFiles(directory: string, prefix = '', depth = 0): Promise<
   for (const entry of entries) {
     const relative = path.join(prefix, entry.name);
     if (entry.isFile() && /^(?:licen[cs]e|copying|notice)(?:$|[._-])/i.test(entry.name)) result.push(relative);
-    else if (entry.isDirectory() && depth < 5 && (depth > 0 || ['deps', 'third_party'].includes(entry.name))) {
+    else if (entry.isDirectory() && depth < 5 && (depth > 0 || ['deps', 'third_party', 'cmaps', 'standard_fonts', 'wasm'].includes(entry.name))) {
       result.push(...await licenseFiles(directory, relative, depth + 1));
     }
   }
@@ -107,6 +107,14 @@ export async function generateNotices(root = process.cwd(), options: { strict?: 
         copiedFiles.push(await copy(source, path.join(label, 'qrcodegen-LICENSE')));
         licenseOrigin = 'https://github.com/zpao/qrcode.react/blob/f91d2bdcc39def6c5c77178743a44f935a740992/src/third-party/qrcodegen/LICENSE (same release bundled engine)';
       }
+    }
+    if (!copiedFiles.length && pkg.name.startsWith('@napi-rs/canvas-')) {
+      // The optional native npm packages omit LICENSE; their same-version
+      // parent package carries the original license for this repository.
+      const parentDir = path.join(root, 'node_modules/@napi-rs/canvas');
+      const parent = JSON.parse(await readFile(path.join(parentDir, 'package.json'), 'utf8')) as Package;
+      if (parent.version !== pkg.version || JSON.stringify(parent.repository) !== JSON.stringify(pkg.repository)) errors.push(`Canvas native license provenance mismatch: ${key}`);
+      else { copiedFiles.push(await copy(path.join(parentDir, 'LICENSE'), path.join(label, 'LICENSE'))); licenseOrigin = `npm @napi-rs/canvas@${parent.version}/LICENSE (same-version repository parent; native package omits license file)`; }
     }
     if (!copiedFiles.length) errors.push(`Missing original license text: ${key}`);
     const license = pkg.name === 'qrcode.react' ? 'ISC AND MIT (bundled qrcodegen)' : typeof pkg.license === 'string' ? pkg.license : pkg.license?.type ?? pkg.licenses?.map(l => l.type).join(' OR ') ?? 'UNKNOWN';
