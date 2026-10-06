@@ -82,7 +82,11 @@ test('real TerminalPane: deferred selection copies once and respects a newer ges
           await page.getByRole('button',{name:'현재 기록 가져오기',exact:true}).click();
           const copyText=page.getByRole('textbox',{name:'복사할 기록'});
           await expect(copyText).toHaveValue('abcdefghijklmnopqrstuvwxyz\noutput');
-          await copyText.focus();await page.keyboard.press('Control+Home');await page.keyboard.down('Shift');await page.keyboard.press('ArrowRight');await page.keyboard.press('ArrowRight');await page.keyboard.up('Shift');
+          // Chromium's read-only textarea does not extend its caret with
+          // Shift+ArrowRight. Establish a partial selection explicitly, then
+          // check its preservation separately from the native drag E2E.
+          await copyText.evaluate((el:HTMLTextAreaElement)=>{el.focus();el.setSelectionRange(0,2);el.dispatchEvent(new Event('select',{bubbles:true}));});
+          assert.deepEqual(await copyText.evaluate((el:HTMLTextAreaElement)=>[el.selectionStart,el.selectionEnd]),[0,2],'the partial selection exists before live output');
           await later.write('\x1b[?1049h\x1b[?1003hnew live fullscreen output');
           const changed=await later.snapshot();
           const seq=await page.evaluate(snapshot=>{const h=(window as any).selectionCopyTest;h.snapshot=snapshot;h.mouseMode='any';return h.emit();},changed);
