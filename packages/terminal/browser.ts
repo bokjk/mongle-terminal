@@ -1,5 +1,5 @@
 import type { Terminal } from '@xterm/xterm';
-import { applyPresentationModes, beginPresentation, captureSelectionDrag, setPresentationPending, suppressRendererResponses } from './pinned-xterm.js';
+import { applyPresentationModes, beginMousePresentation, beginPresentation, captureSelectionDrag, setPresentationPending, suppressRendererResponses } from './pinned-xterm.js';
 import { assertGeometry, PRESENTATION_VERSION } from './types.js';
 import { attachTouchScrollback } from './touch-scrollback.js';
 import type { TerminalInputEncoding, TerminalModes } from './types.js';
@@ -7,6 +7,7 @@ import type { TerminalInputEncoding, TerminalModes } from './types.js';
 interface Frame {
   kind: 'presentation-v1'; version: string; data: string;
   cols: number; rows: number; modes: Record<string, unknown>;
+  inputResetGeneration?: number;
 }
 
 interface PendingFrame {
@@ -41,6 +42,9 @@ export class BrowserPresentationAdapter {
   private enabled = false;
   private disposed = false;
   private modes: TerminalModes | undefined;
+  private inputResetGeneration: number | undefined;
+  private touchContext = 0;
+  private touchWheelInput = false;
   private readonly subscriptions: Array<{ dispose(): void }> = [];
   private readonly removeBoundary: () => void;
   private compositionEndTimer: ReturnType<typeof setTimeout> | undefined;
@@ -73,21 +77,33 @@ export class BrowserPresentationAdapter {
 
   constructor(
     private readonly terminal: Terminal,
-    private readonly onInput: (data: string, encoding: TerminalInputEncoding) => void,
+    private readonly onInput: (data: string, encoding: TerminalInputEncoding, source?: 'touch-scroll') => void,
+    options: { onTouchScrollInput?: () => void } = {},
   ) {
     this.removeBoundary = suppressRendererResponses(terminal);
     terminal.options.disableStdin = true;
+    const touchScreen = terminal.element?.querySelector('.xterm-screen');
     this.subscriptions.push(
-      attachTouchScrollback(terminal),
+      attachTouchScrollback(terminal, {
+        context: () => this.modes && ['vt200', 'drag', 'any'].includes(this.modes.mouseTrackingMode)
+          ? this.touchContext : undefined,
+        enabled: () => this.acceptsTerminalInput(),
+        request: options.onTouchScrollInput,
+        dispatchWheel: event => {
+          this.touchWheelInput = true;
+          try { touchScreen?.dispatchEvent(event); }
+          finally { this.touchWheelInput = false; }
+        },
+      }),
       terminal.onData(data => {
         if (!this.acceptsTerminalInput()) return;
-        onInput(data, 'utf8');
+        onInput(data, 'utf8', this.touchWheelInput ? 'touch-scroll' : undefined);
         // A following key can force xterm's deferred composition to commit
         // before our timer. Emit the queued Enter immediately after that text,
         // before xterm proceeds with the following key.
         if (this.compositionEndTimer !== undefined) this.flushModifiedEnter();
       }),
-      terminal.onBinary(data => { if (this.acceptsTerminalInput()) onInput(data, 'binary'); }),
+      terminal.onBinary(data => { if (this.acceptsTerminalInput()) onInput(data, 'binary', this.touchWheelInput ? 'touch-scroll' : undefined); }),
     );
     terminal.textarea?.addEventListener('compositionstart', this.composing);
     terminal.textarea?.addEventListener('compositionend', this.composed);
@@ -99,7 +115,9 @@ export class BrowserPresentationAdapter {
   applySnapshot(frame: Frame): Promise<void> {
     if (this.disposed) return Promise.reject(new Error('Terminal renderer is disposed.'));
     if (frame.kind !== 'presentation-v1' || frame.version !== PRESENTATION_VERSION ||
-        typeof frame.data !== 'string' || frame.data.length > 16 * 1024 * 1024) {
+        typeof frame.data !== 'string' || frame.data.length > 16 * 1024 * 1024 ||
+        (frame.inputResetGeneration !== undefined &&
+          (!Number.isSafeInteger(frame.inputResetGeneration) || frame.inputResetGeneration < 0))) {
       return Promise.reject(new Error('Unsupported or oversized terminal presentation.'));
     }
     assertGeometry(frame.cols, frame.rows);
@@ -183,14 +201,24 @@ export class BrowserPresentationAdapter {
     const oldOffset = old.baseY - old.viewportY;
     const oldViewportY = old.viewportY;
     const sameGeometry = this.terminal.cols === frame.cols && this.terminal.rows === frame.rows;
+    if (!sameGeometry || this.modes?.mouseTrackingMode !== modes.mouseTrackingMode ||
+        this.modes?.mouseEncoding !== modes.mouseEncoding ||
+        (frame.inputResetGeneration !== undefined && frame.inputResetGeneration !== this.inputResetGeneration)) {
+      this.touchContext += 1;
+    }
     const viewedLines = !atBottom && sameGeometry && old.type === 'normal'
       ? Array.from({ length: frame.rows }, (_, row) => old.getLine(oldViewportY + row)?.translateToString()) : undefined;
     const selection = sameGeometry ? this.terminal.getSelectionPosition?.() : undefined;
     const selectedText = selection ? this.terminal.getSelection() : '';
     const finishPresentation = beginPresentation(this.terminal);
     let selectionDrag: ReturnType<typeof captureSelectionDrag>;
+    let finishMousePresentation: (() => void) | undefined;
     let complete = false;
     try {
+      // Equal final modes cannot reveal an intervening real RIS. Older hosts
+      // have no generation: keep their conservative per-frame invalidation.
+      finishMousePresentation = beginMousePresentation(this.terminal, modes,
+        frame.inputResetGeneration === undefined || frame.inputResetGeneration !== this.inputResetGeneration);
       selectionDrag = captureSelectionDrag(this.terminal);
       this.terminal.reset();
       setPresentationPending(this.terminal, true);
@@ -217,8 +245,10 @@ export class BrowserPresentationAdapter {
         // coordinates. Never retain a selection that silently selects new text.
         if (this.terminal.getSelection() !== selectedText) this.terminal.clearSelection();
       }
+      this.inputResetGeneration = frame.inputResetGeneration;
       complete = true;
     } finally {
+      finishMousePresentation?.();
       selectionDrag?.finish(false);
       setPresentationPending(this.terminal, false);
       finishPresentation(complete && !this.disposed, frame.rows, this.terminal.getSelectionPosition?.());
@@ -234,6 +264,7 @@ export class BrowserPresentationAdapter {
    * Input during a closed gate is discarded, never buffered for later replay.
    */
   setInputEnabled(enabled: boolean, options: { preserveKeyboard?: boolean } = {}): void {
+    if (this.enabled && !enabled) this.touchContext += 1;
     this.enabled = enabled && !this.disposed;
     if (!this.enabled) {
       this.pendingModifiedEnter=undefined;

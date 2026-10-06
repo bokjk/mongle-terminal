@@ -22,6 +22,14 @@ test('nested resize preserves every terminal and parent ratio; clamps unusable s
 test('swapping distant leaves preserves split topology and all sessions',()=>{const changed=swapLeaves(tree,'a','c');assert.deepEqual(leafIds(changed),['c','b','a']);assert.equal(changed.type==='split'&&changed.second.type==='split'&&changed.second.axis,'vertical');assert.deepEqual(leafIds(tree),['a','b','c']);});
 test('mobile Ctrl and Alt encode terminal bytes without mangling Korean input',()=>{assert.equal(transformInput('c',true,false),'\x03');assert.equal(transformInput('[',true,false),'\x1b');assert.equal(transformInput('x',false,true),'\x1bx');assert.equal(transformInput('몽글',true,false),'몽글');assert.equal(transformInput('\x1b[A',false,false),'\x1b[A');});
 
+test('mobile modifier buttons do not alter touch wheel reports', () => {
+  for (const data of ['\x1b[<64;5;5M', '\x1b[<65;200;300M', '\x1b[M`%%']) {
+    assert.equal(transformInput(data, false, true, 'touch-scroll'), data);
+    assert.equal(transformInput(data, true, true, 'touch-scroll'), data);
+  }
+  assert.equal(transformInput('x', false, true), '\x1bx', 'keyboard Alt still applies');
+});
+
 test('tabs stay inside their region when splitting, resizing, docking and swapping',()=>{
   const tabs=appendTab(appendTab(tree,'a','a2'),'c','c2');
   assert.deepEqual(findLeaf(tabs,'a2'),{type:'leaf',terminalId:'a',tabs:['a2']});

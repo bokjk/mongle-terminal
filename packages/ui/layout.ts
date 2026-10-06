@@ -95,7 +95,9 @@ export function paneDropPosition(xRatio: number, yRatio: number, allowCenter = t
   for (const edge of edges) if (edge[1] < closest[1] - 1e-9) closest = edge;
   return closest[0];
 }
-export function transformInput(data: string, ctrl: boolean, alt: boolean): string {
+export function transformInput(data: string, ctrl: boolean, alt: boolean, source?: 'touch-scroll'): string {
+  // Touch scroll is already a complete mouse report, not a keyboard chord.
+  if (source === 'touch-scroll') return data;
   if (ctrl && data.length === 1) { const code = data.toUpperCase().charCodeAt(0); if (code >= 64 && code <= 95) data = String.fromCharCode(code - 64); else if (data === ' ') data = '\x00'; }
   return alt ? '\x1b' + data : data;
 }

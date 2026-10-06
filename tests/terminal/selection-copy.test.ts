@@ -25,7 +25,8 @@ test('real TerminalPane: deferred selection copies once and respects a newer ges
       const listeners=new Set();let seq=0;let epoch=0;
       let info={id:'terminal',groupId:'group',title:'Selection test',profileId:'pwsh',cwd:'C:/test',generation:'generation',status:'running',cols:40,rows:8};
       const state=()=>({hostId:'host',bootId:'boot',name:'Test host',version:'0.1.0',protocolVersion:1,capabilities:['control.acquire-if-free'],groups:[],terminals:[info],profiles:[],settings:{name:'Test host',recordHistory:true,scrollback:5000}});
-      const frame=()=>({type:'snapshot',terminalId:info.id,generation:info.generation,bootId:'boot',seq:++seq,snapshot:{...${JSON.stringify(snapshot)},cols:info.cols,rows:info.rows}});
+      const initial=${JSON.stringify(snapshot)};
+      const frame=()=>({type:'snapshot',terminalId:info.id,generation:info.generation,bootId:'boot',seq:++seq,snapshot:{...initial,cols:info.cols,rows:info.rows,modes:{...initial.modes,mouseTrackingMode:h.mouseMode||'none'}}});
       const h=window.selectionCopyTest={copies:[],calls:[],errors:[],failCopy:false,holdCopy:false,copyReleases:[],holdWrite:false,release:null,ackedSeq:0,terminal:null,
         emit:()=>{const next=frame();listeners.forEach(fn=>fn(next));return next.seq;}};
       const open=Terminal.prototype.open;
@@ -69,6 +70,37 @@ test('real TerminalPane: deferred selection copies once and respects a newer ges
     const address = server.address(); assert.ok(address && typeof address !== 'string');
     const browser = await chromium.launch({ channel: 'chrome', headless: true });
     try {
+      await t.test('Shift selection in a mouse-reporting CLI copies once after a frame', async () => {
+        const page = await browser.newPage({ viewport: { width: 1000, height: 700 } });
+        try {
+          await page.addInitScript('window.__name=function(fn){return fn;};');
+          await page.goto(`http://127.0.0.1:${address.port}`);
+          await page.getByText('여기서 제어 중', { exact: true }).waitFor();
+          const cell = await page.evaluate(() => {
+            const terminal=(window as any).selectionCopyTest.terminal;
+            const rect=terminal.element.querySelector('.xterm-screen').getBoundingClientRect();
+            return {x:rect.x,y:rect.y+rect.height/terminal.rows/2,width:rect.width/terminal.cols};
+          });
+          // Place the pointer before enabling ANY: its normal pre-drag hover
+          // report is unrelated to the Shift selection under test.
+          await page.mouse.move(cell.x+2.1*cell.width,cell.y);
+          const seq = await page.evaluate(() => { const h=(window as any).selectionCopyTest; h.mouseMode='any'; return h.emit(); });
+          await page.waitForFunction(expected => (window as any).selectionCopyTest.ackedSeq >= expected, seq);
+          await page.keyboard.down('Shift');
+          await page.mouse.down();
+          await page.mouse.move(cell.x+5.1*cell.width,cell.y);
+          const next=await page.evaluate(() => (window as any).selectionCopyTest.emit());
+          await page.waitForFunction(expected => (window as any).selectionCopyTest.ackedSeq >= expected,next);
+          await page.mouse.move(cell.x+12.1*cell.width,cell.y);
+          await page.mouse.up();
+          await page.keyboard.up('Shift');
+          await page.waitForFunction(() => (window as any).selectionCopyTest.copies.length===1);
+          assert.deepEqual(await page.evaluate(() => {
+            const h=(window as any).selectionCopyTest;
+            return {copies:h.copies,inputs:h.calls.filter((c:any)=>c.method==='terminal.input')};
+          }),{copies:['cdefghijkl'],inputs:[]});
+        } finally {await page.close();}
+      });
       for (const action of ['release', 'new selection', 'typing'] as const) {
         await t.test(action, async () => {
           const page = await browser.newPage({ viewport: { width: 1000, height: 700 } });

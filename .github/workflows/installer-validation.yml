@@ -42,8 +42,12 @@ jobs:
         run: npm.cmd run package
       - name: Install old version, replace with candidate and restore workspace
         run: node --import tsx scripts/verify-installed-upgrade.ts
+      - name: Record installed verification in job logs
+        if: always()
+        run: node --import tsx scripts/record-validation-summary.ts installed
       - name: Preserve installation evidence
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: installed-upgrade-result
