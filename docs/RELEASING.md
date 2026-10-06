@@ -60,12 +60,14 @@ Actions의 공개 저장소 초안 생성 단계는 `RELEASE_REPO_TOKEN`이 설�
 
 ## CI 결과 보존과 저장 공간
 
+PR 본문 검사는 별도 **PR description** Linux 작업으로 수행하며 본문 수정 때문에 앱을 다시 빌드하지 않는다. `dev` 대상의 알려진 Markdown 문서만 바뀐 PR은 문서 정합성만 검사하고 런타임 검사를 생략했다고 요약한다. 코드 변경·수동 실행·`dev` → `main` 배포 PR은 Windows 전체 검사를 유지한다. 병합 후 `dev`·`main` push의 중복 빌드는 제거하므로, 유지보수자는 병합 직전 최신 base를 반영한 head의 **Windows checks**·**PR description**·**PR target branch**와 해당 설치 검사를 확인한다. base가 바뀌면 주제 브랜치를 갱신해 재검사한다. ruleset 정의도 최신 base와 세 검사를 요구하지만 비공개 무료 계정에는 아직 적용되지 않았다. 태그의 최종 산출물 검증·보존·공개 전 검증은 줄이지 않는다. [사용량 조사와 현재 적용 상태](validation/actions-usage.md).
+
 검사 통과 여부와 결과 파일 업로드를 구분한다. 네이티브·설치 검사의 passed/cleanedUp과 원본 JSON SHA-256을 job 로그와 summary에 먼저 남기며, 누락·실패·정리 실패는 검사를 실패시킨다. 작은 진단 artifact 업로드만 저장 공간 오류로 전체 회귀를 막지 않도록 선택적 보존으로 처리한다. 타입·빌드·테스트·네이티브·NSIS 검증은 계속 필수다. 큰 windows-release 산출물 업로드는 필수이며 보존 기간은 1일이다. 게시에 필요한 파일은 즉시 내려받아 확인하고, 기존 공개 버전의 CI 사본을 정리할 때는 로컬 백업 6개 파일·자체 체크섬을 확인하고 공개 첨부와 대조한다. 초기 버전처럼 공개본과 태그 재빌드가 다르면 차이를 기록하고 CI 원본 전체를 별도 보존한다. 공개 Release·소스·실행 로그·작은 검사 증거는 보존한다.
 
 ## 브랜치와 배포 순서
 
 1. `dev`에서 만든 주제 브랜치에서 버전·잠금 파일·README·사용자 안내를 갱신하고 미배포 변경을 날짜가 있는 CHANGELOG 항목으로 옮긴다. 공개 Release 본문으로 쓰므로 해당 버전 항목에는 내부 문서 링크나 개인 정보를 넣지 않는다.
-2. 타입·빌드·회귀·패키지 검사를 수행하고 PR로 `dev`에 병합한다. 이어 `dev` → `main` 배포 PR의 **Windows checks**·**PR target branch** 통과 후 병합한다. `main` 직접 push는 하지 않는다.
+2. 타입·빌드·회귀·패키지 검사를 수행하고 PR로 `dev`에 병합한다. 이어 최신 base를 반영한 `dev` → `main` 배포 PR의 **Windows checks**·**PR description**·**PR target branch** 및 해당 설치 검사 통과 후 병합한다. `main` 직접 push는 하지 않는다.
 3. 병합된 `main` 커밋에 `vX.Y.Z` 태그를 push한다. [Windows release draft](../.github/workflows/release.yml)는 해당 태그를 검사·빌드·패키징하고 `windows-release` artifact를 보존한다.
 4. 배포 자격 증명이 있으면 공개 저장소에 Release **초안**을 만든다. 없으면 artifact까지만 만들고 경고한다. 유지보수자가 아래 수동 게시 명령으로 초안을 만들 수 있다.
 5. 검증된 초안의 파일·버전·변경 내용을 검토한 뒤 `gh release edit vX.Y.Z --repo bokjk/mongle-terminal-releases --draft=false --latest`로 공개한다. 인증 없는 다운로드·메타데이터·해시 일치를 확인하고 결과를 기록한다. 공개를 확인한 뒤 README의 후보 표시와 현재 공개 버전, 이 문서의 배포 상태를 갱신한다. 패키지에 동봉한 사용자 안내는 태그의 파일과 일치하게 보존한다.

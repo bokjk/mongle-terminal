@@ -185,6 +185,8 @@ npm.cmd run dev
 
 변경은 **`dev`에서 만든 주제 브랜치 → `dev` PR**로 제출합니다. 배포는 **`dev` → `main` PR**을 거칩니다. 격리 실행, 필수 검사와 문서 기준은 [기여 안내](CONTRIBUTING.md)를 확인하세요.
 
+자동 검사 구성은 PR 설명·알려진 문서 변경을 짧은 Linux 검사로 분리하고, 코드 변경·배포 PR에는 Windows 전체 검증을 유지합니다. 병합 직전 최신 base를 반영한 검사 결과를 확인하며, 병합 후 중복 빌드는 실행하지 않습니다. 최종 태그의 설치 파일 검증은 별도로 수행합니다. 구성의 실제 적용·검증 상태는 [Actions 사용량 기록](docs/validation/actions-usage.md)을 참고하세요.
+
 <details>
 <summary>개발 명령과 코드 구조</summary>
 

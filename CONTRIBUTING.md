@@ -131,7 +131,11 @@ AI 도구로 작성한 코드도 제출자가 설명하고 검증할 책임이 �
 
 ### 자동 검사와 병합 제한의 현재 상태
 
-[Contribution checks](.github/workflows/ci.yml)는 모든 `pull_request`와 `main`·`dev` push에서 **Windows checks** 작업을 실행하도록 구성되어 있습니다. push는 `docs/**`와 `.md` 문서만 바뀌면 건너뛰지만 PR은 문서만 바뀌어도 검사하며, PR 본문 수정도 재검사합니다. 필수 섹션·검증 설명·확인 체크리스트와 선택한 변경 분류에 따른 문서 동반 여부를 검사하고 타입·빌드·기본 회귀·배포 문서 검사를 수행합니다. 내부 변경은 README/CHANGELOG 수정을 일괄 강제하지 않고 문서 영향 설명을 요구합니다. 자동 검사는 설명의 진실성이나 변경 분류의 정확성까지 판단할 수 없으므로 리뷰가 필요합니다.
+[PR description](.github/workflows/pr-description.yml)은 PR을 열거나 커밋·설명을 수정할 때 Linux에서 필수 섹션·검증 설명·확인 체크리스트와 문서 동반 여부를 검사합니다. 앱 의존성 설치나 빌드를 하지 않습니다. 내부 변경은 README/CHANGELOG 수정을 일괄 강제하지 않고 문서 영향 설명을 요구합니다. 자동 검사는 설명의 진실성이나 변경 분류의 정확성까지 판단할 수 없으므로 리뷰가 필요합니다.
+
+[Contribution checks](.github/workflows/ci.yml)는 PR 개설·커밋 갱신·재개·대상 브랜치 변경 때 범위를 판정합니다. `dev` 대상이며 루트 README·CHANGELOG·CONTRIBUTING·SECURITY·AGENTS 문서 또는 `docs/`의 Markdown만 바뀌면 Linux에서 배포 문서 정합성을 검사하고 **Windows checks** 요약에 런타임 검사를 하지 않았다고 명시합니다. 코드·설정·의존성·시험·워크플로 변경, 삭제·이름 변경에 포함된 코드, 빈 변경 목록, 수동 실행, `dev` → `main` 배포 PR은 기존 Windows 타입·빌드·네이티브·전체 회귀 검사를 유지합니다. 범위 판정이나 문서 검사가 실패하면 필수 검사도 실패합니다.
+
+PR 제목·본문만 수정하거나 초안을 정식 PR로 바꿀 때 전체 검사를 다시 시작하지 않습니다. 본문 수정은 진행 중인 Windows 작업을 취소하거나 그 결과를 성공으로 바꾸지 않습니다. 병합 뒤 `dev`·`main` push의 중복 전체 검사는 제거하며, **병합 직전 최신 head와 최신 base를 반영한 PR 검사 결과**를 확인합니다. 검사 뒤 base가 진행했으면 주제 브랜치를 최신 base로 갱신해 다시 검사합니다. 설치 업그레이드 검사와 최종 태그의 패키지·네이티브·NSIS 검증은 별도로 유지합니다. [사용량 조사와 검증 범위](docs/validation/actions-usage.md).
 
 [PR target policy](.github/workflows/pr-target.yml)는 PR 대상 변경·안내 코멘트·**PR target branch** 상태 기록에 쓰기 권한이 필요해 `pull_request_target`으로 실행됩니다. 권한은 저장소 읽기와 PR·커밋 상태 쓰기로 제한합니다. 기본 브랜치의 정책 스크립트 하나만 체크아웃해 실행하고 PR의 코드를 받거나 실행하지 않으므로, PR에서 정책 파일을 바꿔도 병합 전에는 적용되지 않습니다. 기여 코드는 읽기 권한만 있는 `pull_request`의 **Windows checks**에서만 실행됩니다.
 
@@ -139,8 +143,8 @@ CI 설정 추가와 실제 GitHub Actions 실행 완료는 별개입니다. 서�
 
 | 브랜치 | 서버 측 규칙 |
 |---|---|
-| `dev` | PR 필수, 승인 1명, 새 커밋 시 기존 승인 무효화, **Windows checks**·**PR target branch** 통과, 삭제·강제 push 금지 |
-| `main` | PR 필수, 저장소 관리자만 갱신(배포 PR 병합), **Windows checks**·**PR target branch** 통과, 삭제·강제 push 금지 |
+| `dev` | PR 필수, 승인 1명, 새 커밋 시 기존 승인 무효화, 최신 base 반영 및 **Windows checks**·**PR description**·**PR target branch** 통과, 삭제·강제 push 금지 |
+| `main` | PR 필수, 저장소 관리자만 갱신(배포 PR 병합), 최신 base 반영 및 **Windows checks**·**PR description**·**PR target branch** 통과, 삭제·강제 push 금지 |
 
 저장소 관리자 역할은 두 규칙을 우회할 수 있습니다. **GitHub 무료 요금제의 비공개 저장소는 ruleset과 브랜치 보호를 지원하지 않아(브랜치 보호 API 403 확인) 서버 측 병합 차단이 아직 적용되지 않았습니다.** 그동안은 `main` 대상 PR의 자동 `dev` 이동, **PR target branch**·**Windows checks** 실패 표시와 유지보수자 리뷰가 규칙을 지키는 수단이며, 실패한 PR의 병합을 서버가 막지는 않습니다. 저장소 공개 여부나 요금제는 이 문서만으로 바꾸지 않습니다. 소유자 본인이 작성한 PR은 스스로 승인할 수 없으므로 공개 협업 시 승인 가능한 유지보수자와 우회 사용 기준도 함께 정합니다.
 
