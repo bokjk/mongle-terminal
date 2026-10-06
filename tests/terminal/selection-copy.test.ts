@@ -86,7 +86,11 @@ test('real TerminalPane: deferred selection copies once and respects a newer ges
           // Shift+ArrowRight. Establish a partial selection explicitly, then
           // check its preservation separately from the native drag E2E.
           await copyText.evaluate((el:HTMLTextAreaElement)=>{el.focus();el.setSelectionRange(0,2);el.dispatchEvent(new Event('select',{bubbles:true}));});
+          // React's onSelect tracks selection on keyup/mouseup, not a synthetic
+          // native select event. A real modifier release publishes this range.
+          await page.keyboard.press('Shift');
           assert.deepEqual(await copyText.evaluate((el:HTMLTextAreaElement)=>[el.selectionStart,el.selectionEnd]),[0,2],'the partial selection exists before live output');
+          await expect(page.getByRole('button',{name:'선택 복사',exact:true})).toBeEnabled();
           await later.write('\x1b[?1049h\x1b[?1003hnew live fullscreen output');
           const changed=await later.snapshot();
           const seq=await page.evaluate(snapshot=>{const h=(window as any).selectionCopyTest;h.snapshot=snapshot;h.mouseMode='any';return h.emit();},changed);
