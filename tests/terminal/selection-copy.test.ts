@@ -76,15 +76,17 @@ test('real TerminalPane: deferred selection copies once and respects a newer ges
           await page.addInitScript('window.__name=function(fn){return fn;};');
           await page.goto(`http://127.0.0.1:${address.port}`);
           await page.getByText('여기서 제어 중', { exact: true }).waitFor();
-          const seq = await page.evaluate(() => { const h=(window as any).selectionCopyTest; h.mouseMode='any'; return h.emit(); });
-          await page.waitForFunction(expected => (window as any).selectionCopyTest.ackedSeq >= expected, seq);
           const cell = await page.evaluate(() => {
             const terminal=(window as any).selectionCopyTest.terminal;
             const rect=terminal.element.querySelector('.xterm-screen').getBoundingClientRect();
             return {x:rect.x,y:rect.y+rect.height/terminal.rows/2,width:rect.width/terminal.cols};
           });
-          await page.keyboard.down('Shift');
+          // Place the pointer before enabling ANY: its normal pre-drag hover
+          // report is unrelated to the Shift selection under test.
           await page.mouse.move(cell.x+2.1*cell.width,cell.y);
+          const seq = await page.evaluate(() => { const h=(window as any).selectionCopyTest; h.mouseMode='any'; return h.emit(); });
+          await page.waitForFunction(expected => (window as any).selectionCopyTest.ackedSeq >= expected, seq);
+          await page.keyboard.down('Shift');
           await page.mouse.down();
           await page.mouse.move(cell.x+5.1*cell.width,cell.y);
           const next=await page.evaluate(() => (window as any).selectionCopyTest.emit());
