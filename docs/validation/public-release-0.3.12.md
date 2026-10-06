@@ -16,3 +16,9 @@ PDF는 오른쪽 파일 탭의 읽기 전용 보기, 페이지 이동·배율·�
 ## 남은 범위
 
 물리 휴대폰/터치 키보드, 실제 외부 Tailscale 네트워크, 모든 PDF 글꼴·압축 형식과 Claude/Codex 화면 재그리기 유형은 전수 검증하지 않았다. 실제 설치 교체는 GitHub 호스팅 Windows에서 수행할 예정이며 이 PC의 사용자 설치본을 교체하지 않는다. 코드 서명과 저장소 공개 범위·라이선스는 변경하지 않는다.
+
+## 첫 CI와 시험 경로 수정
+
+[기능 PR #41](https://github.com/bokjk/mongle-terminal/pull/41)의 첫 [Windows 검사](https://github.com/bokjk/mongle-terminal/actions/runs/37422464358)는 432개 중 416 통과·1 실패·15 선택 생략이었다. 새 PDF WebSocket 시험이 셸 생성에는 TEMP의 원래 표기를 쓰고 RPC에는 realpath 표기를 보내 GitHub Windows의 짧은 경로 별칭에서 FILES_ROOT_CHANGED로 거부됐다. 두 입력에 같은 정규 경로를 사용하도록 시험 준비를 수정했다. 제품의 인증·현재 폴더 검사는 완화하지 않았으며 수정 후 전체 CI를 다시 실행한다.
+
+같은 후보의 [실제 NSIS 검사](https://github.com/bokjk/mongle-terminal/actions/runs/37422464361)는 0.3.8 → 0.3.12 설치 교체·작업 복원·정상 정리까지 통과했다. app.asar와 hostbundle 전체 694개가 원본과 일치했고 누락·추가·변경은 모두 0개였다. 최종 게시 파일은 별도 태그 검사 산출물을 사용한다.

@@ -26,8 +26,11 @@ test('paired WebSocket transfers an 8 MiB PDF exactly; cancellation and revoked 
     const owner = { id: randomUUID(), deviceId: 'pdf-test-owner', deviceName: 'PDF test', owner: true };
     core.connect(owner, () => {});
     const state = core.getState();
-    const terminal = await core.handle('terminals.create', { groupId: state.groups[0].id, profileId: 'cmd', cwd: workspace }, owner);
-    const ref = { hostId: state.hostId, bootId: state.bootId, id: terminal.id, generation: terminal.generation, root: await realpath(workspace) };
+    // Hosted Windows TEMP may use RUNNER~1. Use the same canonical spelling
+    // for shell creation and RPC scope, as the UI uses the host's cwd verbatim.
+    const cwd = await realpath(workspace);
+    const terminal = await core.handle('terminals.create', { groupId: state.groups[0].id, profileId: 'cmd', cwd }, owner);
+    const ref = { hostId: state.hostId, bootId: state.bootId, id: terminal.id, generation: terminal.generation, root: cwd };
     const post = async (url: string, body: unknown, headers: Record<string, string> = {}) => {
       const response = await fetch(origin + url, { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) });
       const value = await response.json() as any;
