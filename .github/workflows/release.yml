@@ -77,8 +77,12 @@ jobs:
           $env:MONGLE_E2E_UPDATE_DESKTOP = '1'
           node --import tsx --test --test-concurrency=1 tests/e2e/clipboard.test.ts tests/e2e/update-desktop.test.ts
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Record native verification in job logs
+        if: always()
+        run: node --import tsx scripts/record-validation-summary.ts native
       - name: Preserve packaged desktop results
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: packaged-native-clipboard-result
@@ -92,8 +96,12 @@ jobs:
         run: node --import tsx scripts/release-check.ts "$env:RELEASE_TAG"
       - name: Verify actual NSIS replacement and workspace restore
         run: node --import tsx scripts/verify-installed-upgrade.ts
+      - name: Record installed verification in job logs
+        if: always()
+        run: node --import tsx scripts/record-validation-summary.ts installed
       - name: Preserve installed upgrade results
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: installed-upgrade-result
@@ -105,7 +113,7 @@ jobs:
         with:
           name: windows-release
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 1
           path: |
             release/MongleTerminal-Setup-${{ steps.release.outputs.version }}-x64.exe
             release/MongleTerminal-Setup-${{ steps.release.outputs.version }}-x64.exe.blockmap
