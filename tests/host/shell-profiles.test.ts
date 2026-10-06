@@ -114,3 +114,23 @@ test('shell environment excludes host authentication and launcher injection whil
     }
   }
 });
+
+test('new shells use Claude native scrollback without changing the parent or explicit renderer choice', async () => {
+  const source = { PATH: process.env.PATH, CLAUDE_TEST_OPTION: 'kept' };
+  const env = safeShellEnvironment(source);
+  assert.equal(env.CLAUDE_CODE_NO_FLICKER, '0');
+  assert.equal(env.CLAUDE_TEST_OPTION, 'kept');
+  assert.equal('CLAUDE_CODE_NO_FLICKER' in source, false);
+  // Exercise the spawned-process boundary, not only the environment object.
+  const { stdout } = await execFileAsync(process.execPath,
+    ['-e', 'process.stdout.write(process.env.CLAUDE_CODE_NO_FLICKER)'], { env, windowsHide: true });
+  assert.equal(stdout, '0');
+  for (const value of ['0', '1', '']) {
+    assert.equal(safeShellEnvironment({ CLAUDE_CODE_NO_FLICKER: value }).CLAUDE_CODE_NO_FLICKER, value);
+  }
+  if (process.platform === 'win32') {
+    const custom = safeShellEnvironment({ claude_code_no_flicker: '1' });
+    assert.equal(custom.claude_code_no_flicker, '1');
+    assert.equal(Object.keys(custom).filter(key => key.toUpperCase() === 'CLAUDE_CODE_NO_FLICKER').length, 1);
+  }
+});

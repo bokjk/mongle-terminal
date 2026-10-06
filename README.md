@@ -34,7 +34,7 @@ PowerShell·명령 프롬프트와 설치된 Git Bash·WSL을 사용합니다. C
 
 긴 출력은 마우스를 누른 채 터미널 위·아래 경계 밖으로 드래그해 이전·다음 줄까지 선택할 수 있습니다. 0.3.12에서는 출력 갱신 중 자동 스크롤이 멈추던 문제를 수정했습니다. [검증 범위](docs/validation/terminal-drag-scroll.md)를 참고하세요.
 
-**미배포 후속 수정:** 실제 Windows 앱의 Claude CLI에서 화면 갱신이 프로그램의 드래그 이동·버튼 해제를 끊는 문제와 `Shift+드래그` 자동 복사 누락을 수정했습니다. 긴 한글 응답의 Claude 자체 복사에서 일부 줄 끝 누락은 남아 있습니다. 긴 내용은 Claude에서 `Ctrl+O` → `[`로 일반 터미널 기록을 연 뒤 드래그할 수 있으며, 이 방식으로 한글 포함 300줄의 원문 일치를 확인했습니다. [실제 앱 검사와 남은 범위](docs/validation/claude-native-selection.md).
+**미배포 후속 수정:** 화면 갱신이 CLI의 드래그 이동·버튼 해제를 끊는 문제와 `Shift+드래그` 자동 복사 누락을 수정했습니다. Claude의 전체화면 자체 복사에서 발생하는 줄 끝 누락을 피하도록 새 터미널에서는 Claude를 일반 렌더링으로 시작하게 합니다. 별도 단축키 없이 한글 포함 300줄을 일반 드래그로 복사해 원문 일치를 확인했습니다. 이미 실행 중인 Claude에는 적용되지 않으며, 전체화면을 명시적으로 선택하면 기존 누락 가능성이 남습니다. [적용 방법과 선택 사항](docs/USER-GUIDE.md#복사와-붙여넣기) · [실제 앱 검사와 남은 범위](docs/validation/claude-native-selection.md).
 
 같은 수정본의 실제 Windows 앱에서 Codex CLI 0.160.0도 검사했습니다. 생성 중 선택·느린 드래그·Shift 선택과 한글 포함 300줄의 화면 경계 스크롤 복사가 원문과 일치했습니다. [Codex 검사 범위](docs/validation/codex-native-selection.md).
 
