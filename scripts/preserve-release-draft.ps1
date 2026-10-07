@@ -19,7 +19,8 @@
 #             https://docs.github.com/en/rest/releases/assets
 #
 # Success emits only a JSON manifest envelope. Raw CLI stderr/result JSON is never
-# printed. A partial draft is deliberately left private; the SAME run/attempt and
+# printed. A partial release stays unpublished as a draft even in a public
+# source repository; the SAME run/attempt and
 # exact manifest may resume it. Different attempts require separate human review.
 [CmdletBinding()]
 param(
@@ -94,7 +95,9 @@ function Assert-LocalFile([string]$File, $Expected) {
 }
 function Assert-RemoteContext {
   $repo = Api "repos/$repository"
-  Assert-Condition ($repo.full_name -ceq $repository -and $repo.private -eq $true -and $repo.visibility -ceq 'private') 'Only the named PRIVATE source repository is permitted.'
+  Assert-Condition ($repo.full_name -ceq $repository -and $repo.private -is [bool] -and
+    (($repo.private -and $repo.visibility -ceq 'private') -or
+     (!$repo.private -and $repo.visibility -ceq 'public'))) 'Expected the named source repository with consistent public/private visibility.'
   $reference = Api "repos/$repository/git/ref/tags/$tag"
   Assert-Condition ($reference.ref -ceq "refs/tags/$tag") 'Exact existing tag is required.'
   $object = $reference.object
@@ -142,7 +145,7 @@ function Find-Release {
 }
 function Assert-Draft($Release) {
   Assert-Condition ($null -ne $Release) 'Expected release is missing; preservation incomplete.'
-  Assert-Condition ($Release.tag_name -ceq $tag -and $Release.draft -eq $true) 'An existing published release must never be changed.'
+  Assert-Condition ($Release.tag_name -ceq $tag -and $Release.draft -is [bool] -and $Release.draft -eq $true) 'An existing published release must never be changed.'
   Assert-Condition ($Release.body -ceq $script:body) 'Draft belongs to another run/attempt/SHA/manifest; refusing mixed retry.'
 }
 function Wait-NewRelease {
@@ -277,7 +280,7 @@ $release = Find-Release
 if ($null -eq $release) {
   Assert-RemoteContext
   [void](Invoke-Captured 'gh' @('release', 'create', $tag, '--repo', "github.com/$repository",
-    '--verify-tag', '--draft', '--latest=false', '--title', "Private verified preservation $tag", '--notes', $body))
+    '--verify-tag', '--draft', '--latest=false', '--title', "Verified source draft preservation $tag", '--notes', $body))
   $release = Wait-NewRelease
 }
 Assert-Draft $release
@@ -310,7 +313,7 @@ $envelope = [ordered]@{ manifest = $manifest; manifestSha256 = $manifestRecord.s
 # Never print tokens, raw verification JSON or captured CLI output.
 Write-Output $envelope
 $summary = @(
-  '', '## Verified private preservation; public distribution was NOT performed', '',
+  '', '## Verified unpublished source draft; public distribution was NOT performed', '',
   '~~~json', $envelope, '~~~', '',
   'The manifest SHA256 above is the trusted digest from this verified run, not a value to trust from downloaded assets.',
   'Use a new empty local directory. With an already authenticated source-repository gh session:', '',
@@ -336,7 +339,7 @@ $summary = @(
   'if ($LASTEXITCODE) { throw ''Distribution checks failed'' }',
   '~~~', '',
   'After these checks, separately perform the approved public draft/publish procedure using the existing publish-release.ps1 five-asset allowlist.',
-  'Do not copy source archives, this private manifest, or private validation JSON to the public repository.',
+  'Do not copy source archives, this preservation manifest, or private validation JSON to the public distribution repository.',
   'Use the existing local distribution credentials; do not copy a public token into this build job.'
 ) -join "`n"
 [IO.File]::AppendAllText($env:GITHUB_STEP_SUMMARY, $summary + "`n", [Text.UTF8Encoding]::new($false))

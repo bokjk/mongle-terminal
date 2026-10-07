@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
     inputs:
       tag: { description: 'Existing stable tag', required: true, type: string, default: 'v0.3.13' }
-      release_id: { description: 'Existing private draft ID', required: true, type: string, default: '405074793' }
+      release_id: { description: 'Existing unpublished source draft ID', required: true, type: string, default: '405074793' }
 permissions: { contents: read }
 jobs:
   probe:
@@ -29,7 +29,8 @@ jobs:
             return ,$value
           }
           $repo = Read-Json @('--method','GET','repos/bokjk/mongle-terminal')
-          if ($repo.full_name -cne 'bokjk/mongle-terminal' -or $repo.private -isnot [bool] -or !$repo.private -or $repo.visibility -cne 'private') { throw 'Expected the private source repository.' }
+          if ($repo.full_name -cne 'bokjk/mongle-terminal' -or $repo.private -isnot [bool] -or
+              !(($repo.private -and $repo.visibility -ceq 'private') -or (!$repo.private -and $repo.visibility -ceq 'public'))) { throw 'Expected the named source repository with consistent public/private visibility.' }
           $restPages = Read-Json @('--method','GET','repos/bokjk/mongle-terminal/releases?per_page=100','--paginate','--slurp')
           if ($restPages -isnot [array]) { throw 'Invalid REST releases response.' }
           $restListContainsTarget = $false; foreach ($restPage in $restPages) { if ($restPage -isnot [array]) { throw 'Invalid REST releases page.' }; foreach ($item in $restPage) { if ([string]$item.id -ceq $env:PROBE_RELEASE_ID -and $item.tag_name -ceq $env:PROBE_TAG) { $restListContainsTarget = $true } } }

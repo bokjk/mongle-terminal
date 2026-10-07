@@ -18,6 +18,7 @@ function Invoke-Captured([string]$Tool, [string[]]$Arguments) {
     if ($Tool -ceq 'git') { return $env:GITHUB_SHA }
     if ($Tool -cne 'gh') { throw 'No executable fallback in mock.' }
     if ($Arguments[0] -ceq 'release' -and $Arguments[1] -ceq 'create') {
+      if ($Arguments -notcontains '--draft' -or $Arguments -notcontains '--verify-tag' -or $Arguments -notcontains '--latest=false') { throw 'Creation must remain an unpublished draft of an existing tag.' }
       if ($s.release) { throw 'Existing release.' }
       $s.createCalls++
       # Keep the saved GitHub REST response shape (including null fields/assets),
@@ -68,7 +69,7 @@ function Invoke-Captured([string]$Tool, [string[]]$Arguments) {
       $s.assets += @(@{ name = $name; size = (Get-Item -LiteralPath $file).Length; digest = ('sha256:' + (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()); state = 'uploaded' })
       return '{}'
     }
-    if ($endpoint -ceq 'repos/bokjk/mongle-terminal') { return '{"full_name":"bokjk/mongle-terminal","private":true,"visibility":"private"}' }
+    if ($endpoint -ceq 'repos/bokjk/mongle-terminal') { return ($s.repository | ConvertTo-Json -Compress) }
     if ($endpoint.StartsWith('repos/bokjk/mongle-terminal/git/ref/tags/')) {
       $sha = if ($s.mode -ceq 'tag-mismatch') { 'd' * 40 } else { $env:GITHUB_SHA }
       return (@{ ref = 'refs/tags/v0.3.13'; object = @{ type = 'commit'; sha = $sha } } | ConvertTo-Json -Depth 5 -Compress)

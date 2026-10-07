@@ -6,7 +6,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-test('private release preservation workflow and whole-script offline regressions', { timeout: 180_000 }, () => {
+test('unpublished source draft preservation workflow and whole-script offline regressions', { timeout: 180_000 }, () => {
   const here = path.dirname(fileURLToPath(import.meta.url));
   const cases = path.resolve(here, '../fixtures/release-preservation-cases.mjs');
   const env = { ...process.env };
