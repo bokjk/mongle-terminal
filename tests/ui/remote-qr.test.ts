@@ -31,7 +31,7 @@ test('remote access QR decodes committed HTTPS origins, retains approval, and fi
       throw Error('Unexpected RPC: '+method);
     }};
     const root=createRoot(document.getElementById('root'));
-    window.render=(owner=true,theme='dark')=>{document.documentElement.dataset.theme=theme;root.render(<Settings client={client} state={state} owner={owner} theme={theme} fontSize={14} onTheme={()=>{}} onFontSize={()=>{}} onClose={()=>{}} onError={message=>window.errors.push(message)}/>);};
+    window.render=(owner=true,theme='dark')=>{document.documentElement.dataset.theme=theme;root.render(<Settings client={client} state={state} owner={owner} theme={theme} fontSize={14} scrollSpeed={0.5} onScrollSpeed={()=>{}} onTheme={()=>{}} onFontSize={()=>{}} onClose={()=>{}} onError={message=>window.errors.push(message)}/>);};
     window.renderUnsafe=origin=>root.render(<RemoteAccessQr origin={origin}/>);
     window.decodeQr=async()=>{
       const svg=document.querySelector('.remote-access-qr svg');

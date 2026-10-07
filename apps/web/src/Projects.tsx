@@ -5,6 +5,7 @@ import type { Group, HostState, ProjectInspection, Repository, TerminalInfo, Wor
 import { Modal } from './App';
 import { terminalLabel, worktreeName } from './worktree-labels';
 import { WorktreeActions } from './WorktreeActions';
+import { NotificationDot } from './NotificationDot';
 
 export type ProjectRequest=<T=any>(method:string,params:Record<string,unknown>)=>Promise<T>;
 type Request=ProjectRequest;
@@ -35,7 +36,7 @@ export function ProjectOpenModal({group,state,request,pickDirectory,onClose,onCo
   </div><div className="modal-footer"><button className="button" type="button" onClick={onClose}>취소</button><button className="button primary" disabled={busy}>{busy?'프로젝트 확인 중…':group?'연결':'프로젝트 열기'}</button></div></form></Modal>;
 }
 
-export function ProjectWorktrees({group,state,activeId,connected,request,beginNavigation,onError,refresh,onRenameTerminal}:{group:Group;state:HostState;activeId:string;connected:boolean;request:Request;beginNavigation:Navigation;onError:(message:string)=>void;refresh:(repositoryId:string)=>Promise<ProjectInspection|undefined>;onRenameTerminal:(terminal:TerminalInfo)=>void}){
+export function ProjectWorktrees({group,state,activeId,connected,request,beginNavigation,onError,refresh,onRenameTerminal,unread}:{unread?:ReadonlySet<string>;group:Group;state:HostState;activeId:string;connected:boolean;request:Request;beginNavigation:Navigation;onError:(message:string)=>void;refresh:(repositoryId:string)=>Promise<ProjectInspection|undefined>;onRenameTerminal:(terminal:TerminalInfo)=>void}){
   const [opening,setOpening]=useState<string>(),[choosing,setChoosing]=useState<string>(),[renaming,setRenaming]=useState<Worktree>(),[deleting,setDeleting]=useState<Worktree>();
   const [name,setName]=useState(''),[error,setError]=useState(''),[busy,setBusy]=useState(false);
   const repositories=state.capabilities?.includes('worktrees.manage')?state.repositories?.filter(item=>groupRepositoryIds(group).includes(item.id))||[]:[];
@@ -48,7 +49,7 @@ export function ProjectWorktrees({group,state,activeId,connected,request,beginNa
   async function open(worktree:Worktree,preferredId?:string){
     if(opening)return;setOpening(worktree.id);
     const finish=beginNavigation(group.id),recent=readRecent(`mongle.worktree.${state.hostId}.${group.id}.${worktree.id}`);
-    try{const terminal=await request<TerminalInfo>('worktrees.open',{groupId:group.id,worktreeId:worktree.id,preferredId:preferredId||recent,...(state.terminals.some(t=>t.id===activeId&&t.groupId===group.id)?{tabTarget:activeId}:{})});finish(terminal.id);setChoosing(undefined);}
+    try{const terminal=await request<TerminalInfo>('worktrees.open',{groupId:group.id,worktreeId:worktree.id,preferredId:preferredId||state.terminals.find(t=>t.groupId===group.id&&t.worktreeId===worktree.id&&unread?.has(t.id))?.id||recent,...(state.terminals.some(t=>t.id===activeId&&t.groupId===group.id)?{tabTarget:activeId}:{})});finish(terminal.id);setChoosing(undefined);}
     catch(error){onError(message(error));}finally{setOpening(undefined);}
   }
   if(!repositories.length&&!otherTerminals.length)return null;
@@ -59,8 +60,8 @@ export function ProjectWorktrees({group,state,activeId,connected,request,beginNa
       const status=worktree.status==='ready'?(worktree.branch||`커밋 ${worktree.head.slice(0,7)}`):worktree.status==='removing'?'삭제 중…':'폴더 확인 필요';
       const context=worktree.status==='ready'&&repositories.length>1&&repositoryName&&repositoryName!==name?`${repositoryName} · ${status}`:status;
       return <div className={`worktree-row ${selected?'selected':''}`} key={worktree.id} data-worktree-kind={worktree.main?'main':'linked'}>
-        <button className="worktree-main" aria-label={`${name} ${worktree.main?'열기':'워크트리 열기'}`} aria-current={selected?'true':undefined} disabled={!connected||Boolean(opening)||worktree.status==='removing'||(!terminals.length&&worktree.status!=='ready')} onClick={()=>void open(worktree)} title={`${name} · ${context}\n${worktree.path}${worktree.reason?` · ${worktree.reason}`:''}`}>
-          <span className="worktree-symbol">{opening===worktree.id?<LoaderCircle size={15} className="spin"/>:worktree.main?<span className="worktree-kind worktree-kind-main" title="이 저장소의 기본 작업">기본</span>:<GitBranch size={15} aria-label="워크트리"/>}</span><span className="worktree-details"><strong>{name}</strong><span className="worktree-meta"><small title={context}>{context}</small></span></span>
+        <button className="worktree-main" aria-description={terminals.some(t=>unread?.has(t.id))?'확인할 알림':undefined} aria-label={`${name} ${worktree.main?'열기':'워크트리 열기'}`} aria-current={selected?'true':undefined} disabled={!connected||Boolean(opening)||worktree.status==='removing'||(!terminals.length&&worktree.status!=='ready')} onClick={()=>void open(worktree)} title={`${name} · ${context}\n${worktree.path}${worktree.reason?` · ${worktree.reason}`:''}`}>
+          <span className="worktree-symbol">{opening===worktree.id?<LoaderCircle size={15} className="spin"/>:worktree.main?<span className="worktree-kind worktree-kind-main" title="이 저장소의 기본 작업">기본</span>:<GitBranch size={15} aria-label="워크트리"/>}</span><span className="worktree-details"><strong>{name}</strong><span className="worktree-meta"><small title={context}>{context}</small></span></span><NotificationDot show={terminals.some(t=>unread?.has(t.id))}/>
         </button>
         {terminals.length>0?<button className="worktree-count" aria-label={`${name} 터미널 ${terminals.length}개 선택`} title={`열려 있는 터미널 ${terminals.length}개`} onClick={()=>setChoosing(worktree.id)}><SquareTerminal size={12}/>{terminals.length}</button>:<span className="worktree-empty" title="이름을 누르면 터미널이 열립니다">없음</span>}
         <WorktreeActions name={name} kind={worktree.main?'':'워크트리'} actions={[
@@ -73,8 +74,8 @@ export function ProjectWorktrees({group,state,activeId,connected,request,beginNa
     {otherTerminals.map(terminal=>{
       const cwd=terminal.currentCwd||terminal.cwd,folder=cwd.replace(/[\\/]+$/,'').split(/[\\/]/).at(-1)||cwd;
       return <div key={terminal.id} className={`worktree-row ${terminal.id===activeId?'selected':''}`} data-sidebar-terminal-id={terminal.id}>
-        <button className="worktree-main" aria-label={`${terminal.title} 터미널 선택`} aria-current={terminal.id===activeId?'true':undefined} title={`${terminal.title} · ${cwd}${terminal.status==='running'?'':' · 종료됨 · 출력 보관'}`} onClick={()=>beginNavigation(group.id)(terminal.id)}>
-          <span className="worktree-symbol"><SquareTerminal size={15}/></span><span className="worktree-details"><strong>{terminal.title}</strong><span className="worktree-meta"><small title={cwd}>{folder}</small>{terminal.status!=='running'&&<span className="worktree-kind">종료됨</span>}</span></span>
+        <button className="worktree-main" aria-description={unread?.has(terminal.id)?'확인할 알림':undefined} aria-label={`${terminal.title} 터미널 선택`} aria-current={terminal.id===activeId?'true':undefined} title={`${terminal.title} · ${cwd}${terminal.status==='running'?'':' · 종료됨 · 출력 보관'}`} onClick={()=>beginNavigation(group.id)(terminal.id)}>
+          <span className="worktree-symbol"><SquareTerminal size={15}/></span><span className="worktree-details"><strong>{terminal.title}</strong><span className="worktree-meta"><small title={cwd}>{folder}</small>{terminal.status!=='running'&&<span className="worktree-kind">종료됨</span>}</span></span><NotificationDot show={unread?.has(terminal.id)===true}/>
         </button>
         <WorktreeActions name={terminal.title} kind="터미널" actions={[
           {label:'이름 변경',disabled:!connected,onSelect:()=>onRenameTerminal(terminal)},
@@ -84,7 +85,7 @@ export function ProjectWorktrees({group,state,activeId,connected,request,beginNa
     {pending.length>0&&<p className="worktree-status" role="status"><LoaderCircle size={13} className="spin"/>워크트리 작업 {pending.length}개 진행 중…</p>}
     {repositories.some(repo=>repo.error)&&<p className="worktree-status warning">최근 확인 정보 · 갱신 필요</p>}
     {latest&&(latest.status==='failed'||latest.status==='attention'||latest.message?.includes('터미널을 열지 못'))&&<div className="worktree-result" role="status"><span>{latest.message}</span><button className="button subtle" disabled={!connected} onClick={()=>void refresh(latest.repositoryId).catch(error=>onError(message(error)))}><RefreshCw size={13}/>목록 새로고침</button></div>}
-    {choosing&&<Modal title="워크트리 터미널" onClose={()=>setChoosing(undefined)}><div className="modal-body panel-list">{state.terminals.filter(t=>t.groupId===group.id&&t.worktreeId===choosing).map(t=><button key={t.id} className="device-row" disabled={!connected} onClick={()=>void open(worktrees.find(w=>w.id===choosing)!,t.id)}><SquareTerminal size={18}/><span className="device-info">{terminalLabel(t,worktrees)}<small>{t.status==='running'?'실행 중':'종료됨 · 출력 보관'}</small></span></button>)}</div></Modal>}
+    {choosing&&<Modal title="워크트리 터미널" onClose={()=>setChoosing(undefined)}><div className="modal-body panel-list">{state.terminals.filter(t=>t.groupId===group.id&&t.worktreeId===choosing).map(t=><button key={t.id} className="device-row" aria-description={unread?.has(t.id)?'확인할 알림':undefined} disabled={!connected} onClick={()=>void open(worktrees.find(w=>w.id===choosing)!,t.id)}><SquareTerminal size={18}/><span className="device-info">{terminalLabel(t,worktrees)}<small>{t.status==='running'?'실행 중':'종료됨 · 출력 보관'}</small></span><NotificationDot show={unread?.has(t.id)===true}/></button>)}</div></Modal>}
     {renaming&&<Modal title={renaming.main?'기본 작업 이름 변경':'워크트리 이름 변경'} onClose={()=>setRenaming(undefined)}><form onSubmit={async e=>{e.preventDefault();if(busy)return;setBusy(true);setError('');try{await request('worktrees.rename',{worktreeId:renaming.id,name:name.trim()});setRenaming(undefined);}catch(error){setError(message(error));}finally{setBusy(false);}}}><div className="modal-body"><label className="field"><span className="field-label">이름</span><input className="input" autoFocus required maxLength={100} value={name} onChange={e=>setName(e.target.value)}/></label><p className="hint">브랜치와 폴더 이름은 유지됩니다.</p>{error&&<p className="error-text" role="alert">{error}</p>}</div><div className="modal-footer"><button className="button primary" disabled={busy}>저장</button></div></form></Modal>}
     {deleting&&<Modal title="워크트리 삭제" onClose={()=>setDeleting(undefined)}><div className="modal-body"><p><strong>{deleting.name}</strong>의 작업 폴더를 삭제합니다. 브랜치와 커밋은 남아 있습니다.</p><p className="worktree-path">{deleting.path}</p><p className="hint">연결된 터미널과 남은 파일이 있으면 삭제하지 않습니다. ignored 파일도 확인합니다.</p>{error&&<p className="error-text" role="alert">{error}</p>}</div><div className="modal-footer"><button className="button" onClick={()=>setDeleting(undefined)}>취소</button><button className="button danger" disabled={busy} onClick={async()=>{setBusy(true);setError('');try{await request('worktrees.remove',{requestId:crypto.randomUUID(),groupId:group.id,worktreeId:deleting.id,confirmed:true});setDeleting(undefined);}catch(error){setError(message(error));}finally{setBusy(false);}}}>워크트리 삭제</button></div></Modal>}
   </div>;

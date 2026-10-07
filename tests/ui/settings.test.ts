@@ -32,7 +32,7 @@ test('settings UI downloads/imports JSON, copies remote connection details and c
       throw Error('Unexpected RPC: '+method);
     }};
     const root=createRoot(document.getElementById('root'));
-    window.render=owner=>root.render(<Settings client={client} state={state} owner={owner} theme='dark' fontSize={14} onTheme={()=>{}} onFontSize={()=>{}} onClose={()=>{window.settingsClosed=true}} onError={message=>window.errors.push(message)} />);
+    window.render=owner=>root.render(<Settings client={client} state={state} owner={owner} theme='dark' fontSize={14} scrollSpeed={0.5} onScrollSpeed={()=>{}} onTheme={()=>{}} onFontSize={()=>{}} onClose={()=>{window.settingsClosed=true}} onError={message=>window.errors.push(message)} />);
     window.render(true);
   `;
   const bundle = await build({ stdin: { contents: source, loader: 'tsx', resolveDir: fileURLToPath(new URL('../../', import.meta.url)) }, bundle: true, write: false, format: 'iife', platform: 'browser' });

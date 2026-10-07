@@ -1,5 +1,9 @@
 # 배포와 자동 업데이트
 
+**0.3.15 배포 준비(2026-10-07):** 모바일 스크롤 감도·감속, 기본 글자 11px, PWA 화면 새로고침, 터미널 미확인 알림 점을 포함한다. 현재 공개 채널은 0.3.14이며 개발·배포 PR 및 최종 태그 검사, 동일 산출물 게시와 익명 다운로드 확인 뒤 공개 완료로 변경한다. [0.3.15 배포 기록](validation/public-release-0.3.15.md).
+
+**0.3.15 — 모바일/PWA 새로고침:** 웹앱은 설치된 PC 호스트의 웹 자산을 사용한다. PC 업데이트 설치·재시작 뒤 **설정 → 앱 업데이트 → 화면 새로고침**으로 새 화면을 불러올 수 있도록 버튼을 추가했다. 미저장·저장 중 파일은 새로고침을 막는다. 자동 버전 감지·자동 새로고침·배포 저장소 변경은 없다. [검증 기록](validation/mobile-refresh.md).
+
 <!-- release-0.3.14-finalized -->
 
 **0.3.14 공개 배포 완료(2026-10-07):** [공개 릴리스](https://github.com/bokjk/mongle-terminal-releases/releases/tag/v0.3.14). [PR 검사 37552799912](https://github.com/bokjk/mongle-terminal/actions/runs/37552799912): 460 통과·실패 0·15 생략. [최종 태그 검사 37553799324](https://github.com/bokjk/mongle-terminal/actions/runs/37553799324): 461 통과·실패 0·14 생략. [설치 교체 검사 37552799928](https://github.com/bokjk/mongle-terminal/actions/runs/37552799928)와 설치 payload 일치, 공개 첨부 5개 전체 다운로드·해시, Electron 업데이트 다운로드 검증을 통과했다. 이전 공개 릴리스 파일은 유지했다. [최종 증거](validation/public-release-0.3.14.md#0314-final).

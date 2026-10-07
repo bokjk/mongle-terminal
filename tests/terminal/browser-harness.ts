@@ -6,6 +6,14 @@ const terminal = new Terminal({ cols: 40, rows: 8, allowProposedApi: true, fontS
 terminal.open(document.querySelector('#terminal') as HTMLElement);
 const inputs: Array<[string, string]> = [];
 const inputSources: Array<string | undefined> = [];
-const adapter = new BrowserPresentationAdapter(terminal, (data, encoding, source) => { inputs.push([data, encoding]); inputSources.push(source); });
+let touchScrollSpeed = 1;
+let touchAckDelay = 0, touchPendingUntil = 0;
+const adapter = new BrowserPresentationAdapter(terminal, (data, encoding, source) => {
+  inputs.push([data, encoding]); inputSources.push(source);
+  if (source === 'touch-scroll') touchPendingUntil = performance.now() + touchAckDelay;
+}, { getTouchScrollSpeed: () => touchScrollSpeed, touchMomentumReady: () => performance.now() >= touchPendingUntil });
 terminal.attachCustomKeyEventHandler(event=>adapter.handleKeyEvent(event));
-(window as any).mongleTerminalTest = { terminal, adapter, inputs, inputSources, terminalThemes, terminalMinimumContrast };
+(window as any).mongleTerminalTest = { terminal, adapter, inputs, inputSources, terminalThemes, terminalMinimumContrast,
+  setTouchScrollSpeed: (value: number) => { touchScrollSpeed = value; },
+  setTouchAckDelay: (value: number) => { touchAckDelay = value; touchPendingUntil = 0; },
+};
