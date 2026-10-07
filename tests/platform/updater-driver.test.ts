@@ -51,11 +51,11 @@ async function fixture() {
 test('real NSIS driver launch rejection does not quit the app', async () => {
   const { driver, events } = await fixture();
   driver.launch = async () => { throw Object.assign(new Error('Fixture launch rejection'), { code: 'EIO' }); };
-  driver.quitAndInstall(true, true);
+  driver.quitAndInstall(false, true);
   await flush();
   assert.deepEqual(events, ['error']);
   assert.equal(driver.spawned.length, 1);
-  assert.deepEqual(driver.spawned[0].args, ['--updated', '/S', '--force-run']);
+  assert.deepEqual(driver.spawned[0].args, ['--updated', '--force-run']);
 });
 
 test('real NSIS driver retries after launch failure and quits only the new attempt', async () => {
@@ -65,18 +65,27 @@ test('real NSIS driver retries after launch failure and quits only the new attem
     // Retry before the failed attempt's setImmediate callback has run.
     driver.launch = async () => true;
     setInstalling(true);
-    driver.quitAndInstall(true, true);
+    driver.quitAndInstall(false, true);
   });
-  driver.quitAndInstall(true, true);
+  driver.quitAndInstall(false, true);
   await flush(); await flush();
   assert.equal(driver.spawned.length, 2);
   assert.deepEqual(events, ['error', 'before-quit', 'quit']);
 });
 
+test('visible update install always requests a restart even when the driver default disables it', async () => {
+  const { driver } = await fixture();
+  driver.autoRunAppAfterInstall = false;
+  driver.quitAndInstall(false, true);
+  await flush();
+  // installer.nsh restarts the app and skips the finish page only for --updated --force-run.
+  assert.deepEqual(driver.spawned[0].args, ['--updated', '--force-run']);
+});
+
 test('duplicate install requests do not spawn or quit twice', async () => {
   const { driver, events } = await fixture();
-  driver.quitAndInstall(true, true);
-  driver.quitAndInstall(true, true);
+  driver.quitAndInstall(false, true);
+  driver.quitAndInstall(false, true);
   await flush();
   assert.equal(driver.spawned.length, 1);
   assert.deepEqual(events, ['before-quit', 'quit']);
@@ -84,7 +93,7 @@ test('duplicate install requests do not spawn or quit twice', async () => {
 
 test('a cancelled update state prevents the scheduled quit', async () => {
   const { driver, events, setInstalling } = await fixture();
-  driver.quitAndInstall(true, true);
+  driver.quitAndInstall(false, true);
   setInstalling(false);
   await flush();
   assert.deepEqual(events, []);
@@ -93,7 +102,7 @@ test('a cancelled update state prevents the scheduled quit', async () => {
 test('before-quit recovery is checked again before app quit', async () => {
   const { driver, events, setInstalling } = await fixture();
   driver.beforeQuit = () => { events.push('before-quit'); setInstalling(false); };
-  driver.quitAndInstall(true, true);
+  driver.quitAndInstall(false, true);
   await flush();
   assert.deepEqual(events, ['before-quit']);
 });
@@ -108,11 +117,11 @@ test('an attempt without a downloaded installer stays open and can later retry',
   const driver = new FixtureUpdater(() => true, app);
   driver.logger = null;
   driver.on('error', () => { events.push('error'); });
-  driver.quitAndInstall(true, true);
+  driver.quitAndInstall(false, true);
   await flush();
   assert.deepEqual(events, ['error']);
   await driver.ready();
-  driver.quitAndInstall(true, true);
+  driver.quitAndInstall(false, true);
   await flush();
   assert.deepEqual(events, ['error', 'quit']);
 });

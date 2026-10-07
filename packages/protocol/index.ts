@@ -16,9 +16,11 @@ export interface ShellProfile { id: string; name: string; executable: string; ar
 export interface Controller { connectionId: string; deviceName: string; epoch: number; ready: boolean; }
 export type AgentStatus = 'idle' | 'working' | 'completed' | 'attention' | 'error';
 export type ClaudeIntegration = {status:'ready' | 'unavailable'; message?:string};
+/** installed: managed hook written; Codex runs it only after the user trusts it once in /hooks. */
+export type CodexIntegration = {status:'installed' | 'unavailable'; message:string};
 export interface TerminalInfo { id: string; groupId: string; title: string; profileId: string; cwd: string; currentCwd?: string; generation: string; status: 'running' | 'exited' | 'interrupted'; cols: number; rows: number; pid?: number; exitCode?: number; controller?: Controller; historyAvailable?: boolean; resumeOnBoot?: boolean; restoreError?: string; worktreeId?: string; notificationCount?: number; agentStatus?: AgentStatus; agentProvider?: 'claude'; }
 export interface HostSettings { name: string; recordHistory: boolean; scrollback: number; }
-export interface HostState { hostId: string; bootId: string; name: string; version: string; protocolVersion: number; capabilities?: string[]; groups: Group[]; terminals: TerminalInfo[]; profiles: ShellProfile[]; settings: HostSettings; claudeIntegration?: ClaudeIntegration; storageError?: string; repositories?: Repository[]; worktrees?: Worktree[]; worktreeOperations?: WorktreeOperation[]; }
+export interface HostState { hostId: string; bootId: string; name: string; version: string; protocolVersion: number; capabilities?: string[]; groups: Group[]; terminals: TerminalInfo[]; profiles: ShellProfile[]; settings: HostSettings; claudeIntegration?: ClaudeIntegration; codexIntegration?: CodexIntegration; storageError?: string; repositories?: Repository[]; worktrees?: Worktree[]; worktreeOperations?: WorktreeOperation[]; }
 export interface ConnectionContext { id: string; deviceId: string; deviceName: string; owner: boolean; }
 export interface FileEntry { name: string; path: string; kind: 'directory' | 'file' | 'link' | 'other'; }
 export interface DirectoryListing { root: string; path: string; absolutePath: string; entries: FileEntry[]; truncated: boolean; }

@@ -47,6 +47,10 @@ export interface TerminalEngineOptions {
   onNotification?: (count: number) => void;
   agentToken?: string;
   onAgentStatus?: (status: import('../protocol/index.js').AgentStatus) => void;
+  /** Exact hook-verified Claude conversation, or null when it ended / the prompt returned. */
+  onAgentSession?: (session: import('./agent-status.js').AgentSessionIdentity | null) => void;
+  /** The shell printed its token-authenticated prompt marker. */
+  onShellPrompt?: () => void;
   /** Host lifetime gate; suppress signals without dropping final output/history. */
   notificationsEnabled?: () => boolean;
 }

@@ -7,6 +7,7 @@ import { RemoteAccessQr } from './RemoteAccessQr';
 import { TOUCH_SCROLL_SPEEDS, touchScrollSpeed } from '../../../packages/terminal/touch-scrollback';
 
 type Tab = 'appearance' | 'host' | 'remote' | 'updates' | 'help';
+export type SettingsTab = Tab;
 type RemoteStatus = { origin?: string | null; enabled: boolean; loopbackUrl?: string };
 type Diagnosis = { installed: boolean; connected: boolean; dnsName?: string; origin?: string; serveEnabled?: boolean; message?: string };
 type PairingRequest = { requestId: string; name: string; status: string; createdAt: string | number; expiresAt: string | number };
@@ -35,6 +36,8 @@ export interface SettingsProps {
   scrollSpeed: number;
   onScrollSpeed: (value: number) => void;
   refreshBlocked?: boolean;
+  /** Tab shown first, e.g. 'updates' when opened from the sidebar update notice. */
+  initialTab?: Tab;
   onTheme: (value: 'dark' | 'light') => void;
   onFontSize: (value: number) => void;
   onClose: () => void;
@@ -55,8 +58,8 @@ function dateLabel(value?: string | number) {
 }
 function errorMessage(error: unknown) { return error instanceof Error ? error.message : '요청을 완료하지 못했습니다.'; }
 
-export function Settings({ client, state, owner, theme, fontSize, scrollSpeed, onScrollSpeed, refreshBlocked = false, onTheme, onFontSize, onClose, onError }: SettingsProps) {
-  const [tab, setTab] = useState<Tab>('appearance');
+export function Settings({ client, state, owner, theme, fontSize, scrollSpeed, onScrollSpeed, refreshBlocked = false, initialTab = 'appearance', onTheme, onFontSize, onClose, onError }: SettingsProps) {
+  const [tab, setTab] = useState<Tab>(initialTab);
   const [name, setName] = useState(state.settings.name);
   const [recordHistory, setRecordHistory] = useState(state.settings.recordHistory);
   const [busy, setBusy] = useState<string | null>(null);
@@ -236,10 +239,15 @@ export function Settings({ client, state, owner, theme, fontSize, scrollSpeed, o
             <div className="settings-section"><h3 className="settings-title">Claude 작업 상태와 알림</h3><p className="settings-description">작업 중에는 표시가 천천히 맥동하고, 응답이 끝나면 종이 나타납니다. 해당 터미널의 최신 화면을 확인하면 종이 사라집니다. 확인 요청·오류는 별도로 표시하고 읽음 상태는 이 기기에 저장됩니다.</p>
               <p className={state.claudeIntegration?.status==='ready'?'hint':'hint warning'}>{state.claudeIntegration?.status==='ready'?'Claude 자동 연동 준비됨':state.claudeIntegration?.status==='unavailable'?'Claude 자동 연동 사용 불가':'Claude 자동 연동 상태를 확인할 수 없습니다.'}</p>
               {state.claudeIntegration?.message&&<p className="hint">{state.claudeIntegration.message}</p>}
+              {state.codexIntegration&&<>
+                <p className={state.codexIntegration.status==='installed'?'hint':'hint warning'}>{state.codexIntegration.status==='installed'?'Codex 대화 재개 연동 등록됨':'Codex 대화 재개 연동 사용 불가'}</p>
+                <p className="hint">{state.codexIntegration.message}</p>
+                <p className="hint">PowerShell에서 codex로 시작한 대화에 적용됩니다. 최초 연동은 Codex의 /hooks에서 검토·신뢰한 뒤 Codex를 다시 시작하세요. 기존 요청을 다시 보내지는 않습니다.</p>
+              </>}
               <p className="hint">Windows용 Claude Code 2.1.292 이상에서 공식 훅으로 연결합니다. 기존 설정을 보존하며 terminal_bell을 따로 설정할 필요가 없습니다. 실행부가 연동을 준비한 뒤 새 터미널에서 Claude를 시작해 주세요. 이미 실행 중인 Claude와 셸에는 적용되지 않습니다.</p>
               <p className="hint">WSL·SSH 내부의 Claude 자동 설정은 지원하지 않습니다. 응답 완료는 작업의 성공을 보장하지 않습니다. Codex 등 다른 CLI는 프로그램이 보낸 알림만 벨로 표시하며, 알림 기능이 꺼져 있으면 표시되지 않습니다.</p>
             </div>
-            <div className="settings-section"><h3 className="settings-title">작업은 이 컴퓨터에서 계속됩니다</h3><p className="settings-description">앱 창을 닫아도 몽글터미널의 백그라운드 실행부가 유지되는 동안 터미널 작업이 계속됩니다. 다시 열거나 다른 기기에서 접속하면 실행 중인 세션에 이어서 연결합니다.</p><p className="hint">컴퓨터 종료·재부팅·로그아웃 또는 백그라운드 실행부 종료 시 실행 중인 프로세스는 유지되지 않습니다. 다시 열면 저장된 구성과 보관된 출력을 확인할 수 있으며, 이전 명령을 자동 실행하지 않습니다.</p></div>
+            <div className="settings-section"><h3 className="settings-title">작업은 이 컴퓨터에서 계속됩니다</h3><p className="settings-description">앱 창을 닫아도 몽글터미널의 백그라운드 실행부가 유지되는 동안 터미널 작업이 계속됩니다. 다시 열거나 다른 기기에서 접속하면 실행 중인 세션에 이어서 연결합니다.</p><p className="hint">컴퓨터 종료·재부팅·로그아웃 또는 백그라운드 실행부 종료 시 실행 중인 프로세스는 유지되지 않습니다. 다시 열면 저장된 구성과 보관된 출력, 연동으로 확인한 Claude·Codex 대화를 다시 엽니다. 이전 요청이나 명령을 자동으로 다시 보내지는 않습니다.</p></div>
             <div className="settings-section"><h3 className="settings-title">원격에서 사용하기</h3><p className="settings-description">대상 컴퓨터가 켜져 있고 Tailscale에 연결되어 있어야 합니다. 모바일 브라우저에서 접속 주소를 열고 홈 화면에 추가하면 앱처럼 사용할 수 있습니다.</p><p className="hint">한 터미널에는 한 기기만 입력할 수 있습니다. 다른 기기에서 제어권을 가져오면 기존 기기는 화면을 보는 상태로 바뀝니다.</p></div>
             <div className="settings-section"><h3 className="settings-title">터미널 단축키</h3><div className="setting-row"><span>선택한 내용 복사</span><kbd>Ctrl + Shift + C</kbd></div><div className="setting-row"><span>붙여넣기</span><kbd>Ctrl + Shift + V</kbd></div><div className="setting-row"><span>출력 검색</span><kbd>Ctrl + Shift + F</kbd></div><p className="hint">분할과 화면 확대는 각 터미널 제목줄에서 사용할 수 있습니다. Ctrl + C는 실행 중인 명령에 중단 신호를 보냅니다.</p></div>
             <p className="hint">몽글터미널 {state.version}</p>

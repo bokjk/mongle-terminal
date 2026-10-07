@@ -19,7 +19,9 @@ export class GuardedNsisUpdater extends NsisUpdater {
   override quitAndInstall(isSilent = false, isForceRunAfter = false): void {
     if (this.quitAndInstallCalled) return;
     const generation = ++this.installGeneration;
-    const installed = this.install(isSilent, isSilent ? isForceRunAfter : this.autoRunAppAfterInstall);
+    // Pass --force-run explicitly: the assisted installer relaunches only for
+    // --updated --force-run (see platform/windows/installer.nsh).
+    const installed = this.install(isSilent, isForceRunAfter);
     if (!installed) { this.quitAndInstallCalled = false; return; }
     setImmediate(() => {
       const current = () => generation === this.installGeneration && this.quitAndInstallCalled && this.shouldQuit();

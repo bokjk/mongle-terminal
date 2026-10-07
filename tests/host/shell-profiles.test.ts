@@ -115,6 +115,13 @@ test('shell environment excludes host authentication and launcher injection whil
   }
 });
 
+test('new shells keep only the user\'s absolute CODEX_HOME among CODEX_* variables', () => {
+  const env = safeShellEnvironment({ CODEX_HOME: 'D:\\codex-home', CODEX_THREAD_ID: 't', CODEX_SANDBOX: 'x', MONGLE_AGENT_PIPE: 'p' });
+  assert.equal(env.CODEX_HOME, 'D:\\codex-home');
+  for (const key of ['CODEX_THREAD_ID', 'CODEX_SANDBOX', 'MONGLE_AGENT_PIPE']) assert.equal(env[key], undefined, key);
+  for (const bad of ['relative\\home', '', 'D:\\a\nb']) assert.equal(safeShellEnvironment({ CODEX_HOME: bad }).CODEX_HOME, undefined, JSON.stringify(bad));
+});
+
 test('new shells preserve the Claude renderer choice without adding an implicit override', async () => {
   const source = { PATH: process.env.PATH, CLAUDE_TEST_OPTION: 'kept' };
   const env = safeShellEnvironment(source);

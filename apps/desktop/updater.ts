@@ -1,5 +1,7 @@
 import type { UpdateState } from './contracts';
 
+export type InstallPhase = NonNullable<UpdateState['phase']>;
+
 export interface UpdateDriver {
   autoDownload: boolean;
   autoInstallOnAppQuit: boolean;
@@ -17,11 +19,17 @@ export interface UpdateDependencies {
   unsupportedReason?: string;
   driver: UpdateDriver;
   publish(state: UpdateState): void;
-  /** Must confirm, save state and wait for the authenticated LOCAL host to exit. */
-  prepareInstall(): Promise<boolean>;
+  /** Must confirm, save state and wait for the authenticated LOCAL host to exit. Reports 'saving' after the user confirms. */
+  prepareInstall(report: (phase: InstallPhase) => void): Promise<boolean>;
   allowInstallerQuit(): void;
   installFailed(): void;
 }
+
+const PHASE_MESSAGES: Record<InstallPhase, string> = {
+  confirming: '설치 확인 창에서 진행 여부를 선택해 주세요.',
+  saving: '터미널 구성을 저장하고 이 컴퓨터의 작업을 종료하고 있습니다.',
+  launching: '설치 프로그램을 시작합니다. 앱이 닫힌 뒤 설치 창에서 진행 상황을 볼 수 있습니다.',
+};
 
 /** Downloads may be automatic; installation always has a local shutdown barrier. */
 export class UpdateController {
@@ -43,20 +51,20 @@ export class UpdateController {
     d.driver.disableWebInstaller = true;
     this.state = { status: d.unsupportedReason ? 'unsupported' : 'idle', currentVersion: d.currentVersion, message: d.unsupportedReason };
     const on = (event: string, listener: (...args: any[]) => void) => { d.driver.on(event, listener); this.listeners.push([event, listener]); };
-    on('checking-for-update', () => this.set({ status: 'checking', message: undefined }));
-    on('update-not-available', () => this.set({ status: 'idle', availableVersion: undefined, progress: undefined, message: '최신 버전입니다.' }));
+    on('checking-for-update', () => this.set({ status: 'checking', phase: undefined, message: undefined }));
+    on('update-not-available', () => this.set({ status: 'idle', availableVersion: undefined, progress: undefined, phase: undefined, message: '최신 버전입니다.' }));
     on('update-available', info => {
       if (!this.validVersion(info?.version)) { this.fail(); return; }
-      this.set({ status: 'downloading', availableVersion: info.version, progress: 0, message: undefined });
+      this.set({ status: 'downloading', availableVersion: info.version, progress: 0, phase: undefined, message: undefined });
     });
     on('download-progress', info => {
       if (this.state.status === 'downloading' && Number.isFinite(info?.percent)) this.set({ progress: Math.min(100, Math.max(0, Math.round(info.percent))) });
     });
     on('update-downloaded', info => {
       if (!this.validVersion(info?.version)) { this.fail(); return; }
-      this.set({ status: 'ready', availableVersion: info.version, progress: 100, message: '새 버전이 준비됐습니다. 작업을 저장한 뒤 설치해 주세요.' });
+      this.set({ status: 'ready', availableVersion: info.version, progress: 100, phase: undefined, message: '새 버전이 준비됐습니다. 작업을 저장한 뒤 설치해 주세요.' });
     });
-    on('update-cancelled', () => this.set({ status: 'idle', progress: undefined, message: '다운로드가 취소됐습니다. 다시 확인할 수 있습니다.' }));
+    on('update-cancelled', () => this.set({ status: 'idle', progress: undefined, phase: undefined, message: '다운로드가 취소됐습니다. 다시 확인할 수 있습니다.' }));
     on('error', () => this.fail());
   }
 
@@ -70,7 +78,7 @@ export class UpdateController {
   private fail(): void {
     if (this.disposed) return;
     if (this.state.status === 'installing' && !this.preparing) this.recoverInstall();
-    this.set({ status: 'error', progress: undefined,
+    this.set({ status: 'error', progress: undefined, phase: undefined,
       message: '업데이트를 완료하지 못했습니다. 인터넷 연결과 공개 릴리스 게시 여부를 확인한 뒤 다시 시도해 주세요.' });
   }
   private recoverInstall(): void {
@@ -91,7 +99,7 @@ export class UpdateController {
     return this.checking;
   }
   private async performCheck(): Promise<UpdateState> {
-    this.set({ status: 'checking', message: undefined });
+    this.set({ status: 'checking', phase: undefined, message: undefined });
     try {
       const result = await this.d.driver.checkForUpdates();
       void result?.downloadPromise?.catch(() => this.fail());
@@ -107,17 +115,22 @@ export class UpdateController {
   }
   private async performInstall(): Promise<void> {
     this.installCleanupDone = false;
-    this.set({ status: 'installing', message: '현재 컴퓨터의 작업을 저장하고 종료를 준비합니다.' });
+    this.set({ status: 'installing', phase: 'confirming', message: PHASE_MESSAGES.confirming });
+    const report = (phase: InstallPhase) => {
+      if (this.preparing && this.state.status === 'installing') this.set({ phase, message: PHASE_MESSAGES[phase] });
+    };
     try {
       this.preparing = true;
-      const prepared = await this.d.prepareInstall();
+      const prepared = await this.d.prepareInstall(report);
       this.preparing = false;
       if (this.disposed || this.state.status !== 'installing') { if (prepared) this.recoverInstall(); return; }
-      if (!prepared) { this.set({ status: 'ready', message: '설치를 진행하지 않았습니다. 준비되면 다시 시도하세요.' }); return; }
+      if (!prepared) { this.set({ status: 'ready', phase: undefined, message: '설치를 진행하지 않았습니다. 준비되면 다시 시도하세요.' }); return; }
+      this.set({ phase: 'launching', message: PHASE_MESSAGES.launching });
       this.d.allowInstallerQuit();
-      // The native confirmation already approved installation. Silent NSIS
-      // honors --force-run even when ordinary setup hides its final run option.
-      this.d.driver.quitAndInstall(true, true);
+      // The native confirmation already approved installation. The installer
+      // shows its own file progress and, only for --updated --force-run, skips
+      // the finish page and restarts the app (platform/windows/installer.nsh).
+      this.d.driver.quitAndInstall(false, true);
     } catch { this.preparing = false; this.recoverInstall(); this.fail(); }
   }
   dispose(): void {
