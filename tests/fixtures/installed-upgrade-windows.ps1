@@ -30,6 +30,12 @@ public class UpgradeWindow {
  [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern int GetClassName(IntPtr h,StringBuilder s,int n);
  [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern int GetWindowText(IntPtr h,StringBuilder s,int n);
  [DllImport("user32.dll")] public static extern IntPtr GetMenu(IntPtr h);
+ [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+ [StructLayout(LayoutKind.Sequential)] public struct Rect { public int Left,Top,Right,Bottom; }
+ [StructLayout(LayoutKind.Sequential)] struct NotifyIdentifier { public uint size;public IntPtr window;public uint id;public Guid guid; }
+ [DllImport("shell32.dll")] static extern int Shell_NotifyIconGetRect(ref NotifyIdentifier icon,out Rect rect);
+ public static int RegisteredTrayRect(IntPtr window,uint id,out Rect rect){var icon=new NotifyIdentifier {size=(uint)Marshal.SizeOf(typeof(NotifyIdentifier)),window=window,id=id,guid=Guid.Empty};return Shell_NotifyIconGetRect(ref icon,out rect);}
+ public static List<IntPtr> NotifyHosts(uint pid){var result=new List<IntPtr>();EnumWindows((h,l)=>{uint owner;GetWindowThreadProcessId(h,out owner);if(owner==pid && Class(h)=="Electron_NotifyIconHostWindow")result.Add(h);return true;},IntPtr.Zero);return result;}
  [StructLayout(LayoutKind.Sequential)] public struct Point { public int X,Y; }
  [DllImport("user32.dll")] static extern bool SetCursorPos(int x,int y);
  [DllImport("user32.dll")] static extern IntPtr WindowFromPoint(Point point);
@@ -101,7 +107,7 @@ if ($Mode -eq 'exit') {
  }
  # Electron v44.4.5 RootView::SetMenu omits the menu bar for titleBarStyle:hidden.
  # Use the production tray menu, not Alt or an injected application accelerator.
- $probes=@{}; $uiaErrors=@(); $trayOpened=$false; $trayAttempts=0; $overflowOpened=$false; $trayProbes=@{}
+ $probes=@{}; $uiaErrors=@(); $trayOpened=$false; $trayAttempts=0; $overflowOpened=$false; $trayProbes=@{}; $trayCallback=$null; $callbackAttempted=$false
  $deadline=[DateTime]::UtcNow.AddSeconds(45)
  while ([DateTime]::UtcNow -lt $deadline) {
    if(-not $sent -and -not $trayOpened -and $trayAttempts -lt 3) {
@@ -129,6 +135,32 @@ if ($Mode -eq 'exit') {
          $trayOpened=[UpgradeWindow]::RightClickTray($icon.root,$icon.pid,[int]$point.X,[int]$point.Y)
        } elseif(-not $overflowOpened -and $chevrons.Count -eq 1) {
          $chevrons[0].GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke();$overflowOpened=$true
+       }
+       if(-not $trayOpened -and $icons.Count -eq 0 -and $chevrons.Count -eq 0 -and -not $callbackAttempted) {
+         # Hosted Explorer may expose no accessible notification buttons. This
+         # sends the shell's RIGHT-CLICK callback only; selecting the real menu
+         # item and confirming the real dialog remain independently required.
+         # Contract: Electron v44.4.5 notify_icon_host.{h,cc}: next ID 1 + base 2,
+         # WM_APP+1, Electron_NotifyIconHostWindow; notify_icon.cc handles the menu.
+         # https://github.com/electron/electron/blob/v44.4.5/shell/browser/ui/win/notify_icon_host.h#L46
+         # https://github.com/electron/electron/blob/v44.4.5/shell/browser/ui/win/notify_icon_host.cc#L25
+         # https://github.com/electron/electron/blob/v44.4.5/shell/browser/ui/win/notify_icon.cc#L65
+         if($c.electronVersion -ne '44.4.5'){throw 'Unverified Electron tray callback contract'}
+         $callbackAttempted=$true
+         $hosts=@([UpgradeWindow]::NotifyHosts([uint32]$c.pid))
+         $trayCallback=@{hostCount=$hosts.Count;electronVersion=$c.electronVersion;iconId=3;message=0x8001;event=0x204;posted=$false}
+         if($hosts.Count -ne 1){throw 'Expected exactly one tray host belonging to the validated desktop PID'}
+         if((Get-Process -Id $c.pid -ErrorAction Stop).Path -ine $c.exe){throw 'Desktop path changed before tray callback'}
+         $bounds=[UpgradeWindow+Rect]::new()
+         $registration=[UpgradeWindow]::RegisteredTrayRect($hosts[0],3,[ref]$bounds)
+         $trayCallback.registrationHResult=$registration;$trayCallback.bounds=$bounds;$trayCallback.host=$hosts[0].ToInt64()
+         if($registration -ne 0 -or $bounds.Right -le $bounds.Left -or $bounds.Bottom -le $bounds.Top){throw 'Tray icon registration was not verified; refusing callback'}
+         foreach($targetWindow in [UpgradeWindow]::Windows()) {
+           $targetPid=[uint32]0;[void][UpgradeWindow]::GetWindowThreadProcessId($targetWindow,[ref]$targetPid)
+           if($targetPid -eq $c.pid -and [UpgradeWindow]::Class($targetWindow) -eq 'Chrome_WidgetWin_1'){[void][UpgradeWindow]::SetForegroundWindow($targetWindow);break}
+         }
+         $trayCallback.posted=[UpgradeWindow]::PostMessage($hosts[0],0x8001,[IntPtr]3,[IntPtr]0x204)
+         $trayOpened=$trayCallback.posted
        }
      } catch {if($uiaErrors.Count -lt 8){$uiaErrors+=($_.Exception.Message.Substring(0,[Math]::Min(512,$_.Exception.Message.Length)))}}
    }
@@ -186,10 +218,10 @@ if ($Mode -eq 'exit') {
        } catch {if($uiaErrors.Count -lt 8){$uiaErrors+=($_.Exception.Message.Substring(0,[Math]::Min(512,$_.Exception.Message.Length)))}}
      }
    }
-   if($confirmed) { @{menuInvoked=$sent;confirmationClicked=$true;trayOpened=$trayOpened;trayProbes=$trayProbes;probes=@($probes.Values);uiaErrors=$uiaErrors} | ConvertTo-Json -Depth 6 -Compress; exit 0 }
+   if($confirmed) { @{menuInvoked=$sent;confirmationClicked=$true;trayOpened=$trayOpened;trayCallback=$trayCallback;trayProbes=$trayProbes;probes=@($probes.Values);uiaErrors=$uiaErrors} | ConvertTo-Json -Depth 6 -Compress; exit 0 }
    Start-Sleep -Milliseconds 100
  }
- $diagnostic=@{menuInvoked=$sent;confirmationClicked=$confirmed;trayOpened=$trayOpened;trayAttempts=$trayAttempts;overflowOpened=$overflowOpened;trayProbes=$trayProbes;probes=@($probes.Values);uiaErrors=$uiaErrors} | ConvertTo-Json -Depth 6 -Compress
+ $diagnostic=@{menuInvoked=$sent;confirmationClicked=$confirmed;trayOpened=$trayOpened;trayCallback=$trayCallback;trayAttempts=$trayAttempts;overflowOpened=$overflowOpened;trayProbes=$trayProbes;probes=@($probes.Values);uiaErrors=$uiaErrors} | ConvertTo-Json -Depth 6 -Compress
  throw "Could not invoke and confirm the real full-exit menu: $diagnostic"
 }
 # Observer is ready before the installer is launched. Only records visible windows

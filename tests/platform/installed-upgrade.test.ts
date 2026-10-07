@@ -166,6 +166,25 @@ test('Windows PowerShell provides UI Automation types without operating a deskto
   assert.doesNotMatch(source,/keybd_event|TapKey/,'frameless Electron has no Alt menu; never send blind keys into a live terminal');
   assert.match(source,/\$visited -lt 64/,'raw UIA diagnostics stay bounded');
 });
+test('tray callback is pinned to Electron 44.4.5 single Tray registration ID 3 and only opens its real menu',async()=>{
+  const pkg=JSON.parse(await readFile('package.json','utf8'));
+  assert.equal(pkg.devDependencies.electron,'44.4.5','Revalidate upstream tray callback contract after Electron updates');
+  const main=await readFile('apps/desktop/main.ts','utf8');
+  assert.equal((main.match(/new Tray\(/g)||[]).length,1,'First registered icon assumption requires one Tray allocation');
+  assert.match(main,/tray = new Tray\(path.join\(root, 'platform\/windows\/icon.ico'\)\)/,'No GUID registration override');
+  const source=await readFile('tests/fixtures/installed-upgrade-windows.ps1','utf8');
+  const hosts=source.match(/public static List<IntPtr> NotifyHosts[^\n]+/)?.[0];assert.ok(hosts);
+  assert.match(hosts,/owner==pid && Class\(h\)=="Electron_NotifyIconHostWindow"/);
+  assert.doesNotMatch(hosts,/IsWindowVisible/,'Tray callback window is hidden');
+  assert.match(source,/\$hosts.Count -ne 1\)\{throw/);
+  assert.match(source,/\$c.electronVersion -ne '44.4.5'\)\{throw/);
+  assert.match(source,/RegisteredTrayRect\(\$hosts\[0\],3,\[ref\]\$bounds\)/);
+  assert.match(source,/if\(\$registration -ne 0[^\n]+throw 'Tray icon registration was not verified/);
+  assert.ok(source.indexOf("throw 'Tray icon registration was not verified")<source.indexOf('PostMessage($hosts[0],0x8001,[IntPtr]3,[IntPtr]0x204)'));
+  const driver=await readFile('scripts/verify-installed-upgrade.ts','utf8');
+  assert.match(driver,/sha\(await readFile\(exe\)\),sha\(await readFile\('release\/win-unpacked\/MongleTerminal.exe'\)\)/);
+  assert.match(driver,/assert.equal\(confirmation.menuInvoked, true\); assert.equal\(confirmation.confirmationClicked, true\)/,'Posting a callback alone is not shutdown proof');
+});
 
 test('native observation bridge and isolated CLI launchers compile; fixture version probes launch no model',{skip:process.platform!=='win32'},async t=>{
   const directory=await mkdtemp(path.join(tmpdir(),'mongle-upgrade-helper-'));

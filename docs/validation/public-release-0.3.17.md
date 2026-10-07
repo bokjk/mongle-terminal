@@ -42,3 +42,7 @@
 [다섯 번째 설치 검사](https://github.com/bokjk/mongle-terminal/actions/runs/37661812533)에서는 설치·자동 재실행·payload·작업 공간 복원에 이어 시험용 Claude·Codex 연동과 네 개 대화 ID 저장까지 진행했다. 재설치 전 정상 종료 단계에서 네이티브 메뉴와 UI Automation의 메뉴 항목을 찾지 못해 실패했다. 기존 PATH 폴더에 배치한 시험 CLI는 실제 패키지의 버전 검색에서 인식됐으며 기존 파일·레지스트리·PATH 값은 바꾸지 않았다. 두 번째 설치와 정확한 대화 재개 검증은 아직 완료하지 않았다.
 
 Electron 44.4.5의 [창 생성 코드](https://github.com/electron/electron/blob/v44.4.5/shell/browser/native_window.cc#L97)와 [메뉴 코드](https://github.com/electron/electron/blob/v44.4.5/shell/browser/ui/views/root_view.cc#L50)를 확인했다. 현재 `titleBarStyle: hidden` 창에는 상단 메뉴를 만들지 않으므로 Alt 키로도 열 수 없다. 시험 종료 조작은 제품이 실제 제공하는 트레이 메뉴를 사용하도록 보완한다.
+
+### 여섯 번째 검사의 hosted 트레이 노출
+
+[여섯 번째 설치 검사](https://github.com/bokjk/mongle-terminal/actions/runs/37663993603)에서도 설치·재실행·작업 공간 복원·대화 ID 저장 뒤 정상 종료 자동화가 실패했다. hosted Windows의 `Shell_TrayWnd`는 UI Automation에 아이콘 버튼을 노출하지 않았다. Electron 44.4.5의 [트레이 콜백](https://github.com/electron/electron/blob/v44.4.5/shell/browser/ui/win/notify_icon_host.cc#L231), [아이콘 ID 초기값](https://github.com/electron/electron/blob/v44.4.5/shell/browser/ui/win/notify_icon_host.h#L46), [메뉴 열기 구현](https://github.com/electron/electron/blob/v44.4.5/shell/browser/ui/win/notify_icon.cc#L65)을 확인했다. 대상 앱의 트레이 이벤트로 실제 메뉴를 열고 실제 종료 항목과 확인창을 조작하는 검사 경로를 보완한다. 이 경로는 Explorer 아이콘의 물리적 우클릭 검증과 구분한다.

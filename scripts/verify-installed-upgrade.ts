@@ -11,7 +11,7 @@ import { promisify } from 'node:util';
 import { connectOwnerPipe } from '../packages/local-ipc/index';
 import type { HostState, TerminalInfo } from '../packages/protocol/index';
 import { PREVIOUS_PUBLIC_VERSION, updateInstallerArgs, assertUpdateWindows, assertExactAgentRestores, findUpdatedDesktop, boundedObserverEvents, readInstalledHost, removeVerifiedFixture, type WindowEvidence, type AgentFixtureRecord } from '../tests/fixtures/installed-upgrade-evidence';
-import { version } from '../package.json';
+import { version, devDependencies } from '../package.json';
 
 assert.equal(process.platform, 'win32');
 assert.equal(process.env.GITHUB_ACTIONS, 'true', 'Never install over a developer/user installation');
@@ -83,6 +83,11 @@ async function install(file: string) {
 }
 async function native(mode: 'exit' | 'environment' | 'discover' | 'diagnose', config: unknown) {
   const file = path.join(root, mode + '-' + randomUUID() + '.json');
+  if(mode==='exit') {
+    assert.equal(devDependencies.electron,'44.4.5','Review native tray callback contract before changing Electron');
+    assert.equal(sha(await readFile(exe)),sha(await readFile('release/win-unpacked/MongleTerminal.exe')),'Native callback requires the exact candidate desktop executable');
+    config={...(config as object),electronVersion:devDependencies.electron};
+  }
   await writeFile(file, JSON.stringify(config));
   if(mode==='exit') {
     // Windows PowerShell includes the desktop UI Automation assemblies. A BOM
@@ -140,6 +145,7 @@ async function fullExit() {
     await evaluate("(()=>{upgradeElectron.dialog.showMessageBox=async()=>({response:1,checkboxChecked:false});const item=upgradeElectron.Menu.getApplicationMenu().items.flatMap(i=>i.submenu?.items||[]).find(i=>i.label==='완전 종료…');if(!item)throw Error('Missing full exit menu');setTimeout(()=>item.click({},upgradeElectron.BrowserWindow.getAllWindows()[0]),30);return true;})()");
   } else {
     const confirmation = JSON.parse((await native('exit', {pid:desktopPid,exe})).stdout.replace(/^\uFEFF/, '').trim());
+    (proof.nativeExits ??= []).push({pid:desktopPid,...confirmation});
     assert.equal(confirmation.menuInvoked, true); assert.equal(confirmation.confirmationClicked, true);
   }
   await until(async () => !alive(desktopPid), Boolean, 'normal desktop full exit');
