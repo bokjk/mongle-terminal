@@ -66,16 +66,46 @@ if ($Mode -eq 'exit') {
  $p=Get-Process -Id $c.pid
  if ($p.Path -ine $c.exe) { throw 'Desktop path mismatch' }
  $sent=$false; $confirmed=$false
+ Add-Type -AssemblyName UIAutomationClient,UIAutomationTypes
+ $probes=@{}; $uiaErrors=@(); $expanded=$false
  $deadline=[DateTime]::UtcNow.AddSeconds(45)
  while ([DateTime]::UtcNow -lt $deadline) {
    foreach($h in [UpgradeWindow]::Windows()) {
      $windowPid=[uint32]0; [void][UpgradeWindow]::GetWindowThreadProcessId($h,[ref]$windowPid)
      if($windowPid -ne $c.pid) { continue }
+     $menu=[UpgradeWindow]::GetMenu($h)
+     $probeKey=([UpgradeWindow]::Class($h))+'|'+([UpgradeWindow]::Text($h))+'|'+$sent
+     if($probes.Count -lt 16 -and -not $probes.ContainsKey($probeKey)) {
+       $probes[$probeKey]=@{title=[UpgradeWindow]::Text($h);class=[UpgradeWindow]::Class($h);nativeMenu=($menu -ne [IntPtr]::Zero);children=@([UpgradeWindow]::Children($h) | Select-Object -First 12 | ForEach-Object {@{text=[UpgradeWindow]::Text($_);class=[UpgradeWindow]::Class($_)}})}
+     }
      if(-not $sent) {
-       $menu=[UpgradeWindow]::GetMenu($h)
        if($menu -ne [IntPtr]::Zero) {
          $id=[UpgradeWindow]::FullExit($menu)
          if($id -ge 0) { [void][UpgradeWindow]::PostMessage($h,0x111,[IntPtr]$id,[IntPtr]::Zero); $sent=$true }
+       }
+       if(-not $sent) {
+         try {
+           $element=[System.Windows.Automation.AutomationElement]::FromHandle($h)
+           $items=$element.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty,[System.Windows.Automation.ControlType]::MenuItem))
+           $names=@($items | Select-Object -First 16 | ForEach-Object {$_.Current.Name})
+           if($probes.ContainsKey($probeKey)){$probes[$probeKey].menuItems=$names}
+           foreach($item in $items) {
+             if($item.Current.ProcessId -ne $c.pid){continue}
+             if($item.Current.Name.Replace('&','') -eq '완전 종료…') {
+               $item.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke();$sent=$true;break
+             }
+           }
+           if(-not $sent -and -not $expanded) {
+             foreach($item in $items) {
+               if($item.Current.ProcessId -eq $c.pid -and $item.Current.Name.Replace('&','') -eq '몽글터미널') {
+                 $expand=$null
+                 if($item.TryGetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern,[ref]$expand)){$expand.Expand()}
+                 else {$item.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()}
+                 $expanded=$true;break
+               }
+             }
+           }
+         } catch {if($uiaErrors.Count -lt 8){$uiaErrors+=($_.Exception.Message.Substring(0,[Math]::Min(512,$_.Exception.Message.Length)))}}
        }
      } elseif ([UpgradeWindow]::Text($h) -eq '몽글터미널 완전 종료') {
        foreach($button in [UpgradeWindow]::Children($h)) {
@@ -84,11 +114,27 @@ if ($Mode -eq 'exit') {
          }
        }
      }
+     if($sent -and -not $confirmed) {
+       try {
+         $dialog=[System.Windows.Automation.AutomationElement]::FromHandle($h)
+         $message=$dialog.FindFirst([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty,'현재 컴퓨터의 몽글터미널을 완전히 종료할까요?'))
+         $buttons=$dialog.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty,[System.Windows.Automation.ControlType]::Button))
+         if($probes.ContainsKey($probeKey)){$probes[$probeKey].buttons=@($buttons | Select-Object -First 12 | ForEach-Object {$_.Current.Name})}
+         if([UpgradeWindow]::Text($h) -eq '몽글터미널 완전 종료' -or $null -ne $message) {
+           foreach($button in $buttons) {
+             if($button.Current.ProcessId -eq $c.pid -and $button.Current.Name.Replace('&','') -eq '완전 종료') {
+               $button.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke();$confirmed=$true;break
+             }
+           }
+         }
+       } catch {if($uiaErrors.Count -lt 8){$uiaErrors+=($_.Exception.Message.Substring(0,[Math]::Min(512,$_.Exception.Message.Length)))}}
+     }
    }
-   if($confirmed) { @{menuInvoked=$sent;confirmationClicked=$true} | ConvertTo-Json -Compress; exit 0 }
+   if($confirmed) { @{menuInvoked=$sent;confirmationClicked=$true;probes=@($probes.Values);uiaErrors=$uiaErrors} | ConvertTo-Json -Depth 6 -Compress; exit 0 }
    Start-Sleep -Milliseconds 100
  }
- throw 'Could not invoke and confirm the real full-exit menu'
+ $diagnostic=@{menuInvoked=$sent;confirmationClicked=$confirmed;probes=@($probes.Values);uiaErrors=$uiaErrors} | ConvertTo-Json -Depth 6 -Compress
+ throw "Could not invoke and confirm the real full-exit menu: $diagnostic"
 }
 # Observer is ready before the installer is launched. Only records visible windows
 # belonging to the exact candidate installer or exact installed desktop executable.

@@ -1,7 +1,10 @@
 // This fixture exercises packaged hooks with fabricated exact IDs; it cannot validate vendor CLI trust.
 const fs=require('node:fs'),path=require('node:path'),{spawnSync}=require('node:child_process');
 const provider=process.argv[2],args=process.argv.slice(3),config=JSON.parse(fs.readFileSync(path.join(__dirname,'fixture.json'),'utf8'));
-if(args.includes('--version')){console.log(provider==='claude'?'2.1.292':'codex-cli 0.160.0');process.exit(0);}
+if(args.includes('--version')){
+  if(config.versionLog)fs.appendFileSync(config.versionLog,JSON.stringify({provider,pid:process.pid,parentPid:process.ppid,cwd:process.cwd(),time:new Date().toISOString()})+'\n');
+  console.log(provider==='claude'?'2.1.292':'codex-cli 0.160.0');process.exit(0);
+}
 const resume=provider==='claude'?'--resume':'resume';
 const resumed=args.includes(resume),index=args.indexOf(resumed?resume:'--fixture-session');
 const id=args.slice(index+1).find(x=>/^[0-9a-f-]{36}$/.test(x));

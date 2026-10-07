@@ -6,6 +6,8 @@ import { promisify } from 'node:util';
 import { readFile, mkdtemp, mkdir, writeFile, copyFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
+import { installedClaudeVersion } from '../../packages/host/claude-integration';
+import { installedCodexVersion } from '../../packages/host/codex-integration';
 import { PREVIOUS_PUBLIC_VERSION, updateInstallerArgs, assertUpdateWindows, assertExactAgentRestores, findUpdatedDesktop, boundedObserverEvents, readInstalledHost, type WindowEvidence, type AgentFixtureRecord } from '../fixtures/installed-upgrade-evidence';
 
 const run=promisify(execFile);
@@ -41,7 +43,7 @@ test('native realpath expands actual Windows short aliases without accepting ano
   const file=path.join(directory,'long executable name.exe'),other=path.join(directory,'other.exe');
   await writeFile(file,'fixture');await writeFile(other,'different fixture');
   const script=`Add-Type 'using System.Text; using System.Runtime.InteropServices; public class UpgradeShortPath { [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] public static extern uint GetShortPathName(string path, StringBuilder result, uint size); }'; $b=[Text.StringBuilder]::new(32768); $n=[UpgradeShortPath]::GetShortPathName($env:MONGLE_TEST_PATH,$b,32768); if($n -eq 0 -or $n -ge 32768){throw ('GetShortPathName failed: '+[Runtime.InteropServices.Marshal]::GetLastWin32Error()+' path='+$env:MONGLE_TEST_PATH)}; $b.ToString()`;
-  const short=(await run('pwsh.exe',['-NoProfile','-NonInteractive','-Command',script],{env:{...process.env,MONGLE_TEST_PATH:file},windowsHide:true,timeout:10000})).stdout.trim();
+  const short=(await run('pwsh.exe',['-NoProfile','-NonInteractive','-Command',script],{env:{...process.env,MONGLE_TEST_PATH:file},windowsHide:true,timeout:30000})).stdout.trim();
   const canonical=promisify(realpath.native);
   assert.equal(await canonical(short),await canonical(file));
   assert.notEqual(await canonical(short),await canonical(other));
@@ -137,6 +139,13 @@ test('Windows GUI fixture is syntax checked without loading Win32 code or operat
   const source=await readFile(file,'utf8');
   assert.ok(source.indexOf("RUNNER_ENVIRONMENT -ne 'github-hosted'")<source.indexOf('Add-Type'));
 });
+test('Windows PowerShell provides UI Automation types without operating a desktop',{skip:process.platform!=='win32'},async()=>{
+  await run('powershell.exe',['-NoProfile','-NonInteractive','-Command',"Add-Type -AssemblyName UIAutomationClient,UIAutomationTypes; [System.Windows.Automation.InvokePattern].FullName; [System.Windows.Automation.ExpandCollapsePattern].FullName"],{windowsHide:true,timeout:20000});
+  const source=await readFile('tests/fixtures/installed-upgrade-windows.ps1','utf8');
+  assert.match(source,/if\(\$windowPid -ne \$c.pid\) \{ continue \}/);
+  assert.match(source,/\$item.Current.ProcessId -ne \$c.pid/);
+  assert.match(source,/\$button.Current.ProcessId -eq \$c.pid/);
+});
 
 test('native observation bridge and isolated CLI launchers compile; fixture version probes launch no model',{skip:process.platform!=='win32'},async t=>{
   const directory=await mkdtemp(path.join(tmpdir(),'mongle-upgrade-helper-'));
@@ -153,4 +162,18 @@ test('native observation bridge and isolated CLI launchers compile; fixture vers
   await writeFile(path.join(directory,'fixture.json'),'{}');
   assert.equal((await run(path.join(directory,'claude.exe'),['--version'],{windowsHide:true,timeout:5000})).stdout.trim(),'2.1.292');
   assert.equal((await run(path.join(directory,'codex.exe'),['--version'],{windowsHide:true,timeout:5000})).stdout.trim(),'codex-cli 0.160.0');
+  const locator=path.join(directory,'existing PATH folder');await mkdir(locator);
+  for(const name of ['claude.exe','codex.exe'])await copyFile(path.join(directory,name),path.join(locator,name));
+  await writeFile(path.join(locator,'mongle-installed-upgrade-fixture.path'),directory);
+  // The launcher now lives in an inherited PATH folder, while all fixture data
+  // stays in the separate private test root. Exercise the real CLI locators.
+  const before=Object.entries(process.env).filter(([key])=>key.toUpperCase()==='PATH');
+  try {
+    for(const [key] of before)delete process.env[key];process.env.Path=locator;
+    assert.equal(await installedClaudeVersion(),'2.1.292');
+    assert.equal(await installedCodexVersion(),'0.160.0');
+  } finally {
+    for(const key of Object.keys(process.env))if(key.toUpperCase()==='PATH')delete process.env[key];
+    for(const [key,value] of before)process.env[key]=value;
+  }
 });

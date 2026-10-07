@@ -2,8 +2,8 @@
 import assert from 'node:assert/strict';
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { realpath } from 'node:fs';
-import { mkdir, mkdtemp, readFile, writeFile, access, readdir, copyFile } from 'node:fs/promises';
+import { realpath, constants } from 'node:fs';
+import { mkdir, mkdtemp, readFile, writeFile, access, readdir, copyFile, stat, unlink } from 'node:fs/promises';
 import { DatabaseSync } from 'node:sqlite';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -54,7 +54,8 @@ proof.profile = 'empty default LOCALAPPDATA profile on disposable GitHub-hosted 
 proof.agentScope = 'isolated CLI test doubles invoking packaged hooks; no vendor CLI authentication, model calls or Codex hook-trust validation';
 proof.updateRuns = [];
 let child: ChildProcess | undefined, endpoint = '', owner: Awaited<ReturnType<typeof connectOwnerPipe>> | undefined;
-let desktopPid = 0, restoreEnvironment: string | undefined;
+let desktopPid = 0;
+const fixturePathFiles: Array<{file:string;sha256:string}> = [];
 let watcher: ChildProcess | undefined, watcherStop = '';
 let updateSince = '', expectedHostId = '';
 let launchedVersion = '', startupStderr = '', startupExit: {code:number|null;signal:NodeJS.Signals|null}|undefined;
@@ -83,6 +84,13 @@ async function install(file: string) {
 async function native(mode: 'exit' | 'environment' | 'discover' | 'diagnose', config: unknown) {
   const file = path.join(root, mode + '-' + randomUUID() + '.json');
   await writeFile(file, JSON.stringify(config));
+  if(mode==='exit') {
+    // Windows PowerShell includes the desktop UI Automation assemblies. A BOM
+    // preserves Korean exact labels under its default source-file encoding.
+    const script=path.join(root,'native-exit.ps1');
+    await writeFile(script,'\uFEFF'+await readFile(windowsFixture,'utf8'));
+    return run('powershell.exe',['-NoProfile','-File',script,'-Mode',mode,'-Config',file],{windowsHide:true,timeout:60000});
+  }
   return run('pwsh.exe', ['-NoProfile', '-File', windowsFixture, '-Mode', mode, '-Config', file], {windowsHide:true, timeout:60000});
 }
 async function connectInstalled(expectedVersion: string) {
@@ -249,15 +257,35 @@ async function prepareAgentFixtures() {
   await run(csc,['/nologo','/out:'+path.join(fixtureBin,'claude.exe'),path.resolve('tests/fixtures/InstalledUpgradeAgent.cs')],{windowsHide:true,timeout:30000});
   await copyFile(path.join(fixtureBin,'claude.exe'),path.join(fixtureBin,'codex.exe'));
   const sessions = ['claude','claude','codex','codex'].map(provider=>({provider,sessionId:randomUUID()}));
-  await writeFile(path.join(fixtureBin,'fixture.json'),JSON.stringify({sessions,claudeHome,codexHome,log:agentLog}));
-  // ExecShellAsUser may use Explorer's environment. Update only the disposable
-  // user's PATH, notify Explorer, and restore it in finally. Keep a single PATH key.
-  const before=await run('powershell.exe',['-NoProfile','-Command',"[pscustomobject]@{Path=[Environment]::GetEnvironmentVariable('Path','User')} | ConvertTo-Json -Compress"],{windowsHide:true});
-  restoreEnvironment=path.join(root,'original-environment.json');await writeFile(restoreEnvironment,before.stdout.trim());
-  const originalPath=Object.entries(process.env).find(([key])=>key.toUpperCase()==='PATH')?.[1]||'';
-  await native('environment',{Path:fixtureBin+';'+originalPath});
-  for(const key of Object.keys(process.env))if(key.toUpperCase()==='PATH')delete process.env[key];
-  process.env.Path=fixtureBin+';'+originalPath;
+  await writeFile(path.join(fixtureBin,'fixture.json'),JSON.stringify({sessions,claudeHome,codexHome,log:agentLog,versionLog:path.join(root,'fixture-versions.jsonl')}));
+  // Explorer may retain its old environment despite WM_SETTINGCHANGE. Place
+  // ONLY these fixture launchers in an existing registered machine PATH directory
+  // shared with this process (also visible to HostLauncher's WMI fallback).
+  // No registry/PATH changes, real CLI replacement or shortcut manipulation.
+  const registered=JSON.parse((await run('powershell.exe',['-NoProfile','-Command',"[pscustomobject]@{userPath=[Environment]::ExpandEnvironmentVariables([Environment]::GetEnvironmentVariable('Path','User'));machinePath=[Environment]::ExpandEnvironmentVariables([Environment]::GetEnvironmentVariable('Path','Machine'))} | ConvertTo-Json -Compress"],{windowsHide:true})).stdout.trim());
+  const names=['claude.exe','codex.exe','mongle-installed-upgrade-fixture.path'];
+  let locator='';
+  const inheritedPath=(Object.entries(process.env).find(([key])=>key.toUpperCase()==='PATH')?.[1]||'').split(';').filter(path.isAbsolute).map(p=>path.resolve(p).toLowerCase());
+  for(const entry of String(registered.machinePath).split(';')) {
+    const candidate=entry.trim().replace(/^"(.*)"$/,'$1');
+    if(!path.isAbsolute(candidate)||!inheritedPath.includes(path.resolve(candidate).toLowerCase()))continue;
+    if(path.resolve(candidate).toLowerCase().startsWith(path.resolve(process.env.SystemRoot!).toLowerCase()+path.sep)||path.resolve(candidate).toLowerCase()===path.resolve(process.env.SystemRoot!).toLowerCase())continue;
+    if(!await stat(candidate).then(s=>s.isDirectory(),()=>false))continue;
+    if((await Promise.all(names.map(name=>access(path.join(candidate,name)).then(()=>true,()=>false)))).some(Boolean))continue;
+    try {await access(candidate,constants.W_OK);}catch{continue;}
+    locator=await promisify(realpath.native)(candidate);break;
+  }
+  assert.ok(locator,'No empty existing non-system machine PATH location for isolated CLI fixtures');
+  const marker=path.join(locator,names[2]);
+  await writeFile(marker,fixtureBin,{flag:'wx'});fixturePathFiles.push({file:marker,sha256:sha(Buffer.from(fixtureBin))});
+  for(const name of names.slice(0,2)) {
+    const file=path.join(locator,name);await copyFile(path.join(fixtureBin,name),file,constants.COPYFILE_EXCL);
+    fixturePathFiles.push({file,sha256:sha(await readFile(file))});
+  }
+  const versions:Record<string,string>={};
+  for(const provider of ['claude','codex']) versions[provider]=(await run(path.join(locator,provider+'.exe'),['--version'],{windowsHide:true,timeout:5000,maxBuffer:4096})).stdout.trim();
+  assert.equal(versions.claude,'2.1.292');assert.equal(versions.codex,'codex-cli 0.160.0');
+  proof.fixtureLocator={directory:locator,source:'pre-existing registered machine PATH shared by parent; no environment mutation',versions};
   return sessions;
 }
 async function input(terminal: TerminalInfo, command: string) {
@@ -310,6 +338,7 @@ try {
   }
   assert.equal(await readFile(path.join(workspace, 'README.md'), 'utf8'), '# 설치 교체 검증\n\n보존할 문서입니다.\n');
   proof.stages.push('same workspace metadata and document restored automatically with fresh host and shells');
+  proof.integrationStatus={claude:restored.claudeIntegration,codex:restored.codexIntegration};
   assert.equal(restored.claudeIntegration?.status, 'ready');
   assert.equal(restored.codexIntegration?.status, 'installed');
   const powershell = restored.profiles.find(p => p.kind === 'powershell'); assert.ok(powershell);
@@ -376,10 +405,12 @@ try {
   if (owner && desktopPid && alive(desktopPid)) await fullExit().catch(error=>{proof.fullExitCleanupError=String(error);proof.passed=false;});
   if (owner) { await owner.request('host.shutdown').catch(() => {}); owner.close(); }
   if (child && child.exitCode === null && endpoint) await evaluate('setTimeout(()=>upgradeElectron.app.quit(),30);true').catch(() => {});
-  if (restoreEnvironment) {
-    await native('environment',JSON.parse(await readFile(restoreEnvironment,'utf8'))).catch(error=>{proof.environmentCleanupError=String(error);proof.passed=false;});
+  for(const entry of [...fixturePathFiles].reverse()) {
+    try {assert.equal(sha(await readFile(entry.file)),entry.sha256,'Refusing to remove a changed fixture');await unlink(entry.file);}
+    catch(error){proof.fixtureCleanupError=String(error);proof.passed=false;}
   }
   if(!proof.passed)proof.oldStartupDiagnostics={version:oldVersion,stderrTail:startupStderr,exit:startupExit};
+  try {proof.fixtureVersionProbes=boundedObserverEvents(await readFile(path.join(root,'fixture-versions.jsonl'),'utf8'));}catch{}
   await writeFile(path.join(output, 'result.json'), JSON.stringify(proof, null, 2));
   console.log(JSON.stringify(proof, null, 2));
   if (!proof.passed) process.exitCode=1;

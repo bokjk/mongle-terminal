@@ -12,6 +12,8 @@ public class InstalledUpgradeAgent {
  public static int Main(string[] args) {
    string dir=Path.GetDirectoryName(Process.GetCurrentProcess().MainModule.FileName);
    string provider=Path.GetFileNameWithoutExtension(Process.GetCurrentProcess().MainModule.FileName);
+   string fixtureRoot=Path.Combine(dir,"mongle-installed-upgrade-fixture.path");
+   if(File.Exists(fixtureRoot))dir=File.ReadAllText(fixtureRoot).Trim();
    var command=new StringBuilder(Quote(Path.Combine(dir,"agent.cjs"))+" "+provider);
    foreach(string arg in args)command.Append(" "+Quote(arg));
    var start=new ProcessStartInfo(File.ReadAllText(Path.Combine(dir,"node.path")).Trim(),command.ToString());
