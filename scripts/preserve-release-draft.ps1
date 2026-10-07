@@ -19,7 +19,8 @@
 #             https://docs.github.com/en/rest/releases/assets
 #
 # Success emits only a JSON manifest envelope. Raw CLI stderr/result JSON is never
-# printed. A partial draft is deliberately left private; the SAME run/attempt and
+# printed. A partial release stays unpublished as a draft even in a public
+# source repository; the SAME run/attempt and
 # exact manifest may resume it. Different attempts require separate human review.
 [CmdletBinding()]
 param(
@@ -94,7 +95,9 @@ function Assert-LocalFile([string]$File, $Expected) {
 }
 function Assert-RemoteContext {
   $repo = Api "repos/$repository"
-  Assert-Condition ($repo.full_name -ceq $repository -and $repo.private -eq $true -and $repo.visibility -ceq 'private') 'Only the named PRIVATE source repository is permitted.'
+  Assert-Condition ($repo.full_name -ceq $repository -and $repo.private -is [bool] -and
+    (($repo.private -and $repo.visibility -ceq 'private') -or
+     (!$repo.private -and $repo.visibility -ceq 'public'))) 'Expected the named source repository with consistent public/private visibility.'
   $reference = Api "repos/$repository/git/ref/tags/$tag"
   Assert-Condition ($reference.ref -ceq "refs/tags/$tag") 'Exact existing tag is required.'
   $object = $reference.object
@@ -106,16 +109,57 @@ function Assert-RemoteContext {
   Assert-Condition ($object.type -ceq 'commit' -and $object.sha -ceq $script:commit) 'Remote tag does not resolve to GITHUB_SHA.'
 }
 function Find-Release {
-  # Listing includes drafts and avoids treating auth/network errors as "missing".
-  $pages = Api "repos/$repository/releases?per_page=100" -Pages
-  $matches = @($pages | ForEach-Object { foreach ($entry in $_) { if ($entry.tag_name -ceq $tag) { $entry } } })
-  Assert-Condition ($matches.Count -le 1) 'Ambiguous release tag.'
-  if ($matches.Count -eq 1) { return $matches[0] }
-  return $null
+  # REST release lists can omit drafts for Actions installation tokens even
+  # though GraphQL sees them (cli/cli#5252). Do not infer absence from REST.
+  # gh release list --json does not expose databaseId/body: query them directly.
+  $query = 'query($endCursor: String) { repository(owner: "bokjk", name: "mongle-terminal") { releases(first: 100, after: $endCursor) { nodes { databaseId tagName isDraft description } pageInfo { hasNextPage endCursor } } } }'
+  $cursor = $null
+  $seenCursors = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+  $found = $null
+  do {
+    $arguments = @('api', '--hostname', 'github.com', 'graphql', '-f', "query=$query")
+    if ($null -ne $cursor) { $arguments += @('-f', "endCursor=$cursor") }
+    $page = Parse-Json (Invoke-Captured 'gh' $arguments)
+    Assert-Condition ($page -is [Collections.IDictionary]) 'Invalid GraphQL release response.'
+    Assert-Condition (!$page.Contains('errors') -or @($page.errors).Count -eq 0) 'GraphQL release query failed; raw errors withheld.'
+    Assert-Condition ($page.data -is [Collections.IDictionary] -and $page.data.repository -is [Collections.IDictionary]) 'GraphQL repository unavailable; not treating it as an absent release.'
+    $connection = $page.data.repository.releases
+    Assert-Condition ($connection -is [Collections.IDictionary] -and $connection.nodes -is [array] -and $connection.pageInfo -is [Collections.IDictionary]) 'Invalid GraphQL release connection.'
+    foreach ($entry in $connection.nodes) {
+      Assert-Condition ($entry -is [Collections.IDictionary] -and $entry.tagName -is [string] -and $entry.isDraft -is [bool]) 'Invalid GraphQL release node.'
+      if ($entry.tagName -ceq $tag) {
+        Assert-Condition ($null -eq $found) 'Ambiguous release tag.'
+        Assert-Condition (($entry.databaseId -is [long] -or $entry.databaseId -is [int]) -and $entry.databaseId -gt 0) 'Invalid release database ID.'
+        Assert-Condition ($null -eq $entry.description -or $entry.description -is [string]) 'Invalid release description.'
+        $found = @{ id = [long]$entry.databaseId; tag_name = $entry.tagName; draft = $entry.isDraft; body = $entry.description }
+      }
+    }
+    Assert-Condition ($connection.pageInfo.hasNextPage -is [bool]) 'Invalid GraphQL pagination state.'
+    $more = $connection.pageInfo.hasNextPage
+    if ($more) {
+      $cursor = $connection.pageInfo.endCursor
+      Assert-Condition ($cursor -is [string] -and ![string]::IsNullOrWhiteSpace($cursor) -and $seenCursors.Add($cursor)) 'Invalid or repeated GraphQL cursor.'
+    }
+  } while ($more)
+  return $found
 }
 function Assert-Draft($Release) {
-  Assert-Condition ($null -ne $Release -and $Release.tag_name -ceq $tag -and $Release.draft -eq $true) 'An existing published release must never be changed.'
+  Assert-Condition ($null -ne $Release) 'Expected release is missing; preservation incomplete.'
+  Assert-Condition ($Release.tag_name -ceq $tag -and $Release.draft -is [bool] -and $Release.draft -eq $true) 'An existing published release must never be changed.'
   Assert-Condition ($Release.body -ceq $script:body) 'Draft belongs to another run/attempt/SHA/manifest; refusing mixed retry.'
+}
+function Wait-NewRelease {
+  # A successful create can precede visibility in the paginated release listing.
+  # Retry only absence, never API/parse errors or an existing invalid release.
+  for ($lookup = 1; $lookup -le 12; $lookup++) {
+    $candidate = Find-Release
+    if ($null -ne $candidate) {
+      Assert-Draft $candidate
+      return $candidate
+    }
+    if ($lookup -lt 12) { Start-Sleep -Seconds 2 }
+  }
+  throw 'Created release is still missing after 12 lookups; preservation incomplete.'
 }
 function Remote-Assets([long]$ReleaseId) {
   $pages = Api "repos/$repository/releases/$ReleaseId/assets?per_page=100" -Pages
@@ -236,8 +280,8 @@ $release = Find-Release
 if ($null -eq $release) {
   Assert-RemoteContext
   [void](Invoke-Captured 'gh' @('release', 'create', $tag, '--repo', "github.com/$repository",
-    '--verify-tag', '--draft', '--latest=false', '--title', "Private verified preservation $tag", '--notes', $body))
-  $release = Find-Release
+    '--verify-tag', '--draft', '--latest=false', '--title', "Verified source draft preservation $tag", '--notes', $body))
+  $release = Wait-NewRelease
 }
 Assert-Draft $release
 $releaseId = [long]$release.id
@@ -269,7 +313,7 @@ $envelope = [ordered]@{ manifest = $manifest; manifestSha256 = $manifestRecord.s
 # Never print tokens, raw verification JSON or captured CLI output.
 Write-Output $envelope
 $summary = @(
-  '', '## Verified private preservation; public distribution was NOT performed', '',
+  '', '## Verified unpublished source draft; public distribution was NOT performed', '',
   '~~~json', $envelope, '~~~', '',
   'The manifest SHA256 above is the trusted digest from this verified run, not a value to trust from downloaded assets.',
   'Use a new empty local directory. With an already authenticated source-repository gh session:', '',
@@ -295,7 +339,7 @@ $summary = @(
   'if ($LASTEXITCODE) { throw ''Distribution checks failed'' }',
   '~~~', '',
   'After these checks, separately perform the approved public draft/publish procedure using the existing publish-release.ps1 five-asset allowlist.',
-  'Do not copy source archives, this private manifest, or private validation JSON to the public repository.',
+  'Do not copy source archives, this preservation manifest, or private validation JSON to the public distribution repository.',
   'Use the existing local distribution credentials; do not copy a public token into this build job.'
 ) -join "`n"
 [IO.File]::AppendAllText($env:GITHUB_STEP_SUMMARY, $summary + "`n", [Text.UTF8Encoding]::new($false))

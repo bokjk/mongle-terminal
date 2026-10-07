@@ -400,8 +400,10 @@ const loadWorkflow = async (file: string) => yaml.load(await readFile(file, 'utf
 test('required status checks match the workflows and the pull_request_target job never touches PR code', async () => {
   const ci = await loadWorkflow('.github/workflows/ci.yml');
   const policy = await loadWorkflow('.github/workflows/pr-target.yml');
+  const description = await loadWorkflow('.github/workflows/pr-description.yml');
   const ciJobs = Object.values(ci.jobs);
-  const ciNames = ciJobs.map(job => job.name);
+  const ciNames = ciJobs.map(job => job.name?.includes("|| 'Windows checks'") ? 'Windows checks' : job.name);
+  ciNames.push(...Object.values(description.jobs).map(job => job.name));
   const [policyJob, ...extraJobs] = Object.values(policy.jobs);
   assert.ok(ciNames.includes('Windows checks'));
   assert.deepEqual(extraJobs, []);
@@ -415,11 +417,11 @@ test('required status checks match the workflows and the pull_request_target job
     const checks = rule(ruleset, 'required_status_checks') as { strict_required_status_checks_policy: boolean; required_status_checks: Array<{ context: string; integration_id?: number }> };
     const contexts = checks.required_status_checks.map(check => check.context);
     // Each required context is produced by a workflow: a ci.yml job name or the policy commit status.
-    assert.deepEqual([...contexts].sort(), ['Windows checks', STATUS_CONTEXT].sort(), ruleset.name);
+    assert.deepEqual([...contexts].sort(), ['Windows checks', 'PR description', STATUS_CONTEXT].sort(), ruleset.name);
     assert.ok(contexts.every(context => context === STATUS_CONTEXT || ciNames.includes(context)));
     assert.ok(!contexts.includes(String(policyJob.name)), 'the policy job check sits on the default branch commit, not on the PR');
     assert.ok(checks.required_status_checks.every(check => check.integration_id === 15368));
-    assert.equal(checks.strict_required_status_checks_policy, false);
+    assert.equal(checks.strict_required_status_checks_policy, true);
     assert.deepEqual(ruleset.bypass_actors, [{ actor_id: 5, actor_type: 'RepositoryRole', bypass_mode: 'always' }]);
     for (const type of ['deletion', 'non_fast_forward', 'pull_request']) assert.ok(ruleset.rules.some(item => item.type === type), ruleset.name + ' ' + type);
   }
@@ -446,8 +448,7 @@ test('required status checks match the workflows and the pull_request_target job
   assert.deepEqual(steps.at(-1)?.env, { GITHUB_TOKEN: '$' + '{{ secrets.GITHUB_TOKEN }}' });
 
   // Pull requests are never path-filtered; a skipped workflow would leave a required check waiting.
-  assert.deepEqual(ci.on.push.branches, ['main', 'dev']);
-  assert.deepEqual(ci.on.push['paths-ignore'], ['docs/**', '**/*.md']);
+  assert.equal(ci.on.push, undefined);
   assert.ok(!('paths' in ci.on.pull_request) && !('paths-ignore' in ci.on.pull_request));
 });
 
