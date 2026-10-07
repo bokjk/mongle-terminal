@@ -1,6 +1,8 @@
 # 구현·검증 상태
 
-**0.3.16 배포 준비(2026-10-07):** Claude 자동 연동·작업 중 맥동·확인 전 완료 종, 붙여넣기 Enter 포커스, Git Bash 현재 경로 수정을 포함한다. 최종 전체 검사와 CI 산출물·공개 업데이트 검증을 진행하며 [배포 기록](validation/public-release-0.3.16.md)에 실제 결과를 기록한다. 현재 공개 채널은 0.3.15다.
+**0.3.16 공개 배포 완료(2026-10-07):** [공개 릴리스](https://github.com/bokjk/mongle-terminal-releases/releases/tag/v0.3.16). [개발 PR](https://github.com/bokjk/mongle-terminal/actions/runs/37607711852) 515 통과·0 실패·15 생략, [배포 PR](https://github.com/bokjk/mongle-terminal/actions/runs/37609087111) 515 통과·0 실패·15 생략, [최종 태그](https://github.com/bokjk/mongle-terminal/actions/runs/37610464864) 516 통과·0 실패·14 생략. 네이티브 2/2, [실제 NSIS 교체·복원](https://github.com/bokjk/mongle-terminal/actions/runs/37609087141), 최종 설치 payload 일치, 공개 첨부 5개 익명 다운로드·해시, 실제 Electron updater의 0.3.15→0.3.16 다운로드와 동일 버전 최신 상태 확인을 통과했다. 이전 공개 릴리스는 보존했다. [최종 증거](validation/public-release-0.3.16.md#final).
+
+> 아래 후보·미배포·이전 버전 기록은 당시 검사 이력이다. 현재 공개 상태는 위 기록을 따른다.
 
 **PDF 제보 수정(2026-10-07, 미배포):** 여러 줄 붙여넣기 확인창의 최초 포커스를 붙여넣기 버튼으로 지정하고 Git Bash가 현재 폴더를 Windows 경로로 보고하도록 수정했다. 두 제보를 수정 전 검사 실패로 재현한 뒤 실제 셸·파일 RPC 6/6, 붙여넣기·제어권 13/13, 관련 회귀 17/17, 타입·빌드·문서·디렉터리 패키징을 통과했다. Astra가 최종 네이티브 앱의 시작 폴더·한글 공백 폴더 이동 후 파일 목록/열기/Git, Enter 붙여넣기와 Esc·취소를 확인했다. 사용자 설치본 적용·배포는 하지 않았다. [원인과 검증](validation/pdf-bug-report.md).
 
