@@ -1,0 +1,61 @@
+name: Release storage read-only probe
+on:
+  workflow_dispatch:
+    inputs:
+      tag: { description: 'Existing stable tag', required: true, type: string, default: 'v0.3.13' }
+      release_id: { description: 'Existing unpublished source draft ID', required: true, type: string, default: '405074793' }
+permissions: { contents: read }
+jobs:
+  probe:
+    if: ${{ github.repository == 'bokjk/mongle-terminal' && github.ref == 'refs/heads/dev' && github.event_name == 'workflow_dispatch' }}
+    permissions: { contents: write }
+    runs-on: windows-2022
+    timeout-minutes: 5
+    steps:
+      - name: Read existing draft with the repository job token
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PROBE_TAG: ${{ inputs.tag }}
+          PROBE_RELEASE_ID: ${{ inputs.release_id }}
+        run: |
+          Set-StrictMode -Version Latest; $env:GH_DEBUG = ''; $env:DEBUG = ''; $env:GH_PROMPT_DISABLED = '1'
+          $ErrorActionPreference = 'Stop'
+          if ($env:PROBE_TAG -cnotmatch '^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$' -or $env:PROBE_RELEASE_ID -cnotmatch '^[1-9][0-9]*$') { throw 'Invalid tag or release ID.' }
+          function Read-Json([string[]]$Arguments) {
+            $raw = & gh api --hostname github.com @Arguments 2>$null
+            if ($LASTEXITCODE -ne 0) { throw 'GitHub read failed; response withheld.' }
+            try { $value = ConvertFrom-Json -InputObject ($raw -join "`n") -AsHashtable -NoEnumerate -ErrorAction Stop } catch { throw 'Invalid GitHub JSON; response withheld.' }
+            return ,$value
+          }
+          $repo = Read-Json @('--method','GET','repos/bokjk/mongle-terminal')
+          if ($repo.full_name -cne 'bokjk/mongle-terminal' -or $repo.private -isnot [bool] -or
+              !(($repo.private -and $repo.visibility -ceq 'private') -or (!$repo.private -and $repo.visibility -ceq 'public'))) { throw 'Expected the named source repository with consistent public/private visibility.' }
+          $restPages = Read-Json @('--method','GET','repos/bokjk/mongle-terminal/releases?per_page=100','--paginate','--slurp')
+          if ($restPages -isnot [array]) { throw 'Invalid REST releases response.' }
+          $restListContainsTarget = $false; foreach ($restPage in $restPages) { if ($restPage -isnot [array]) { throw 'Invalid REST releases page.' }; foreach ($item in $restPage) { if ([string]$item.id -ceq $env:PROBE_RELEASE_ID -and $item.tag_name -ceq $env:PROBE_TAG) { $restListContainsTarget = $true } } }
+          $query = 'query($endCursor: String) { repository(owner: "bokjk", name: "mongle-terminal") { releases(first: 100, after: $endCursor) { nodes { databaseId tagName isDraft description } pageInfo { hasNextPage endCursor } } } }'
+          $cursor = $null; $found = $null; $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+          do {
+            $arguments = @('graphql','-f',"query=$query")
+            if ($null -ne $cursor) { $arguments += @('-f',"endCursor=$cursor") }
+            $page = Read-Json $arguments
+            if ($page.Contains('errors') -and @($page.errors).Count -gt 0) { throw 'GraphQL query failed; errors withheld.' }
+            $connection = $page.data.repository.releases
+            if ($connection.nodes -isnot [array] -or $connection.pageInfo.hasNextPage -isnot [bool]) { throw 'Invalid GraphQL connection.' }
+            foreach ($entry in $connection.nodes) { if ($entry.tagName -ceq $env:PROBE_TAG) { if ($null -ne $found) { throw 'Ambiguous release tag.' }; $found = $entry } }
+            $more = $connection.pageInfo.hasNextPage
+            if ($more) { $cursor = $connection.pageInfo.endCursor; if ($cursor -isnot [string] -or [string]::IsNullOrWhiteSpace($cursor) -or !$seen.Add($cursor)) { throw 'Invalid GraphQL cursor.' } }
+          } while ($more)
+          if ($null -eq $found -or [string]$found.databaseId -cne $env:PROBE_RELEASE_ID -or $found.isDraft -isnot [bool] -or !$found.isDraft) { throw 'GraphQL draft identity mismatch.' }
+          $endpoint = "repos/bokjk/mongle-terminal/releases/$($env:PROBE_RELEASE_ID)"
+          $release = Read-Json @('--method','GET',$endpoint)
+          if ([string]$release.id -cne $env:PROBE_RELEASE_ID -or $release.tag_name -cne $env:PROBE_TAG -or $release.draft -isnot [bool] -or !$release.draft) { throw 'Direct REST draft identity mismatch.' }
+          if (!($release.body -ceq $found.description)) { throw 'REST and GraphQL draft bodies differ; values withheld.' }
+          $pages = Read-Json @('--method','GET',"$endpoint/assets?per_page=100",'--paginate','--slurp')
+          if ($pages -isnot [array]) { throw 'Invalid assets response.' }
+          $count = 0
+          foreach ($assets in $pages) { if ($assets -isnot [array]) { throw 'Invalid assets page.' }; $count += $assets.Count }
+          $summary = [ordered]@{ graphqlFound = $true; restListContainsTarget = $restListContainsTarget; id = $env:PROBE_RELEASE_ID; tag = $env:PROBE_TAG; draft = $true; assetsCount = $count } | ConvertTo-Json -Compress
+          Write-Output $summary
+          $summary >> $env:GITHUB_STEP_SUMMARY

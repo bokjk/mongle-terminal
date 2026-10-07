@@ -144,7 +144,7 @@ jobs:
             release/SHA256SUMS.txt
             release/RELEASE-NOTES.md
 
-      - name: Preserve verified bytes in a private source draft after artifact failure
+      - name: Preserve verified bytes in an unpublished source draft after artifact failure
         id: private_preservation
         if: ${{ !cancelled() && steps.release_artifact.outcome == 'failure' && steps.release.outcome == 'success' && steps.typecheck.outcome == 'success' && steps.runtime_build.outcome == 'success' && steps.regression.outcome == 'success' && steps.package.outcome == 'success' && steps.native.outcome == 'success' && steps.native_evidence.outcome == 'success' && steps.recheck.outcome == 'success' && steps.nsis.outcome == 'success' && steps.installed_evidence.outcome == 'success' }}
         shell: pwsh
@@ -179,7 +179,7 @@ jobs:
 
   draft:
     needs: build
-    # Private fallback intentionally requires separate verified manual retrieval.
+    # Source draft fallback intentionally requires separate verified manual retrieval.
     if: ${{ needs.build.result == 'success' && needs.build.outputs.preservation == 'artifact' }}
     runs-on: windows-2022
     timeout-minutes: 10
