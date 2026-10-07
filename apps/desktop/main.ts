@@ -261,7 +261,7 @@ const fullExit = new FullExitController({
     const options = {
       type: 'warning' as const, title: '몽글터미널 완전 종료',
       message: '현재 컴퓨터의 몽글터미널을 완전히 종료할까요?',
-      detail: `현재 컴퓨터에서 실행 중인 터미널 ${runningTerminals}개를 종료합니다. 이 컴퓨터로 들어오는 원격 접속도 끊깁니다. 다른 컴퓨터의 터미널은 종료하지 않습니다.\n\n그룹과 분할 배치는 저장됩니다. ${recordHistory ? '출력 기록 저장이 켜져 있어 이전 출력도 저장됩니다.' : '출력 기록 저장이 꺼져 있어 이전 출력은 저장되지 않습니다.'}\n다음 실행에서는 배치와 기록을 열고, 저장된 시작 폴더에서 새 셸을 자동으로 시작합니다. 실행 중인 프로그램과 저장하지 않은 상태는 복구되지 않으며 이전 명령은 다시 실행하지 않습니다.`,
+      detail: `현재 컴퓨터에서 실행 중인 터미널 ${runningTerminals}개를 종료합니다. 이 컴퓨터로 들어오는 원격 접속도 끊깁니다. 다른 컴퓨터의 터미널은 종료하지 않습니다.\n\n그룹과 분할 배치는 저장됩니다. ${recordHistory ? '출력 기록 저장이 켜져 있어 이전 출력도 저장됩니다.' : '출력 기록 저장이 꺼져 있어 이전 출력은 저장되지 않습니다.'}\n다음 실행에서는 배치와 기록을 열고, 저장된 시작 폴더에서 새 셸을 자동으로 시작합니다. 연동으로 대화가 확인된 Claude·Codex는 같은 대화를 다시 엽니다. 진행 중 작업과 저장하지 않은 상태는 복구되지 않으며 이전 요청이나 명령은 다시 보내지 않습니다.`,
       buttons: ['취소', '완전 종료'], defaultId: 0, cancelId: 0, noLink: true,
     };
     const result = window && !window.isDestroyed() && window.isVisible() ? await dialog.showMessageBox(window, options) : await dialog.showMessageBox(options);
@@ -302,23 +302,25 @@ function setupUpdater() {
       if (state.status !== lastStatus) {
         configureApplicationMenu(); updateTrayMenu();
         if (state.status === 'ready' && Notification.isSupported()) {
-          const notification = new Notification({ title: '몽글터미널 업데이트 준비 완료', body: `${state.availableVersion} 버전을 설치할 수 있습니다. 작업을 저장한 뒤 설정의 앱 업데이트에서 설치해 주세요.` });
+          const notification = new Notification({ title: '몽글터미널 업데이트 준비 완료', body: `${state.availableVersion} 버전을 설치할 수 있습니다. 작업을 저장한 뒤 사이드바 아래의 업데이트 버튼이나 트레이 메뉴에서 설치해 주세요.` });
           notification.on('click', openWindow); notification.show();
         }
         lastStatus = state.status;
       }
     },
-    async prepareInstall() {
+    async prepareInstall(report) {
       if (protectUnsavedFiles()) return false;
       let prepared = false;
       await fullExit.run({
         async confirm({ runningTerminals, recordHistory }) {
           const options = { type: 'warning' as const, title: '몽글터미널 업데이트',
             message: '작업을 저장하고 업데이트를 설치할까요?',
-            detail: `현재 컴퓨터의 터미널 ${runningTerminals}개와 원격 접속을 종료하고 새 버전으로 다시 시작합니다. 다른 컴퓨터의 터미널은 종료하지 않습니다.\n\n그룹과 분할 배치${recordHistory ? ', 보관 중인 출력 기록' : ''}는 저장되며 새 셸로 복원됩니다. 실행 중인 Claude 등의 프로그램과 저장하지 않은 작업은 이어서 실행되지 않습니다.`,
+            detail: `현재 컴퓨터의 터미널 ${runningTerminals}개와 원격 접속을 종료하고 새 버전으로 다시 시작합니다. 다른 컴퓨터의 터미널은 종료하지 않습니다.\n\n그룹과 분할 배치${recordHistory ? ', 보관 중인 출력 기록' : ''}는 저장되며 새 셸로 복원됩니다. 연동으로 대화가 확인된 Claude·Codex는 같은 대화를 다시 엽니다. 진행 중 작업이나 저장하지 않은 내용은 복구되지 않으며 이전 요청은 다시 보내지 않습니다.\n\n앱이 닫히면 설치 창에 진행 상황이 표시되고, 설치가 끝나면 몽글터미널이 다시 열립니다.`,
             buttons: ['취소', '설치 후 다시 시작'], defaultId: 0, cancelId: 0, noLink: true };
           const result = window && !window.isDestroyed() ? await dialog.showMessageBox(window, options) : await dialog.showMessageBox(options);
-          return result.response === 1;
+          const accepted = result.response === 1;
+          if (accepted) report('saving');
+          return accepted;
         },
         quitDesktop: () => { prepared = true; },
         showError: message => dialog.showErrorBox('업데이트를 설치하지 못했습니다', message),

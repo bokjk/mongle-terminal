@@ -132,6 +132,9 @@ export function safeShellEnvironment(source: NodeJS.ProcessEnv = process.env): R
   for (const [key, value] of Object.entries(source)) {
     if (value === undefined) continue;
     const upper = key.toUpperCase();
+    // The user's own Codex home is CLI configuration and must reach new shells, so the
+    // CLI reads the same hooks.json the host prepared. Other CODEX_* stay host-private.
+    if (upper === 'CODEX_HOME') { if (/^(?:[a-z]:[\\/]|\\\\)/i.test(value) && !/[\x00-\x1f\x7f]/.test(value)) result[key] = value; continue; }
     if (/^(MONGLE_|ELECTRON_|NPM_|VSCODE_|CODEX_|TSX_)/.test(upper)) continue;
     if (['NODE_OPTIONS', 'NODE_CHANNEL_FD', 'NODE_CHANNEL_SERIALIZATION_MODE', 'NODE_UNIQUE_ID',
       'NODE_INSPECT_RESUME_ON_START', 'NODE_V8_COVERAGE', 'INIT_CWD'].includes(upper)) continue;

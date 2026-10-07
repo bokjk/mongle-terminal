@@ -82,7 +82,10 @@ export class TerminalEngine {
         return true;
       });
     }
-    const agent = new ClaudeTaskState(options.agentToken || '');
+    const agent = new ClaudeTaskState(options.agentToken || '', {
+      onSession: session => options.onAgentSession?.(session),
+      onPrompt: () => options.onShellPrompt?.(),
+    });
     this.observeAgentInput = data => {
       if(this.closing || options.notificationsEnabled?.() === false)return;
       const update=agent.cancelInput(data);if(update)options.onAgentStatus?.(update.status);

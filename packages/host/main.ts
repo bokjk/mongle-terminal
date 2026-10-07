@@ -9,9 +9,11 @@ import { startOwnerPipe } from '../local-ipc/index';
 import { AppError, type ConnectionContext, type Send } from '../protocol';
 import { RemoteSetup } from './remote';
 import { installedClaudeVersion, installClaudeIntegration } from './claude-integration';
+import { installedCodexVersion, installCodexIntegration } from './codex-integration';
+import { startAgentPipe } from './agent-pipe';
 
 async function main() {
-const { values } = parseArgs({ options: { 'data-dir': {type:'string'}, port:{type:'string'}, 'web-root':{type:'string'}, name:{type:'string'}, 'claude-integration':{type:'boolean'}, 'claude-config-dir':{type:'string'} } });
+const { values } = parseArgs({ options: { 'data-dir': {type:'string'}, port:{type:'string'}, 'web-root':{type:'string'}, name:{type:'string'}, 'claude-integration':{type:'boolean'}, 'claude-config-dir':{type:'string'}, 'codex-integration':{type:'boolean'}, 'codex-home':{type:'string'} } });
 const dataDir = path.resolve(values['data-dir'] ?? process.env.MONGLE_DATA_DIR ?? path.join(process.env.LOCALAPPDATA ?? os.homedir(), 'MongleTerminal'));
 const webRoot = path.resolve(values['web-root'] ?? path.join(path.dirname(process.argv[1]), '../web'));
 const bundledHelper = path.resolve(path.dirname(process.argv[1]), '../../platform/windows/OwnerPipe.exe');
@@ -23,12 +25,14 @@ let closing = false;
 let shutdownAccepted = false;
 const owners = new Map<string, {ctx:ConnectionContext;send:Send}>();
 let ownerPipe: Awaited<ReturnType<typeof startOwnerPipe>> | undefined;
+let agentPipe: Awaited<ReturnType<typeof startAgentPipe>> | undefined;
 let ownerPipeLost = false;
 async function shutdown() {
   if (closing) return;
   closing = true;
   await gateway?.close();
   await core?.close();
+  await agentPipe?.close();
   // Remove only this boot's readiness record while its instance guard is held.
   try { const info=JSON.parse(await readFile(path.join(dataDir,'host-info.json'),'utf8')); if(info.bootId===core?.getState().bootId)await unlink(path.join(dataDir,'host-info.json')); } catch {}
   await ownerPipe?.close();
@@ -65,7 +69,25 @@ try {
     configDir:values['claude-config-dir'] || process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'),
     version:await installedClaudeVersion(),
   }) : undefined;
-  core = new HostCore({dataDir,name:values.name,claudeIntegration});
+  // Codex reports exact conversation IDs through a host-local pipe. Isolated profiles
+  // touch only an explicitly named Codex home, like the Claude integration above.
+  const codexEnabled = values['codex-integration'] || values['codex-home'] || (!values['data-dir'] && !process.env.MONGLE_DATA_DIR);
+  // An explicit Codex home must also be the one new shells' CLI reads (CODEX_HOME passes through).
+  if (values['codex-home']) process.env.CODEX_HOME = path.resolve(values['codex-home']);
+  const codexIntegration = codexEnabled ? await installCodexIntegration({
+    codexHome:values['codex-home'] || process.env.CODEX_HOME || path.join(os.homedir(), '.codex'),
+    version:await installedCodexVersion(),
+  }) : undefined;
+  core = new HostCore({dataDir,name:values.name,claudeIntegration,codexIntegration});
+  if (codexIntegration?.status === 'installed') {
+    const owner = core;
+    agentPipe = await startAgentPipe({
+      start:(token,session)=>!closing&&owner.reportAgentSession(token,session),
+      end:(token,session)=>!closing&&owner.endAgentSession(token,session),
+    });
+    // Shells read the pipe name from this process before any terminal starts (core.init).
+    process.env.MONGLE_AGENT_PIPE = agentPipe.name;
+  }
   await core.init();
   let port=values.port?Number(values.port):0;
   if(!values.port) {try {const stored=JSON.parse(await readFile(path.join(dataDir,'gateway-port.json'),'utf8'));if(Number.isInteger(stored.port)&&stored.port>1024&&stored.port<65536)port=stored.port;}catch{}}
@@ -82,6 +104,7 @@ try {
   process.stderr.write(`Host startup failed: ${error instanceof Error ? error.message : 'unknown error'}\n`);
   await gateway?.close().catch(()=>{});
   await core?.close().catch(()=>{});
+  await agentPipe?.close().catch(()=>{});
   await ownerPipe?.close().catch(()=>{});
   process.exitCode=1;
 }

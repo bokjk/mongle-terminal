@@ -1,10 +1,71 @@
 import type { ShellProfile } from '../protocol/index.js';
 
+const AGENT_PIPE = /^\\\\\.\\pipe\\mongle-agent-[a-f0-9]{32}$/;
+
+/**
+ * Session-local `codex` function for PowerShell. It never replaces an existing
+ * user function or alias and never edits profiles. Interactive launches (and
+ * `resume`/`fork`) get `--no-daemon` so lifecycle hooks run in this shell's
+ * Codex process with this shell's token, plus a one-run nonce the managed hook
+ * requires. Other subcommands and explicit --remote/--no-daemon pass through
+ * unchanged. Calling codex.exe by full path bypasses this and is not captured.
+ */
+export const CODEX_POWERSHELL_WRAPPER = String.raw`
+if ($env:MONGLE_AGENT_PIPE) {
+  # Internal entry point; also used by the host's automatic resume line, so a
+  # resumed conversation is launched and captured exactly like a typed one.
+  function global:__MongleCodex {
+    # Same lookup order PowerShell uses per directory, absolute PATH entries only.
+    $cli = $null
+    foreach ($dir in ($env:Path -split ';')) {
+      $d = $dir.Trim().Trim('"')
+      if ($d -notmatch '^[A-Za-z]:\\') { continue }
+      foreach ($n in 'codex.ps1','codex.exe','codex.cmd') {
+        $f = Join-Path $d $n
+        if (Test-Path -LiteralPath $f -PathType Leaf) { $cli = $f; break }
+      }
+      if ($cli) { break }
+    }
+    if (-not $cli) { Write-Error 'codex: Codex CLI was not found in PATH.'; return }
+    $a = @($args)
+    $sub = 'exec','e','review','login','logout','mcp','plugin','app-server','remote-control','app','completion','update','doctor','sandbox','debug','apply','a','queue','archive','delete','migrate-rollouts','unarchive','cloud','exec-server','features','help','agents'
+    $values = '-c','--config','--enable','--disable','--remote-auth-token-env','-i','--image','-m','--model','--local-provider','-p','--profile','-s','--sandbox','-C','--cd','--add-dir','-a','--ask-for-approval'
+    # Every option before '--' is checked, wherever it appears (e.g. after 'resume').
+    $at = -1; $first = $null; $skip = $false; $noDaemon = $false
+    for ($i = 0; $i -lt $a.Count; $i++) {
+      $t = [string]$a[$i]
+      if ($t -eq '--') { break }
+      if ($t -in '--remote','-h','--help','-V','--version' -or $t -like '--remote=*') { $skip = $true }
+      if ($t -ceq '--no-daemon') { $noDaemon = $true }
+      if ($values -ccontains $t) { $i++; continue }
+      if ($t.StartsWith('-') -or $at -ge 0) { continue }
+      $first = $t; $at = $i
+    }
+    # A Codex started from inside a Codex turn (CODEX_THREAD_ID) is never captured.
+    if ($env:CODEX_THREAD_ID) { $skip = $true }
+    $final = $a; $wrapped = $false
+    if (-not $skip) {
+      if ($first -ceq 'resume' -or $first -ceq 'fork') { $wrapped = $true; if (-not $noDaemon) { $final = @($a[0..$at]) + '--no-daemon' + @(if ($at + 1 -lt $a.Count) { $a[($at + 1)..($a.Count - 1)] }) } }
+      elseif (-not ($first -and $sub -ccontains $first)) { $wrapped = $true; if (-not $noDaemon) { $final = @('--no-daemon') + $a } }
+    }
+    $previous = $env:MONGLE_CODEX_RUN
+    if ($wrapped) { $env:MONGLE_CODEX_RUN = [guid]::NewGuid().ToString('N') } else { Remove-Item Env:MONGLE_CODEX_RUN -ErrorAction SilentlyContinue }
+    try { & $cli @final } finally { if ($null -eq $previous) { Remove-Item Env:MONGLE_CODEX_RUN -ErrorAction SilentlyContinue } else { $env:MONGLE_CODEX_RUN = $previous } }
+  }
+  if (-not (Get-Command codex -CommandType Function,Alias -ErrorAction SilentlyContinue)) {
+    function global:codex { __MongleCodex @args }
+  }
+}`;
+
 /** Process-local prompt hooks; never edit the user's shell profile files. */
-export function shellIntegration(profile: ShellProfile, args: string[], environment: Record<string, string>) {
+export function shellIntegration(profile: ShellProfile, args: string[], environment: Record<string, string>, options: {agentPipe?: string} = {}) {
   const env = { ...environment };
   const integratedArgs = [...args];
   const agentToken = /^[a-f0-9]{64}$/.test(env.MONGLE_AGENT_TOKEN || '') ? env.MONGLE_AGENT_TOKEN : '';
+  const agentPipe = options.agentPipe ?? process.env.MONGLE_AGENT_PIPE ?? '';
+  delete env.MONGLE_AGENT_PIPE; delete env.MONGLE_CODEX_RUN;
+  // Only PowerShell has the wrapper that marks a capturable Codex run.
+  if (profile.kind === 'powershell' && agentToken && AGENT_PIPE.test(agentPipe)) env.MONGLE_AGENT_PIPE = agentPipe;
   if (profile.kind === 'powershell') {
     // The PowerShell host writes Unicode console text. Console.Write instead
     // encodes through OutputEncoding and can replace Hangul with '?' on US PCs.
@@ -17,7 +78,7 @@ function global:prompt {
     Write-Host -NoNewline ([char]27 + ']9;9;' + $PWD.ProviderPath + [char]27 + '\')
   }
   $result
-}`;
+}` + (env.MONGLE_AGENT_PIPE ? CODEX_POWERSHELL_WRAPPER : '');
     integratedArgs.push('-NoExit', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64'));
   } else if (profile.kind === 'cmd') {
     const promptKey = Object.keys(env).find(key => key.toUpperCase() === 'PROMPT');

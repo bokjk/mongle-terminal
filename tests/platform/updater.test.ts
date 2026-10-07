@@ -161,9 +161,39 @@ test('installation waits for the lifecycle barrier and coalesces repeated instal
   prepared.resolve(true);
   await first;
   assert.deepEqual(calls, ['allow-quit', 'installer']);
-  assert.deepEqual(driver.installs, [[true, true]]);
+  assert.deepEqual(driver.installs, [[false, true]], 'visible NSIS progress with restart');
   await assert.rejects(controller.install(), /준비되지/);
   assert.equal(driver.installs.length, 1);
+});
+
+test('installation reports real lifecycle steps without inventing an install percentage', async t => {
+  const prepared = deferred<boolean>();
+  let report!: (phase: 'confirming' | 'saving' | 'launching') => void;
+  const { controller, driver, states } = fixture(t, { prepareInstall: callback => { report = callback; return prepared.promise; } });
+  driver.emit('update-available', { version: '0.2.0' });
+  driver.emit('download-progress', { percent: 40 });
+  driver.emit('update-downloaded', { version: '0.2.0' });
+  const pending = controller.install();
+  assert.equal(controller.getState().phase, 'confirming');
+  report('saving');
+  assert.equal(controller.getState().phase, 'saving');
+  prepared.resolve(true);
+  await pending;
+  assert.equal(controller.getState().phase, 'launching');
+  const installing = states.filter(state => state.status === 'installing');
+  assert.deepEqual(installing.map(state => state.phase), ['confirming', 'saving', 'launching']);
+  assert.ok(installing.every(state => state.progress === 100), 'download progress is not reused as an install percentage');
+  assert.ok(installing.every(state => state.message && !/%/.test(state.message)));
+  report('saving');
+  assert.equal(controller.getState().phase, 'launching', 'late reports after preparation are ignored');
+});
+
+test('a cancelled confirmation clears the install step', async t => {
+  const { controller, driver } = fixture(t, { prepareInstall: async () => false });
+  driver.emit('update-downloaded', { version: '0.2.0' });
+  await controller.install();
+  assert.equal(controller.getState().status, 'ready');
+  assert.equal(controller.getState().phase, undefined);
 });
 
 test('installer launch exceptions report failure after allowing quit without retrying automatically', async t => {

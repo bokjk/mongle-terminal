@@ -1,4 +1,6 @@
-/** No network, transcript reads, model calls, or commands from hook input. */
+/** No network, transcript reads, model calls, or commands from hook input.
+ * SessionStart/UserPromptSubmit also carry the exact session UUID and cwd so the
+ * host can offer `claude --resume <UUID>` after an app update; nothing else is sent. */
 export const CLAUDE_HOOK_SOURCE = String.raw`// Mongle Terminal managed Claude hook v1
 'use strict';
 const token = process.env.MONGLE_AGENT_TOKEN;
@@ -21,6 +23,10 @@ process.stdin.on('end', () => {
     const events = ['SessionStart','UserPromptSubmit','PreToolUse','PostToolUse','PostToolUseFailure','PermissionRequest','Notification','Stop','StopFailure','SessionEnd'];
     if (!events.includes(data.hook_event_name)) return;
     const event = {event:data.hook_event_name, session:createHash('sha256').update(data.session_id).digest('hex')};
+    if ((data.hook_event_name === 'SessionStart' || data.hook_event_name === 'UserPromptSubmit') && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(data.session_id)) {
+      event.id = data.session_id;
+      if (typeof data.cwd === 'string' && data.cwd.length <= 1024) event.cwd = data.cwd;
+    }
     if (typeof data.tool_name === 'string' && data.tool_input && typeof data.tool_input === 'object') {
       const canonical = value => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map(key=>[key,canonical(value[key])])) : value;
       event.tool = createHash('sha256').update(JSON.stringify([data.tool_name,canonical(data.tool_input)])).digest('hex');

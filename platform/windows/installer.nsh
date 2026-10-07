@@ -5,6 +5,73 @@
   IfFileExists "$LOCALAPPDATA\MongleTerminal\host-info.json" 0 +3
     MessageBox MB_OK|MB_ICONEXCLAMATION "Mongle Terminal host is active or was not shut down cleanly. Open the existing app, save your terminal work and choose Full exit (완전 종료…) before installing. Your sessions have not been stopped."
     Abort
+  ; In-app updates pass --updated --force-run. Show the real NSIS file progress
+  ; even when an older app version requested a silent install (/S). Ordinary
+  ; silent installs without both flags stay silent. SetSilent is only valid in
+  ; .onInit, where customInit is inserted.
+  ${if} ${isUpdated}
+  ${andIf} ${isForceRun}
+  ${andIf} ${Silent}
+    SetSilent normal
+  ${endIf}
+!macroend
+
+!macro customInstallMode
+  ; In-app updates (--updated --force-run) keep the existing installation
+  ; scope without asking again. Other installs show the normal page.
+  ${if} ${isUpdated}
+  ${andIf} ${isForceRun}
+    ${if} $hasPerUserInstallation == "1"
+      StrCpy $isForceCurrentInstall "1"
+    ${elseIf} $hasPerMachineInstallation == "1"
+      StrCpy $isForceMachineInstall "1"
+    ${else}
+      StrCpy $isForceCurrentInstall "1"
+    ${endIf}
+  ${endIf}
+!macroend
+
+!macro customPageAfterChangeDir
+  !ifdef allowToChangeInstallationDirectory
+    ; assistedInstaller.nsh installs instFilesPre even when the directory page
+    ; was skipped for --updated. That callback appends APP_FILENAME to custom
+    ; paths, moving a prior silent /D installation during a visible update.
+    ; Preserve the resolved existing path for updates; ordinary installs retain
+    ; electron-builder's directory-page sanitization.
+    !undef MUI_PAGE_CUSTOMFUNCTION_PRE
+    !define MUI_PAGE_CUSTOMFUNCTION_PRE mongleInstallFilesPre
+    Function mongleInstallFilesPre
+      ${if} ${isUpdated}
+      ${andIf} ${isForceRun}
+        Return
+      ${endIf}
+      Call instFilesPre
+    FunctionEnd
+  !endif
+!macroend
+
+!macro customFinishPage
+  ; Ordinary installs keep the standard finish page without a run option
+  ; (runAfterFinish: false). Only an in-app update (--updated --force-run)
+  ; that completed without abort restarts the app and skips the finish page.
+  Function mongleUpdateFinishPre
+    ${if} ${isUpdated}
+    ${andIf} ${isForceRun}
+      ${ifNot} ${Abort}
+        ${StdUtils.ExecShellAsUser} $0 "$launchLink" "open" "--updated"
+        ; StdUtils reports "ok" or "fallback" when the shell accepted the launch.
+        ${if} $0 == "ok"
+        ${orIf} $0 == "fallback"
+          HideWindow
+          Abort
+        ${endIf}
+        ; Keep the finish page so the window does not just vanish.
+        MessageBox MB_OK|MB_ICONEXCLAMATION "Mongle Terminal was updated but could not be restarted automatically. Open Mongle Terminal (몽글터미널) from the Start menu or desktop shortcut."
+      ${endIf}
+    ${endIf}
+  FunctionEnd
+  !define MUI_PAGE_CUSTOMFUNCTION_PRE mongleUpdateFinishPre
+  !insertmacro MUI_PAGE_FINISH
 !macroend
 
 !macro customUnInit

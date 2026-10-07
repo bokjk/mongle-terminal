@@ -52,7 +52,8 @@ test('update settings preserve newer events, gate repeated actions, show native 
     await page.evaluate(`window.emit({status:'ready',currentVersion:'0.1.0',availableVersion:'0.2.0'});`);
     const install = page.getByRole('button', { name: '업데이트 설치 후 다시 시작', exact: true });
     await install.waitFor();
-    await page.getByText('실행 중인 프로그램과 저장하지 않은 작업은 복원되지 않습니다.', { exact: false }).waitFor();
+    await page.getByText('연동으로 대화가 확인된 Claude·Codex는 같은 대화를 다시 열며', { exact: false }).waitFor();
+    await page.getByText('진행 중 작업·미저장 내용은 복원하지 않고 이전 요청을 다시 보내지 않습니다.', { exact: false }).waitFor();
     await install.evaluate(button => { (button as HTMLButtonElement).click(); (button as HTMLButtonElement).click(); });
     assert.equal(await page.evaluate('window.calls.filter(value=>value==="install").length'), 1);
     assert.equal(await install.isDisabled(), true);
@@ -89,7 +90,9 @@ test('update settings preserve newer events, gate repeated actions, show native 
     const refresh = page.getByRole('button', { name: '화면 새로고침', exact: true });
     assert.equal(await refresh.isEnabled(), true);
     assert.equal(await page.getByRole('button', { name: '업데이트 확인', exact: true }).count(), 0, 'Browser must not offer local native update controls');
-    assert.equal(await page.evaluate('window.calls.filter(value=>value==="unsubscribe").length'), 1);
+    // Update state is one app-wide store shared with the sidebar notice, so unmounting settings
+    // keeps the bridge subscription; the store releases it only when the bridge itself changes.
+    assert.equal(await page.evaluate('window.calls.filter(value=>value==="unsubscribe").length'), 1, 'Switching away from the desktop bridge releases its subscription');
     await page.evaluate('window.render("blocked")');
     await page.getByRole('status').filter({ hasText: '저장하지 않았거나 저장 중인 파일' }).waitFor();
     assert.equal(await refresh.isDisabled(), true, 'Unsaved files and pending saves must prevent page reload');

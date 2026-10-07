@@ -1,4 +1,4 @@
-import { randomUUID, randomBytes, createHash } from 'node:crypto';
+import { randomUUID, randomBytes, createHash, timingSafeEqual } from 'node:crypto';
 import { hostname, homedir } from 'node:os';
 import { readFile, realpath, stat, unlink } from 'node:fs/promises';
 import { join, dirname, basename } from 'node:path';
@@ -7,6 +7,8 @@ import { z } from 'zod';
 import { APP_VERSION, PROTOCOL_VERSION, AppError, appendTab, dimensionSchema, groupRepositoryIds, idSchema, leafIds, removeLeaf, splitLeaf } from '../protocol/index.js';
 import type { ConnectionContext, Group, HostSettings, HostState, LayoutNode, PresentationSnapshot, Send, ShellProfile, SnapshotEvent, TerminalInfo, Repository, Worktree, WorktreeOperation, ProjectInspection } from '../protocol/index.js';
 import { HostStore, type PersistedHost, type PersistedSnapshot } from '../storage/index.js';
+import { validAgentSession, type AgentSessionIdentity } from '../terminal/agent-status.js';
+import { AGENT_PIPE_NAME, agentResumeCommand, isTerminalReportOnly, resolveAgentExecutable } from '../shell-profiles/agent-resume.js';
 import { detectShellProfiles, resolveShellLaunch, safeShellEnvironment } from '../shell-profiles/index.js';
 import { TerminalEngine } from '../terminal/engine.js';
 import { shellIntegration } from '../shell-profiles/integration.js';
@@ -30,7 +32,10 @@ const MAX_FRAME_BYTES = 16 * 1024 * 1024;
 type Attachment = { lastSent: number; lastAck: number; pending?: SnapshotEvent };
 type Client = { ctx: ConnectionContext; send: Send; attached: Map<string, Attachment> };
 type Lease = { connectionId: string; deviceName: string; epoch: number; expires: number; ready: boolean; syncSeq: number; inputSeq: number; dedupe: Map<string, {seq:number; hash:string}> };
-type Runtime = { info: TerminalInfo; engine: TerminalEngine; pty?: pty.IPty; stopPty?:()=>Promise<void>; seq: number; epoch: number; lease?: Lease; timer?: ReturnType<typeof setTimeout>; framePending?: boolean; frameDirty?: boolean; checkpointAt: number; lastFrame?: SnapshotEvent; disposed: boolean; pendingBytes: number; directoryChanged?: boolean; notificationChanged?: boolean };
+type Runtime = { info: TerminalInfo; engine: TerminalEngine; pty?: pty.IPty; stopPty?:()=>Promise<void>; seq: number; epoch: number; lease?: Lease; timer?: ReturnType<typeof setTimeout>; framePending?: boolean; frameDirty?: boolean; checkpointAt: number; lastFrame?: SnapshotEvent; disposed: boolean; stopping?: boolean; pendingBytes: number; directoryChanged?: boolean; notificationChanged?: boolean; agentToken?: string; pendingResume?: { command: string; timer: ReturnType<typeof setTimeout> } };
+/** Host-private: the exact agent conversation last verified in a terminal generation. Never in TerminalInfo/state. */
+type AgentSessionRecord = { generation: string; session: AgentSessionIdentity };
+const RESUME_PROMPT_TIMEOUT_MS = 15_000;
 
 /** Owns the shells, independent of every GUI/browser attachment. */
 export class HostCore {
@@ -41,6 +46,7 @@ export class HostCore {
   private profiles: ShellProfile[] = [];
   private groups: Group[] = [];
   private terminals: TerminalInfo[] = [];
+  private agentSessions = new Map<string, AgentSessionRecord>();
   private repositories: Repository[] = [];
   private worktrees: Worktree[] = [];
   private worktreeOperations: WorktreeOperation[] = [];
@@ -61,7 +67,7 @@ export class HostCore {
   private fileReads = new Map<string, number>();
   private fileDocuments = new Map<string, { client: Client; root: string; path: string; absolutePath: string }>();
 
-  constructor(private options: { dataDir: string; name?: string; claudeIntegration?: import('../protocol/index.js').ClaudeIntegration }) {
+  constructor(private options: { dataDir: string; name?: string; claudeIntegration?: import('../protocol/index.js').ClaudeIntegration; codexIntegration?: { status: 'installed' | 'unavailable'; message: string } }) {
     this.settings = {name: options.name || hostname(), recordHistory: true, scrollback: 5000};
   }
   async init(): Promise<void> {
@@ -81,6 +87,12 @@ export class HostCore {
       this.worktrees = (saved.worktrees || []).map(item=>item.status==='removing'?{...item,status:'missing',reason:'삭제 결과를 확인하려면 목록을 새로고침해 주세요.'}:item);
       this.worktreeOperations = (saved.worktreeOperations || []).map(item=>item.status==='pending'||item.status==='running'?{...item,status:'attention',message:'호스트가 재시작되었습니다. 목록을 새로고침해 작업 결과를 확인해 주세요.'}:item);
       this.terminals = saved.terminals.map(({controller, pid, agentStatus, agentProvider, ...info}) => ({...info, status: info.status === 'running' ? 'interrupted' : info.status, resumeOnBoot: info.status === 'running' || info.resumeOnBoot === true || legacyResume.has(info.id), historyAvailable: Boolean(this.settings.recordHistory && this.store.getSnapshot(info.id, info.generation))}));
+      // Only an exact, validated conversation bound to the saved generation of a
+      // terminal that will be restored survives; anything else is dropped.
+      for (const [id, record] of Object.entries(saved.agentSessions || {})) {
+        const info = this.terminals.find(item => item.id === id), session = validAgentSession(record?.session);
+        if (info && session && info.resumeOnBoot && record.generation === info.generation) this.agentSessions.set(id, {generation:record.generation, session});
+      }
     } else {
       this.groups = [{id:randomUUID(),name:'기본 그룹',cwd:homedir(),profileId:this.profiles[0]?.id || '',revision:0,layout:null}];
     }
@@ -113,7 +125,7 @@ export class HostCore {
     return result;
   }
   getState(): HostState {
-    return structuredClone({ hostId:this.hostId, bootId:this.bootId, name:this.settings.name, version:APP_VERSION, protocolVersion:PROTOCOL_VERSION, capabilities:['control.acquire-if-free','files.read','files.edit','files.pdf','git.read','layout.tabs','worktrees.manage','worktrees.terminal-context'], groups:this.groups, terminals:this.terminals, repositories:this.repositories,worktrees:this.worktrees,worktreeOperations:this.worktreeOperations,profiles:this.profiles, settings:this.settings, ...(this.options.claudeIntegration ? {claudeIntegration:this.options.claudeIntegration} : {}), ...(this.storageError ? {storageError:this.storageError} : {}) });
+    return structuredClone({ hostId:this.hostId, bootId:this.bootId, name:this.settings.name, version:APP_VERSION, protocolVersion:PROTOCOL_VERSION, capabilities:['control.acquire-if-free','files.read','files.edit','files.pdf','git.read','layout.tabs','worktrees.manage','worktrees.terminal-context'], groups:this.groups, terminals:this.terminals, repositories:this.repositories,worktrees:this.worktrees,worktreeOperations:this.worktreeOperations,profiles:this.profiles, settings:this.settings, ...(this.options.claudeIntegration ? {claudeIntegration:this.options.claudeIntegration} : {}), ...(this.options.codexIntegration ? {codexIntegration:this.options.codexIntegration} : {}), ...(this.storageError ? {storageError:this.storageError} : {}) });
   }
   connect(ctx: ConnectionContext, send: Send): void {
     if (!this.initialized || this.closing || this.shutdownPrepared) throw new AppError('HOST_UNAVAILABLE','호스트가 준비되지 않았습니다.');
@@ -510,7 +522,7 @@ export class HostCore {
         this.requireClient(client);
         await this.disposeRuntime(info.id);
         this.requireClient(client);
-        info.generation=randomUUID();info.notificationCount=0;info.exitCode=undefined;info.historyAvailable=false;info.status='interrupted';info.resumeOnBoot=false;delete info.restoreError;this.group(info.groupId).revision++;
+        this.agentSessions.delete(info.id);info.generation=randomUUID();info.notificationCount=0;info.exitCode=undefined;info.historyAvailable=false;info.status='interrupted';info.resumeOnBoot=false;delete info.restoreError;this.group(info.groupId).revision++;
         for(const connection of this.clients.values())connection.attached.delete(info.id);
         this.archivedSequences.delete(info.id);this.archivedFrames.delete(info.id);this.persist(true,[info.id]);
         try {await this.startTerminal(info,profile,launch);} finally {this.persist();this.broadcastState();}
@@ -558,6 +570,9 @@ export class HostCore {
         if(prior){if(prior.hash!==hash || prior.seq!==p.clientInputSeq)throw new AppError('INPUT_ID_REUSED','입력 식별자를 다른 입력에 사용할 수 없습니다.');return {accepted:true,inputId:p.inputId,clientInputSeq:p.clientInputSeq,duplicate:true};}
         if(p.clientInputSeq<=lease.inputSeq)throw new AppError('STALE_INPUT','이미 지난 입력 번호입니다. 입력을 자동으로 재전송하지 마세요.');
         const data=p.encoding==='binary'?Buffer.from(p.data,'latin1'):p.data;
+        // Someone typed before the restored shell's first prompt: never append a resume line to their input.
+        // Focus/mouse/device reports sent by an attaching view are not typing.
+        if(runtime.pendingResume&&!isTerminalReportOnly(p.data))this.abandonResume(runtime);
         try {runtime.pty!.write(data);}catch{throw new AppError('WRITE_FAILED','터미널 입력을 전달하지 못했습니다.');}
         if(p.data==='\x03'||p.data==='\x1b'||p.data==='\x1b[27u'||p.data==='\x1b[99;5u')void runtime.engine.observeInput(p.data).then(()=>this.scheduleFrame(runtime)).catch(()=>{});
         lease.inputSeq=p.clientInputSeq;lease.dedupe.set(p.inputId,{seq:p.clientInputSeq,hash});if(lease.dedupe.size>2048)lease.dedupe.delete(lease.dedupe.keys().next().value!);
@@ -612,13 +627,32 @@ export class HostCore {
   }
   private async restoreTerminal(info:TerminalInfo):Promise<void> {
     const previous={...info};
+    const previousRecord=this.agentSessions.get(info.id);
     try {
       if(info.worktreeId){const worktree=this.worktree(info.worktreeId);await validateWorktree(this.repository(worktree.repositoryId),worktree,this.options.dataDir);}
       if(this.terminals.filter(item=>item.status==='running').length>=32)throw new AppError('LIMIT_REACHED','실행 가능한 터미널 수를 넘어 새 셸을 열지 못했습니다.');
-      const profile=this.profile(info.profileId),launch=await resolveShellLaunch(profile,info.cwd);
+      const profile=this.profile(info.profileId);
+      // Resume only the exact conversation recorded for this generation, in its own
+      // folder. A missing folder or unsupported shell restores a plain shell only.
+      const record=this.agentSessions.get(info.id);
+      const resume=record&&record.generation===info.generation?record.session:undefined;
+      const executable=resume?.cwd&&resume.provider==='claude'?await resolveAgentExecutable(resume.provider,safeShellEnvironment()):undefined;
+      // Codex needs the session-local PowerShell wrapper, which exists only with a live lifecycle pipe.
+      const codexWrapper=this.options.codexIntegration?.status==='installed'&&AGENT_PIPE_NAME.test(process.env.MONGLE_AGENT_PIPE||'');
+      let command=resume?.cwd?agentResumeCommand(profile,resume,executable,{codexWrapper}):undefined;
+      let launch:Awaited<ReturnType<typeof resolveShellLaunch>>|undefined;
+      if(command&&resume?.cwd){try{launch=await resolveShellLaunch(profile,resume.cwd);}catch{command=undefined;}}
+      else command=undefined;
+      launch??=await resolveShellLaunch(profile,info.cwd);
       const snapshot=this.settings.recordHistory?this.store.getSnapshot(info.id,info.generation):undefined;
       info.generation=randomUUID();info.notificationCount=0;info.historyAvailable=false;delete info.restoreError;
-      await this.startTerminal(info,profile,launch,snapshot);
+      // Move the intent to the new generation before the shell starts. It is saved with
+      // this restore, so a shutdown before the first prompt still resumes next boot;
+      // a fast SessionStart from the resumed CLI simply overwrites it. Without a resume
+      // line there is no intent. A failed restore puts the old record back.
+      if(command&&resume)this.agentSessions.set(info.id,{generation:info.generation,session:resume});
+      else this.agentSessions.delete(info.id);
+      await this.startTerminal(info,profile,launch,snapshot,command);
       // Commit the replacement generation and its restored history together.
       // A second boot must never see metadata pointing at the old generation's frame.
       const runtime=this.runtimes.get(info.id)!;
@@ -633,22 +667,32 @@ export class HostCore {
       // and frame readable; no substitute shell or command is executed.
       Object.assign(info,previous,{status:'interrupted',resumeOnBoot:true,restoreError:error instanceof AppError?error.message:'새 셸을 복원하지 못했습니다. 이전 기록은 그대로 보관됩니다.'});
       delete info.pid;delete info.controller;
+      if(previousRecord&&previousRecord.generation===info.generation)this.agentSessions.set(info.id,previousRecord);
     }
   }
-  private async startTerminal(info:TerminalInfo,profile:ShellProfile,launch:{executable:string;args:string[];cwd:string},history?:PresentationSnapshot) {
+  private async startTerminal(info:TerminalInfo,profile:ShellProfile,launch:{executable:string;args:string[];cwd:string},history?:PresentationSnapshot,resumeCommand?:string) {
     const runtime={} as Runtime;
     Object.assign(runtime,{info,seq:0,epoch:0,checkpointAt:0,disposed:false,pendingBytes:0});
     info.notificationCount=0;
     delete info.agentStatus; delete info.agentProvider;
-    const agentToken = this.options.claudeIntegration?.status === 'ready' && profile.kind !== 'wsl' ? randomBytes(32).toString('hex') : undefined;
+    // Every non-WSL shell gets a per-shell secret: its prompt marker authenticates
+    // "back at the shell" for status and agent resume, independent of Claude setup.
+    const agentToken = profile.kind !== 'wsl' ? randomBytes(32).toString('hex') : undefined;
+    runtime.agentToken=agentToken;
+    const current=()=>!runtime.disposed&&!runtime.stopping&&!this.closing&&!this.shutdownPrepared&&this.runtimes.get(info.id)===runtime;
     delete info.currentCwd;
     runtime.engine=new TerminalEngine({cols:info.cols,rows:info.rows,scrollback:this.settings.scrollback,
       notificationsEnabled:()=>!runtime.disposed&&!this.closing&&!this.shutdownPrepared&&this.runtimes.get(info.id)===runtime,
       onNotification:count=>{info.notificationCount=count;runtime.notificationChanged=true;},
       agentToken,
       onAgentStatus:status=>{info.agentStatus=status;info.agentProvider='claude';runtime.notificationChanged=true;},
+      onAgentSession:session=>{if(current())this.recordAgentSession(info,session);},
+      // The first prompt after a restore types the resume line and keeps the intent until
+      // the CLI reports itself or exits; any other prompt means no agent is running.
+      onShellPrompt:()=>{if(!current())return;if(!this.dispatchResume(runtime))this.recordAgentSession(info,null);},
       onDirectory:directory=>{if(!runtime.disposed&&info.currentCwd!==directory){info.currentCwd=directory;runtime.directoryChanged=true;}},onResponse:(data:string)=>{try{if(runtime.pty && info.status==='running')runtime.pty.write(data);}catch{/* exit can race an emulator reply */}}});
     this.runtimes.set(info.id,runtime);
+    if(resumeCommand){const timer=setTimeout(()=>{if(!runtime.pendingResume||!current())return;this.abandonResume(runtime);this.notice('AGENT_RESUME_SKIPPED',`${info.title}: 셸 준비를 확인하지 못해 이전 대화를 자동으로 이어 가지 않았습니다. 필요하면 직접 다시 열어 주세요.`);},RESUME_PROMPT_TIMEOUT_MS);timer.unref?.();runtime.pendingResume={command:resumeCommand,timer};}
     try {
       if(history)await runtime.engine.restoreHistory(history);
       const environment=safeShellEnvironment();
@@ -657,6 +701,7 @@ export class HostCore {
       runtime.pty=pty.spawn(launch.executable,integration.args,{name:'xterm-256color',cols:info.cols,rows:info.rows,cwd:launch.cwd,env:integration.env,useConpty:true,useConptyDll:true});
       runtime.stopPty=installPtyLifecycle(runtime.pty);
     } catch {
+      this.cancelResume(runtime);
       if(runtime.pty)try{if(runtime.stopPty)await runtime.stopPty();else runtime.pty.kill();}catch{}
       await runtime.engine.dispose();this.runtimes.delete(info.id);throw new AppError('SHELL_START_FAILED',`${profile.name}을 실행하지 못했습니다. 셸과 작업 폴더를 확인해 주세요.`);
     }
@@ -669,8 +714,9 @@ export class HostCore {
     });
     runtime.pty.onExit(({exitCode})=>{
       if(runtime.disposed || this.runtimes.get(info.id)!==runtime)return;
-      info.status='exited';info.exitCode=exitCode;delete info.pid;delete info.agentStatus;delete info.agentProvider;runtime.pty=undefined;this.revoke(runtime);
-      if(!this.closing && !this.shutdownPrepared)info.resumeOnBoot=false;
+      info.status='exited';info.exitCode=exitCode;delete info.pid;delete info.agentStatus;delete info.agentProvider;runtime.pty=undefined;this.revoke(runtime);this.cancelResume(runtime);
+      // A shell that ended by itself has no conversation to reopen. Shutdown keeps the saved one.
+      if(!this.closing && !this.shutdownPrepared){info.resumeOnBoot=false;this.agentSessions.delete(info.id);}
       this.persist();this.broadcastState();
       // A completed process no longer needs a 5,000-line mutable VT engine.
       // Queue final-frame capture behind any accepted lifecycle operation.
@@ -735,6 +781,54 @@ export class HostCore {
   private requireClient(client:Client){if(this.clients.get(client.ctx.id)!==client)throw new AppError('NOT_CONNECTED','연결이 종료되었습니다. 다시 연결해 주세요.');}
   private requireLease(runtime:Runtime,client:Client,epoch:number,ready:boolean){const lease=runtime.lease;if(!lease || lease.connectionId!==client.ctx.id || lease.epoch!==epoch || lease.expires<=Date.now()){if(lease?.expires && lease.expires<=Date.now()){this.revoke(runtime);this.broadcastState();}throw new AppError('NOT_CONTROLLER','여기서 제어를 눌러 제어권을 가져오세요.');}if(ready&&!lease.ready)throw new AppError('CONTROL_SYNCING','화면 동기화가 끝난 뒤 입력할 수 있습니다.');return lease;}
   private revoke(runtime:Runtime){runtime.lease=undefined;delete runtime.info.controller;}
+  /** Records (or clears) the exact conversation of the current generation. Persisted with metadata, never broadcast. */
+  private recordAgentSession(info:TerminalInfo,session:AgentSessionIdentity|null){
+    const before=this.agentSessions.get(info.id);
+    if(!session){if(!before)return;this.agentSessions.delete(info.id);this.persist();return;}
+    const valid=validAgentSession(session);if(!valid)return;
+    if(before&&before.generation===info.generation&&before.session.provider===valid.provider&&before.session.sessionId===valid.sessionId&&before.session.cwd===valid.cwd)return;
+    this.agentSessions.set(info.id,{generation:info.generation,session:valid});this.persist();
+  }
+  /** Types the single pending resume line once, right after the new shell's first authenticated prompt. */
+  private dispatchResume(runtime:Runtime):boolean{
+    const pending=runtime.pendingResume;if(!pending)return false;
+    this.cancelResume(runtime);
+    if(runtime.info.status!=='running'||!runtime.pty)return true;
+    try{runtime.pty.write(pending.command);}catch{/* the shell exited; nothing is retried */}
+    return true;
+  }
+  private cancelResume(runtime:Runtime){if(runtime.pendingResume){clearTimeout(runtime.pendingResume.timer);runtime.pendingResume=undefined;}}
+  /** The user typed first or the shell never became ready: drop the line and its saved intent. Shutdown never calls this. */
+  private abandonResume(runtime:Runtime){this.cancelResume(runtime);this.recordAgentSession(runtime.info,null);}
+  private agentRuntime(token:string){
+    if(typeof token!=='string'||!/^[a-f0-9]{64}$/.test(token)||this.closing||this.shutdownPrepared)return;
+    const expected=Buffer.from(token);
+    const runtime=[...this.runtimes.values()].find(item=>item.agentToken!==undefined&&timingSafeEqual(Buffer.from(item.agentToken),expected));
+    if(!runtime||runtime.disposed||runtime.stopping||runtime.info.status!=='running'||this.runtimes.get(runtime.info.id)!==runtime)return;
+    return runtime;
+  }
+  /**
+   * Out-of-band agent lifecycle report (e.g. a Codex hook through a local IPC).
+   * token must be the per-shell MONGLE_AGENT_TOKEN of a running terminal of this boot.
+   * session null clears the record. Returns false when rejected.
+   */
+  reportAgentSession(token:string,session:AgentSessionIdentity|null):boolean{
+    const runtime=this.agentRuntime(token);if(!runtime)return false;
+    if(session===null){this.recordAgentSession(runtime.info,null);return true;}
+    const valid=validAgentSession(session);if(!valid)return false;
+    this.recordAgentSession(runtime.info,valid);return true;
+  }
+  /**
+   * Lifecycle end report (e.g. Codex SessionEnd). Clears the record only when it is
+   * exactly this provider and UUID, so a late end of an older conversation cannot
+   * erase the current one. Returns true only when a matching record was cleared.
+   */
+  endAgentSession(token:string,session:AgentSessionIdentity):boolean{
+    const runtime=this.agentRuntime(token),valid=validAgentSession(session);if(!runtime||!valid)return false;
+    const record=this.agentSessions.get(runtime.info.id);
+    if(!record||record.generation!==runtime.info.generation||record.session.provider!==valid.provider||record.session.sessionId!==valid.sessionId)return false;
+    this.recordAgentSession(runtime.info,null);return true;
+  }
   private updateController(runtime:Runtime){const l=runtime.lease;runtime.info.controller=l?{connectionId:l.connectionId,deviceName:l.deviceName,epoch:l.epoch,ready:l.ready}:undefined;}
   private expireLeases(){let changed=false;for(const r of this.runtimes.values())if(r.lease&&r.lease.expires<=Date.now()){this.revoke(r);changed=true;}if(changed)this.broadcastState();}
   private profile(id:string){const value=this.profiles.find(p=>p.id===id);if(!value)throw new AppError('PROFILE_NOT_FOUND','설치된 셸 프로필을 찾을 수 없습니다.');return value;}
@@ -743,7 +837,11 @@ export class HostCore {
   private running(info:TerminalInfo){const runtime=this.runtimes.get(info.id);if(!runtime?.pty || info.status!=='running')throw new AppError('NOT_RUNNING','터미널이 종료되었습니다. 새 셸을 열어 주세요.');return runtime;}
   private revision(group:Group,revision:number){if(group.revision!==revision)throw new AppError('REVISION_CONFLICT','다른 화면에서 배치가 변경되었습니다. 최신 상태에서 다시 시도해 주세요.');}
   private checkTreeSize(node:unknown){const queue=[node];let count=0;while(queue.length){const n=queue.pop();if(++count>31)throw new AppError('INVALID_LAYOUT','분할 구조가 너무 큽니다.');if(n&&typeof n==='object'&&(n as any).type==='split'){queue.push((n as any).first,(n as any).second);}}}
-  private persisted():PersistedHost{return {schemaVersion:2,hostId:this.hostId,settings:this.settings,groups:this.groups,terminals:this.terminals.map(({controller,pid,...info})=>info),repositories:this.repositories,worktrees:this.worktrees,worktreeOperations:this.worktreeOperations};}
+  private persisted():PersistedHost{
+    const agentSessions:NonNullable<PersistedHost['agentSessions']>={};
+    for(const info of this.terminals){const record=this.agentSessions.get(info.id);if(record&&record.generation===info.generation)agentSessions[info.id]={generation:record.generation,session:{...record.session}};}
+    return {schemaVersion:2,hostId:this.hostId,settings:this.settings,groups:this.groups,terminals:this.terminals.map(({controller,pid,...info})=>info),repositories:this.repositories,worktrees:this.worktrees,worktreeOperations:this.worktreeOperations,agentSessions};
+  }
   private async prepareShutdown():Promise<void>{
     if(this.projectTasks.size)throw new AppError('WORKTREE_BUSY','워크트리 작업이 끝난 뒤 정상 종료를 다시 시도해 주세요.');
     // This runs on the mutation queue. Earlier input/layout/settings requests
@@ -778,9 +876,9 @@ export class HostCore {
   private send(client:Client,message:Parameters<Send>[0]){try{client.send(message);}catch{this.disconnect(client.ctx.id);}}
   private broadcastState(){const event={type:'state' as const,state:this.getState()};for(const client of this.clients.values())this.send(client,event);}
   private notice(code:string,message:string){for(const client of this.clients.values())this.send(client,{type:'notice',code,message});}
-  private async stopTerminal(info:TerminalInfo,preserveForBoot=false){if(!preserveForBoot){info.resumeOnBoot=false;delete info.restoreError;}const r=this.runtimes.get(info.id);if(!r){if(!preserveForBoot)info.status='exited';return;}if(r.pty){await r.stopPty?.();r.pty=undefined;}info.status='exited';delete info.pid;this.revoke(r);const frame=await this.frame(info);this.checkpoint(r,frame);this.broadcastFrame(frame);}
-  private async disposeRuntime(id:string){const r=this.runtimes.get(id);if(!r)return;if(r.timer)clearTimeout(r.timer);if(r.pty)await r.stopPty?.();r.disposed=true;await r.engine.dispose();this.runtimes.delete(id);}
-  private async removeTerminal(info:TerminalInfo){await this.disposeRuntime(info.id);for(const c of this.clients.values())c.attached.delete(info.id);const group=this.group(info.groupId);group.layout=removeLeaf(group.layout,info.id);group.revision++;this.terminals=this.terminals.filter(t=>t.id!==info.id);this.archivedFrames.delete(info.id);this.archivedSequences.delete(info.id);this.store.clearSnapshot(info.id);}
+  private async stopTerminal(info:TerminalInfo,preserveForBoot=false){if(!preserveForBoot){info.resumeOnBoot=false;delete info.restoreError;this.agentSessions.delete(info.id);}const r=this.runtimes.get(info.id);if(r){r.stopping=true;this.cancelResume(r);}if(!r){if(!preserveForBoot)info.status='exited';return;}if(r.pty){await r.stopPty?.();r.pty=undefined;}info.status='exited';delete info.pid;this.revoke(r);const frame=await this.frame(info);this.checkpoint(r,frame);this.broadcastFrame(frame);}
+  private async disposeRuntime(id:string){const r=this.runtimes.get(id);if(!r)return;r.stopping=true;if(r.timer)clearTimeout(r.timer);this.cancelResume(r);if(r.pty)await r.stopPty?.();r.disposed=true;await r.engine.dispose();this.runtimes.delete(id);}
+  private async removeTerminal(info:TerminalInfo){this.agentSessions.delete(info.id);await this.disposeRuntime(info.id);for(const c of this.clients.values())c.attached.delete(info.id);const group=this.group(info.groupId);group.layout=removeLeaf(group.layout,info.id);group.revision++;this.terminals=this.terminals.filter(t=>t.id!==info.id);this.archivedFrames.delete(info.id);this.archivedSequences.delete(info.id);this.store.clearSnapshot(info.id);}
   async close():Promise<void>{
     if(this.closing)return;this.closing=true;if(this.leaseTimer)clearInterval(this.leaseTimer);await this.queue;await Promise.allSettled([...this.projectTasks.values()]);await this.queue;
     for(const info of this.terminals)if(info.status==='running')info.resumeOnBoot=true;
