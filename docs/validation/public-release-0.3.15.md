@@ -22,4 +22,6 @@ Astra가 격리된 실제 몽글 웹앱·호스트·cmd/ConPTY에서 Claude 2.1.
 
 ## 게시 전 필수 확인
 
+PR #51의 첫 설치 검사 [37584172531](https://github.com/bokjk/mongle-terminal/actions/runs/37584172531)는 새 NSIS의 app.asar·694개 hostbundle 파일 일치까지 통과했으나 앱 시작 직후 `app.getVersion()`이 `0.3.15.0`으로 읽혀 실패했다. 검사가 main inspector 접속 직후 실행되어 Electron의 package.json 초기화보다 먼저 버전을 읽을 수 있었다. [Electron 44.4.5 초기화 코드](https://github.com/electron/electron/blob/v44.4.5/lib/browser/init.ts#L112-L115)는 package.json을 읽은 뒤 앱 버전을 설정한다. 검사를 `app.whenReady()` 뒤로 옮기고 실행 버전과 내장 package.json을 각각 `0.3.15`와 엄격히 대조하도록 보완했다. 숫자를 잘라내거나 허용 버전을 넓히지 않으며 초기·준비 완료 버전을 증거에 남긴다. 실제 앱·설치 파일의 버전 설정은 변경하지 않았다. 수정 후 CI 결과를 별도 확인한다.
+
 주제 브랜치→dev 및 dev→main의 PR 정책·문서·Windows 회귀와 설치 검사를 확인한다. 병합 main의 0.3.15 태그에서 패키징·네이티브·NSIS 교체·복원과 산출물 보존까지 통과한 동일 파일만 공개한다. 공개 첨부 5개와 latest.yml을 익명으로 내려받아 크기·해시·버전을 대조하고 실제 Electron 업데이트 다운로드를 확인한다. 기존 공개 릴리스는 변경하지 않는다.

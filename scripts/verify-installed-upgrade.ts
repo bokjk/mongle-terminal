@@ -73,8 +73,14 @@ async function start(expectedVersion: string) {
   pids.add(child.pid!);
   child.stderr!.on('data', bytes => { endpoint ||= String(bytes).match(/ws:\/\/127\.0\.0\.1:\d+\/[a-f0-9-]+/)?.[0] || ''; });
   await until(async () => endpoint, Boolean, 'main inspector');
-  const actualVersion = await evaluate("(()=>{globalThis.upgradeElectron=process.getBuiltinModule('node:module').createRequire(process.execPath)('electron');return upgradeElectron.app.getVersion();})()");
-  assert.equal(actualVersion, expectedVersion);
+  // The inspector can accept requests before Electron has read package.json.
+  // At that point getVersion() may still return the four-part Windows resource
+  // version. Wait for real startup, then verify both versions without coercion.
+  const started = await evaluate("(async()=>{const require=process.getBuiltinModule('node:module').createRequire(process.execPath);globalThis.upgradeElectron=require('electron');const app=upgradeElectron.app;const beforeReady=app.getVersion();await app.whenReady();return {ready:app.isReady(),beforeReady,appVersion:app.getVersion(),manifestVersion:require(app.getAppPath()+'/package.json').version};})()");
+  (proof.startup ??= []).push({ expectedVersion, ...started });
+  assert.equal(started.ready, true);
+  assert.equal(started.manifestVersion, expectedVersion);
+  assert.equal(started.appVersion, expectedVersion);
   process.env.MONGLE_OWNER_HELPER = path.join(installDir, 'resources/hostbundle/platform/windows/OwnerPipe.exe');
   await until(async () => { owner?.close(); owner = await connectOwnerPipe({ dataDir }); return owner.request<HostState>('state.get'); }, () => true, 'authenticated installed host');
   const info = JSON.parse(await readFile(path.join(dataDir, 'host-info.json'), 'utf8')); pids.add(info.pid);
