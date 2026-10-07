@@ -45,6 +45,8 @@ export interface TerminalEngineOptions {
   onResponse: (data: string) => void;
   onDirectory?: (directory: string) => void;
   onNotification?: (count: number) => void;
+  agentToken?: string;
+  onAgentStatus?: (status: import('../protocol/index.js').AgentStatus) => void;
   /** Host lifetime gate; suppress signals without dropping final output/history. */
   notificationsEnabled?: () => boolean;
 }

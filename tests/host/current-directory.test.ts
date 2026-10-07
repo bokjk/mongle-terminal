@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtemp, mkdir, realpath, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -33,7 +33,8 @@ for (const profile of profiles.filter(p => p.kind !== 'wsl')) {
   test(`real ${profile.id}: cd broadcasts the current directory and preserves launch cwd`, { timeout: 30000 }, async () => {
     const dataDir = await mkdtemp(path.join(tmpdir(), 'mongle-cwd-'));
     const destination = path.join(dataDir, '한글 space'); await mkdir(destination);
-    const host = new HostCore({ dataDir, name: '경로 검사' });
+    await writeFile(path.join(destination,'cwd-proof.txt'),'current folder');
+    const host = new HostCore({ dataDir:path.join(dataDir,'.host-private'), name: '경로 검사' });
     const ctx = { id: randomUUID(), deviceId: 'cwd-test', deviceName: '테스트', owner: true };
     const states: any[] = [];
     try {
@@ -45,6 +46,7 @@ for (const profile of profiles.filter(p => p.kind !== 'wsl')) {
         while (!check()) { assert.ok(Date.now() < deadline, `directory report missing for ${profile.id}`); await new Promise(resolve => setTimeout(resolve, 60)); }
       };
       await wait(() => Boolean(current().currentCwd));
+      assert.equal(await realpath(current().currentCwd!),await realpath(dataDir),'initial report must be usable by host file APIs');
       const state = host.getState(), ref = { id: info.id, generation: info.generation, hostId: state.hostId, bootId: state.bootId };
       const lease = await host.handle('control.acquire', { ...ref, cols: 80, rows: 24 }, ctx);
       await host.handle('terminal.ack', { ...ref, seq: lease.frame.seq, epoch: lease.epoch }, ctx);
@@ -53,7 +55,11 @@ for (const profile of profiles.filter(p => p.kind !== 'wsl')) {
       await host.handle('terminal.input', { ...ref, epoch: lease.epoch, inputId: randomUUID(), clientInputSeq: 1, data: command + '\r' }, ctx);
       await wait(() => Boolean(current().currentCwd?.endsWith('한글 space')));
       await wait(() => states.some(s => s.terminals.find((t: any) => t.id === info.id)?.currentCwd?.endsWith('한글 space')));
-      if (profile.kind !== 'bash') assert.equal(await realpath(current().currentCwd!), await realpath(destination));
+      assert.equal(await realpath(current().currentCwd!), await realpath(destination));
+      const fileRef={...ref,root:current().currentCwd!,path:''};
+      assert.ok((await host.handle('files.list',fileRef,ctx)).entries.some((entry:any)=>entry.name==='cwd-proof.txt'));
+      assert.equal((await host.handle('files.preview',{...fileRef,path:'cwd-proof.txt'},ctx)).text,'current folder');
+      await host.handle('git.status',fileRef,ctx);
       assert.equal(current().cwd, dataDir);
       assert.equal(current().pid, info.pid);
     } finally { await host.close(); await rm(dataDir, { recursive: true, force: true }); }

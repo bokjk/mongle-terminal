@@ -1,5 +1,5 @@
 type Encoding = 'utf8' | 'binary';
-type Chunk = { data: string; encoding: Encoding; bytes: number };
+type Chunk = { data: string; encoding: Encoding; bytes: number; cancelBoundary: boolean };
 
 const MAX_PENDING_BYTES = 64 * 1024;
 // Leave room for JSON escaping and the local IPC envelope, even for binary
@@ -33,10 +33,12 @@ export class TerminalInputQueue {
       return;
     }
     this.pendingBytes += bytes;
+    // Keep cancel key events distinct from adjacent typing/escape sequences.
+    const cancelBoundary = data==='\x03'||data==='\x1b'||data==='\x1b[27u'||data==='\x1b[99;5u';
     const append = (text: string, size: number) => {
       const last = this.queued.at(-1);
-      if (last?.encoding === encoding && last.bytes + size <= MAX_BATCH_BYTES) { last.data += text; last.bytes += size; }
-      else this.queued.push({ data: text, encoding, bytes: size });
+      if (last?.encoding === encoding && !last.cancelBoundary && !cancelBoundary && last.bytes + size <= MAX_BATCH_BYTES) { last.data += text; last.bytes += size; }
+      else this.queued.push({ data: text, encoding, bytes: size, cancelBoundary });
     };
     if (bytes <= MAX_BATCH_BYTES) append(data, bytes);
     else {

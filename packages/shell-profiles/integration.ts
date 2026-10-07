@@ -4,6 +4,7 @@ import type { ShellProfile } from '../protocol/index.js';
 export function shellIntegration(profile: ShellProfile, args: string[], environment: Record<string, string>) {
   const env = { ...environment };
   const integratedArgs = [...args];
+  const agentToken = /^[a-f0-9]{64}$/.test(env.MONGLE_AGENT_TOKEN || '') ? env.MONGLE_AGENT_TOKEN : '';
   if (profile.kind === 'powershell') {
     // The PowerShell host writes Unicode console text. Console.Write instead
     // encodes through OutputEncoding and can replace Hangul with '?' on US PCs.
@@ -11,6 +12,7 @@ export function shellIntegration(profile: ShellProfile, args: string[], environm
 $global:__MongleOriginalPrompt = $function:prompt
 function global:prompt {
   $result = & $global:__MongleOriginalPrompt
+  if ($env:MONGLE_AGENT_TOKEN) { Write-Host -NoNewline ([char]27 + ']777;mongle-shell;' + $env:MONGLE_AGENT_TOKEN + [char]7) }
   if ($PWD.Provider.Name -eq 'FileSystem') {
     Write-Host -NoNewline ([char]27 + ']9;9;' + $PWD.ProviderPath + [char]27 + '\')
   }
@@ -21,11 +23,15 @@ function global:prompt {
     const promptKey = Object.keys(env).find(key => key.toUpperCase() === 'PROMPT');
     const prompt = promptKey ? env[promptKey] : '$P$G';
     if (promptKey) delete env[promptKey];
-    env.PROMPT = `${prompt}$E]9;9;$P$E\\`;
+    env.PROMPT = `${prompt}$E]9;9;$P$E\\${agentToken ? `$E]777;mongle-shell;${agentToken}$E\\` : ''}`;
   } else if (profile.kind === 'bash') {
     // Existing prompt commands still run first. Login files may replace this;
     // shells that already emit OSC 7 work without this hook as well.
-    env.PROMPT_COMMAND = `${env.PROMPT_COMMAND ? env.PROMPT_COMMAND + '\n' : ''}printf '\\033]9;9;%s\\033\\\\' "$PWD"`;
+    // Git Bash's /c and /tmp mounts are not Windows filesystem paths. Its pwd
+    // builtin resolves every mount (including custom installs) with -W; ordinary
+    // Unix Bash falls back to pwd. Never guess mount roots from a drive letter.
+    env.PROMPT_COMMAND = `${env.PROMPT_COMMAND ? env.PROMPT_COMMAND + '\n' : ''}printf '\\033]9;9;%s\\033\\\\' "$(pwd -W 2>/dev/null || pwd)"`;
+    if(agentToken) env.PROMPT_COMMAND += `; printf '\\033]777;mongle-shell;%s\\007' "$MONGLE_AGENT_TOKEN"`;
   }
   return { args: integratedArgs, env };
 }

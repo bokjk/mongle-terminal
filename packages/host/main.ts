@@ -8,9 +8,10 @@ import { startGateway } from './gateway';
 import { startOwnerPipe } from '../local-ipc/index';
 import { AppError, type ConnectionContext, type Send } from '../protocol';
 import { RemoteSetup } from './remote';
+import { installedClaudeVersion, installClaudeIntegration } from './claude-integration';
 
 async function main() {
-const { values } = parseArgs({ options: { 'data-dir': {type:'string'}, port:{type:'string'}, 'web-root':{type:'string'}, name:{type:'string'} } });
+const { values } = parseArgs({ options: { 'data-dir': {type:'string'}, port:{type:'string'}, 'web-root':{type:'string'}, name:{type:'string'}, 'claude-integration':{type:'boolean'}, 'claude-config-dir':{type:'string'} } });
 const dataDir = path.resolve(values['data-dir'] ?? process.env.MONGLE_DATA_DIR ?? path.join(process.env.LOCALAPPDATA ?? os.homedir(), 'MongleTerminal'));
 const webRoot = path.resolve(values['web-root'] ?? path.join(path.dirname(process.argv[1]), '../web'));
 const bundledHelper = path.resolve(path.dirname(process.argv[1]), '../../platform/windows/OwnerPipe.exe');
@@ -58,7 +59,13 @@ try {
     onError() { ownerPipeLost=true; if(ownerPipe){process.stderr.write('Owner channel failed; shutting down the host safely.\n');void shutdown();} }
   });
   if(ownerPipeLost)throw new AppError('IPC_CLOSED','로컬 연결 실행부가 중단되었습니다.');
-  core = new HostCore({dataDir,name:values.name});
+  // Isolated development/test profiles never install into the real user's Claude directory implicitly.
+  const integrationEnabled = values['claude-integration'] || values['claude-config-dir'] || (!values['data-dir'] && !process.env.MONGLE_DATA_DIR);
+  const claudeIntegration = integrationEnabled ? await installClaudeIntegration({
+    configDir:values['claude-config-dir'] || process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'),
+    version:await installedClaudeVersion(),
+  }) : undefined;
+  core = new HostCore({dataDir,name:values.name,claudeIntegration});
   await core.init();
   let port=values.port?Number(values.port):0;
   if(!values.port) {try {const stored=JSON.parse(await readFile(path.join(dataDir,'gateway-port.json'),'utf8'));if(Number.isInteger(stored.port)&&stored.port>1024&&stored.port<65536)port=stored.port;}catch{}}
