@@ -1,5 +1,7 @@
 # 구현·검증 상태
 
+**0.3.17 배포 준비(2026-10-08):** 업데이트 알림·설치 진행 표시와 Claude·Codex의 정확한 대화 재개를 묶는다. 개발 앱의 실제 CLI 검증과 관련 자동 검사는 통과했다. 실제 NSIS 업데이트·자동 재실행·설치 후 복원, 개발/배포 PR과 최종 태그 검사는 진행 중이다. 아직 공개하지 않았으며 현재 공개 버전은 0.3.16이다. [검증 기록](validation/public-release-0.3.17.md).
+
 **0.3.16 공개 배포 완료(2026-10-07):** [공개 릴리스](https://github.com/bokjk/mongle-terminal-releases/releases/tag/v0.3.16). [개발 PR](https://github.com/bokjk/mongle-terminal/actions/runs/37607711852) 515 통과·0 실패·15 생략, [배포 PR](https://github.com/bokjk/mongle-terminal/actions/runs/37609087111) 515 통과·0 실패·15 생략, [최종 태그](https://github.com/bokjk/mongle-terminal/actions/runs/37610464864) 516 통과·0 실패·14 생략. 네이티브 2/2, [실제 NSIS 교체·복원](https://github.com/bokjk/mongle-terminal/actions/runs/37609087141), 최종 설치 payload 일치, 공개 첨부 5개 익명 다운로드·해시, 실제 Electron updater의 0.3.15→0.3.16 다운로드와 동일 버전 최신 상태 확인을 통과했다. 이전 공개 릴리스는 보존했다. [최종 증거](validation/public-release-0.3.16.md#final).
 
 > 아래 후보·미배포·이전 버전 기록은 당시 검사 이력이다. 현재 공개 상태는 위 기록을 따른다.
