@@ -2,49 +2,81 @@ name: Contribution checks
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, edited, ready_for_review]
-  push:
-    branches: [main, dev]
-    # Documentation-only pushes skip CI to save Actions minutes. Pull requests always run, so the
-    # required "Windows checks" status is never left waiting on a docs-only PR.
-    paths-ignore: ['docs/**', '**/*.md']
+    types: [opened, synchronize, reopened, edited]
+  # PR merge refs are verified before merging; final tags independently verify release binaries.
+  # Do not repeat the full suite for the subsequent dev/main push.
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: contribution-${{ github.event.pull_request.number || github.ref }}
+  # A PR body edit must neither cancel a running build nor overwrite its required check.
+  group: contribution-${{ github.event.pull_request.number || github.ref }}-${{ github.event.action == 'edited' && !github.event.changes.base && 'metadata' || 'code' }}
   cancel-in-progress: true
 
 jobs:
+  scope:
+    if: github.event.action != 'edited' || github.event.changes.base
+    name: CI scope and release documents
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      windows_required: ${{ steps.scope.outputs.windows_required }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+      - id: scope
+        run: node scripts/ci-scope.ts
+      - name: Validate release documents without installing dependencies
+        run: node scripts/release-check.ts
   windows-checks:
-    name: Windows checks
-    runs-on: windows-2022
+    name: ${{ github.event.action == 'edited' && !github.event.changes.base && 'Windows checks (PR text only)' || 'Windows checks' }}
+    needs: scope
+    if: ${{ always() && (github.event.action != 'edited' || github.event.changes.base) }}
+    runs-on: ${{ needs.scope.outputs.windows_required == 'false' && 'ubuntu-24.04' || 'windows-2022' }}
     timeout-minutes: 30
     env:
       MONGLE_DATA_DIR: ${{ github.workspace }}\.test-data\ci-profile
     steps:
+      - name: Require successful scope and document validation
+        env:
+          SCOPE_RESULT: ${{ needs.scope.result }}
+          WINDOWS_REQUIRED: ${{ needs.scope.outputs.windows_required }}
+        shell: bash
+        run: |
+          test "$SCOPE_RESULT" = success
+          case "$WINDOWS_REQUIRED" in
+            true) echo 'Full Windows tests follow.' ;;
+            false) echo 'Documentation-only PR: release documents passed; Windows runtime tests were not run.' >> "$GITHUB_STEP_SUMMARY" ;;
+            *) echo 'Missing or invalid CI scope output.' >&2; exit 1 ;;
+          esac
       - name: Check out proposed changes
+        if: needs.scope.outputs.windows_required == 'true'
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
           persist-credentials: false
       - name: Install Node.js 24
+        if: needs.scope.outputs.windows_required == 'true'
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '24'
           cache: npm
       - name: Prepare isolated profile and locked dependencies
+        if: needs.scope.outputs.windows_required == 'true'
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path $env:MONGLE_DATA_DIR | Out-Null
           npm.cmd ci
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-      - name: Validate PR description and documentation
-        if: github.event_name == 'pull_request'
-        run: node --import tsx scripts/check-contribution.ts
       - name: Prepare native runtimes and browser
+        if: needs.scope.outputs.windows_required == 'true'
         shell: pwsh
         run: |
           node node_modules/node-pty/scripts/prebuild.js
@@ -58,10 +90,13 @@ jobs:
           npx.cmd playwright install chrome
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Typecheck
+        if: needs.scope.outputs.windows_required == 'true'
         run: npm.cmd run typecheck
       - name: Build web and Windows runtime
+        if: needs.scope.outputs.windows_required == 'true'
         run: npm.cmd run build
       - name: Verify native Windows clipboard and update bridge
+        if: needs.scope.outputs.windows_required == 'true'
         shell: pwsh
         run: |
           $env:MONGLE_E2E_DATA_ROOT = Join-Path $env:TEMP 'mongle-clipboard-ci'
@@ -70,10 +105,10 @@ jobs:
           node --import tsx --test --test-concurrency=1 tests/e2e/clipboard.test.ts tests/e2e/update-desktop.test.ts
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Record native verification in job logs
-        if: always()
+        if: always() && needs.scope.outputs.windows_required == 'true'
         run: node --import tsx scripts/record-validation-summary.ts native
       - name: Preserve native desktop results
-        if: always()
+        if: always() && needs.scope.outputs.windows_required == 'true'
         continue-on-error: true
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -84,6 +119,8 @@ jobs:
             test-results/e2e/clipboard/result.json
             test-results/e2e/update-desktop/result.json
       - name: Run regression tests sequentially
+        if: needs.scope.outputs.windows_required == 'true'
         run: npx.cmd tsx --test --test-concurrency=1 tests/**/*.test.ts
       - name: Validate release documentation
+        if: needs.scope.outputs.windows_required == 'true'
         run: node --import tsx scripts/release-check.ts
