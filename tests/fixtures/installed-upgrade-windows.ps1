@@ -1,0 +1,95 @@
+param([ValidateSet('watch','exit','environment','discover')] [string]$Mode, [string]$Config)
+$ErrorActionPreference = 'Stop'
+if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted') { throw 'Disposable GitHub-hosted runner required' }
+$c = Get-Content -LiteralPath $Config -Raw | ConvertFrom-Json
+if ($Mode -eq 'discover') {
+ # Failure cleanup only: exact installed executable, automatic launch flag and
+ # creation after this installation began; never select an unrelated desktop.
+ $matches = @(Get-CimInstance Win32_Process -Filter "Name='MongleTerminal.exe'" | Where-Object {
+   $_.ExecutablePath -ieq $c.exe -and $_.CommandLine -match '(?:^|\s)--updated(?:\s|$)' -and
+   $_.CommandLine -notmatch '(?:^|\s)--type(?:=|\s)' -and $_.CreationDate.ToUniversalTime() -ge [DateTime]::Parse($c.since).ToUniversalTime()
+ } | ForEach-Object {
+   @{kind='desktop';pid=[int]$_.ProcessId;path=$_.ExecutablePath;visible=$false;progress=$false;commandLine=$_.CommandLine;time=$_.CreationDate.ToUniversalTime().ToString('o')}
+ })
+ ConvertTo-Json -InputObject $matches -Compress
+ exit 0
+}
+Add-Type @'
+using System;
+using System.Text;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+public class UpgradeWindow {
+ public delegate bool EnumProc(IntPtr h, IntPtr l);
+ [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc f,IntPtr l);
+ [DllImport("user32.dll")] public static extern bool EnumChildWindows(IntPtr h,EnumProc f,IntPtr l);
+ [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+ [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h,out uint p);
+ [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern int GetClassName(IntPtr h,StringBuilder s,int n);
+ [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern int GetWindowText(IntPtr h,StringBuilder s,int n);
+ [DllImport("user32.dll")] public static extern IntPtr GetMenu(IntPtr h);
+ [DllImport("user32.dll")] public static extern IntPtr GetSubMenu(IntPtr h,int i);
+ [DllImport("user32.dll")] public static extern int GetMenuItemCount(IntPtr h);
+ [DllImport("user32.dll")] public static extern uint GetMenuItemID(IntPtr h,int i);
+ [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern int GetMenuString(IntPtr h,uint i,StringBuilder s,int n,uint flags);
+ [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h,uint m,IntPtr w,IntPtr l);
+ [DllImport("user32.dll",CharSet=CharSet.Unicode)] public static extern IntPtr SendMessageTimeout(IntPtr h,uint m,IntPtr w,string l,uint flags,uint ms,out IntPtr result);
+ public static string Text(IntPtr h){var s=new StringBuilder(512);GetWindowText(h,s,s.Capacity);return s.ToString();}
+ public static string Class(IntPtr h){var s=new StringBuilder(128);GetClassName(h,s,s.Capacity);return s.ToString();}
+ public static List<IntPtr> Windows(){var a=new List<IntPtr>();EnumWindows((h,l)=>{if(IsWindowVisible(h))a.Add(h);return true;},IntPtr.Zero);return a;}
+ public static List<IntPtr> Children(IntPtr h){var a=new List<IntPtr>();EnumChildWindows(h,(x,l)=>{if(IsWindowVisible(x))a.Add(x);return true;},IntPtr.Zero);return a;}
+ public static int FullExit(IntPtr menu){for(int i=0;i<GetMenuItemCount(menu);i++){var s=new StringBuilder(256);GetMenuString(menu,(uint)i,s,s.Capacity,0x400);if(s.ToString().Replace("&","")=="완전 종료…")return (int)GetMenuItemID(menu,i);var sub=GetSubMenu(menu,i);if(sub!=IntPtr.Zero){int id=FullExit(sub);if(id>=0)return id;}}return -1;}
+}
+'@
+if ($Mode -eq 'environment') {
+ foreach ($entry in $c.PSObject.Properties) { [Environment]::SetEnvironmentVariable($entry.Name, $entry.Value, 'User') }
+ $result=[IntPtr]::Zero
+ [void][UpgradeWindow]::SendMessageTimeout([IntPtr]0xffff,0x1a,[IntPtr]::Zero,'Environment',2,5000,[ref]$result)
+ exit 0
+}
+if ($Mode -eq 'exit') {
+ $p=Get-Process -Id $c.pid
+ if ($p.Path -ine $c.exe) { throw 'Desktop path mismatch' }
+ $sent=$false; $confirmed=$false
+ $deadline=[DateTime]::UtcNow.AddSeconds(45)
+ while ([DateTime]::UtcNow -lt $deadline) {
+   foreach($h in [UpgradeWindow]::Windows()) {
+     $windowPid=[uint32]0; [void][UpgradeWindow]::GetWindowThreadProcessId($h,[ref]$windowPid)
+     if($windowPid -ne $c.pid) { continue }
+     if(-not $sent) {
+       $menu=[UpgradeWindow]::GetMenu($h)
+       if($menu -ne [IntPtr]::Zero) {
+         $id=[UpgradeWindow]::FullExit($menu)
+         if($id -ge 0) { [void][UpgradeWindow]::PostMessage($h,0x111,[IntPtr]$id,[IntPtr]::Zero); $sent=$true }
+       }
+     } elseif ([UpgradeWindow]::Text($h) -eq '몽글터미널 완전 종료') {
+       foreach($button in [UpgradeWindow]::Children($h)) {
+         if([UpgradeWindow]::Class($button) -eq 'Button' -and [UpgradeWindow]::Text($button).Replace('&','') -eq '완전 종료') {
+           [void][UpgradeWindow]::PostMessage($button,0xf5,[IntPtr]::Zero,[IntPtr]::Zero); $confirmed=$true
+         }
+       }
+     }
+   }
+   if($confirmed) { @{menuInvoked=$sent;confirmationClicked=$true} | ConvertTo-Json -Compress; exit 0 }
+   Start-Sleep -Milliseconds 100
+ }
+ throw 'Could not invoke and confirm the real full-exit menu'
+}
+# Observer is ready before the installer is launched. Only records visible windows
+# belonging to the exact candidate installer or exact installed desktop executable.
+$seen=@{}; $deadline=[DateTime]::UtcNow.AddSeconds(210)
+Set-Content -LiteralPath $c.ready -Value 'ready'
+while(-not (Test-Path -LiteralPath $c.stop) -and [DateTime]::UtcNow -lt $deadline) {
+ foreach($h in [UpgradeWindow]::Windows()) {
+   $windowPid=[uint32]0; [void][UpgradeWindow]::GetWindowThreadProcessId($h,[ref]$windowPid)
+   try { $proc=Get-Process -Id $windowPid -ErrorAction Stop; $file=$proc.Path } catch {continue}
+   $kind=if($file -ieq $c.installer){'installer'} elseif($file -ieq $c.exe){'desktop'} else {continue}
+   $progress=@([UpgradeWindow]::Children($h) | Where-Object { [UpgradeWindow]::Class($_) -eq 'msctls_progress32' }).Count -gt 0
+   $key="$kind-$windowPid-$progress"
+   if($seen.ContainsKey($key)){continue}; $seen[$key]=$true
+   $command=if($kind -eq 'desktop'){(Get-CimInstance Win32_Process -Filter "ProcessId=$windowPid").CommandLine}else{''}
+   @{kind=$kind;pid=$windowPid;path=$file;visible=$true;progress=$progress;class=[UpgradeWindow]::Class($h);commandLine=$command;time=[DateTime]::UtcNow.ToString('o')} |
+     ConvertTo-Json -Compress | Add-Content -LiteralPath $c.events
+ }
+ Start-Sleep -Milliseconds 30
+}
