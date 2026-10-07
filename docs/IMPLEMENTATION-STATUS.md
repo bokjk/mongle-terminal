@@ -1,6 +1,14 @@
 # 구현·검증 상태
 
-**0.3.15 배포 준비(2026-10-07):** 아래 미배포 기능을 묶어 사용자 승인으로 버전을 올렸다. 실제 CLI 알림·독립 검토와 개발/배포 PR·최종 태그의 검사를 진행하며, 현재 공개 채널은 0.3.14다. 게시·익명 다운로드·업데이트 확인 전에는 배포 완료로 표시하지 않는다. [진행 기록](validation/public-release-0.3.15.md). 아래 기능별 미배포 표기는 당시 검사 이력이다.
+<!-- release-0.3.15-finalized -->
+
+**0.3.15 공개 배포 완료(2026-10-07):** [공개 릴리스](https://github.com/bokjk/mongle-terminal-releases/releases/tag/v0.3.15). [개발 PR 검사](https://github.com/bokjk/mongle-terminal/actions/runs/37585036031) 499 통과·0 실패·15 생략, [배포 PR 검사](https://github.com/bokjk/mongle-terminal/actions/runs/37586578183) 499 통과·0 실패·15 생략, [최종 태그 검사](https://github.com/bokjk/mongle-terminal/actions/runs/37587926965) 500 통과·0 실패·14 생략. 네이티브 2/2와 [실제 NSIS 교체·복원](https://github.com/bokjk/mongle-terminal/actions/runs/37586578164), 최종 태그 설치 payload 일치, 공개 첨부 5개 익명 전체 다운로드·해시, 실제 Electron의 격리 버전 어댑터로 0.3.14→0.3.15 다운로드 및 동일 버전 최신 상태 확인을 통과했다. 이전 공개 릴리스는 변경하지 않았다. [최종 증거](validation/public-release-0.3.15.md#0315-final).
+
+필수 검사를 통과한 windows-release artifact의 동일 파일을 배포했다.
+
+실제 Claude 2.1.292·Codex 0.160.0의 알림 표시·해제는 세션 한정 알림 설정에서 확인했다. Claude는 응답 뒤 유휴 지연을 거쳐 신호를 보냈으며 즉시 완료 판정이 아니다. 모바일 자동 검사는 Chrome 화면·trusted touch 에뮬레이션 기준이다. 실물 갤럭시·삼성 인터넷·설치형 PWA의 관성 체감, 실제 CLI에서 손을 뗀 뒤 이어지는 관성, 기본 CLI 알림 설정과 실제 창의 OS blur는 별도 범위다. 업데이트 검사는 현재 제품 updater에 격리 버전 어댑터를 사용했으며 설치된 구버전 앱의 실행으로 표현하지 않는다. 실제 사용자 설치본을 교체하거나 작업 중인 앱을 종료하지 않았다.
+
+> 아래 미배포·준비·이전 버전 완료 문구는 당시 검사 이력이다. 현재 공개 상태는 위 최종 기록을 따른다.
 
 실제 CLI 추가 검사에서 Claude 2.1.292의 BEL(응답 뒤 유휴 지연), Codex 0.160.0의 OSC9와 목록·탭·그룹 점 표시·선택 후 해제를 확인했다. 세션 한정 알림 설정으로 각 요청 1회만 실행했고 기본 설정은 미검증이다. 격리 시험 프로세스 잔여 0개, 독립 코드 검토의 새로운 병합 차단 결함 없음. [CLI 증거](validation/cli-notifications.md).
 
