@@ -13,7 +13,7 @@ export type { CodexIntegration };
 export const CODEX_HOOK_MARKER = '--mongle-codex-hook-v1';
 const SCRIPT = 'mongle-terminal-codex-hook.cjs';
 const HEADER = '// Mongle Terminal managed Codex hook v1\n';
-/** Minimum targeted CLI version (has --no-daemon and SessionStart/SessionEnd hooks). Not yet verified with normal hook trust. */
+/** Minimum CLI version; normal hook trust and exact-session resume verified in docs/validation/agent-session-restore.md. */
 export const MIN_CODEX_VERSION = '0.160.0';
 const plain = (value: unknown): value is Record<string, any> => Boolean(value && typeof value === 'object' && !Array.isArray(value));
 const unavailable = (message: string): CodexIntegration => ({status:'unavailable', message});
