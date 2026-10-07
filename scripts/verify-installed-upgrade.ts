@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
+import { realpath } from 'node:fs';
 import { mkdir, mkdtemp, readFile, writeFile, access, readdir, copyFile } from 'node:fs/promises';
 import { DatabaseSync } from 'node:sqlite';
 import { tmpdir } from 'node:os';
@@ -9,7 +10,7 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import { connectOwnerPipe } from '../packages/local-ipc/index';
 import type { HostState, TerminalInfo } from '../packages/protocol/index';
-import { PREVIOUS_PUBLIC_VERSION, updateInstallerArgs, assertUpdateWindows, assertExactAgentRestores, findUpdatedDesktop, type WindowEvidence, type AgentFixtureRecord } from '../tests/fixtures/installed-upgrade-evidence';
+import { PREVIOUS_PUBLIC_VERSION, updateInstallerArgs, assertUpdateWindows, assertExactAgentRestores, findUpdatedDesktop, boundedObserverEvents, type WindowEvidence, type AgentFixtureRecord } from '../tests/fixtures/installed-upgrade-evidence';
 import { version } from '../package.json';
 
 assert.equal(process.platform, 'win32');
@@ -18,7 +19,9 @@ assert.equal(process.env.RUNNER_ENVIRONMENT, 'github-hosted', 'A disposable host
 const run = promisify(execFile);
 const output = path.resolve('test-results/installed-upgrade');
 await mkdir(output, { recursive: true });
-const root = await mkdtemp(path.join(tmpdir(), 'mongle-installed-upgrade-'));
+// Expand actual 8.3 aliases (e.g. RUNNER~1) before deriving /D and observer
+// targets. Get-Process.Path reports long paths; string resolution cannot do this.
+const root = await promisify(realpath.native)(await mkdtemp(path.join(tmpdir(), 'mongle-installed-upgrade-')));
 // Explorer's automatic shortcut launch does not inherit our temporary env. The
 // disposable runner's empty DEFAULT profile is the isolated test profile here.
 const dataDir = path.join(process.env.LOCALAPPDATA!, 'MongleTerminal'), workspace = path.join(root, 'workspace');
@@ -175,7 +178,9 @@ async function observedUpdate(legacySilent: boolean) {
     await run(newInstaller, args, {env, windowsHide:false, timeout:180000});
     stageProof.installerExitCode = 0;
     await until(async () => {
-      const events: WindowEvidence[] = (await readFile(config.events,'utf8')).replace(/^\uFEFF/,'').trim().split(/\r?\n/).filter(Boolean).map(line=>JSON.parse(line));
+      const raw = await readFile(config.events,'utf8');
+      stageProof.observedEvents = boundedObserverEvents(raw);
+      const events: WindowEvidence[] = raw.replace(/^\uFEFF/,'').trim().split(/\r?\n/).filter(Boolean).map(line=>JSON.parse(line));
       const desktop = findUpdatedDesktop(events,exe,updateSince);
       if (desktop) { desktopPid=desktop.pid; pids.add(desktopPid); }
       return assertUpdateWindows(events,newInstaller,exe,previousPids);
@@ -185,7 +190,14 @@ async function observedUpdate(legacySilent: boolean) {
     });
     assert.deepEqual(JSON.parse(await readFile(path.join(installDir,'resources/mongle-installed.json'),'utf8')), {installed:true});
     return await connectInstalled(version);
-  } finally { await stopWatcher(); }
+  } finally {
+    try { await stopWatcher(); }
+    finally {
+      // Preserve raw observations even when installer/window assertions fail.
+      try { stageProof.observedEvents = boundedObserverEvents(await readFile(config.events,'utf8')); }
+      catch (error) { stageProof.observerReadError = String(error); }
+    }
+  }
 }
 async function assertCandidateBytes() {
   const installedAsar = sha(await readFile(path.join(installDir, 'resources/app.asar')));

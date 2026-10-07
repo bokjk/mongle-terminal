@@ -1,16 +1,40 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { execFile } from 'node:child_process';
+import { realpath } from 'node:fs';
 import { promisify } from 'node:util';
-import { readFile, mkdtemp, writeFile, copyFile, rm } from 'node:fs/promises';
+import { readFile, mkdtemp, mkdir, writeFile, copyFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
-import { PREVIOUS_PUBLIC_VERSION, updateInstallerArgs, assertUpdateWindows, assertExactAgentRestores, findUpdatedDesktop, type WindowEvidence, type AgentFixtureRecord } from '../fixtures/installed-upgrade-evidence';
+import { PREVIOUS_PUBLIC_VERSION, updateInstallerArgs, assertUpdateWindows, assertExactAgentRestores, findUpdatedDesktop, boundedObserverEvents, type WindowEvidence, type AgentFixtureRecord } from '../fixtures/installed-upgrade-evidence';
 
 const run=promisify(execFile);
+test('native realpath expands actual Windows short aliases without accepting another file',{skip:process.platform!=='win32'},async t=>{
+  // A workspace file avoids MSIX TEMP redirection between Node and PowerShell.
+  const base=path.resolve('.test-data');await mkdir(base,{recursive:true});
+  const directory=await mkdtemp(path.join(base,'mongle-upgrade-path-'));
+  t.after(async()=>{assert.equal(path.dirname(directory),base);assert.ok(path.basename(directory).startsWith('mongle-upgrade-path-'));await rm(directory,{recursive:true,force:true});});
+  const file=path.join(directory,'long executable name.exe'),other=path.join(directory,'other.exe');
+  await writeFile(file,'fixture');await writeFile(other,'different fixture');
+  const script=`Add-Type 'using System.Text; using System.Runtime.InteropServices; public class UpgradeShortPath { [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] public static extern uint GetShortPathName(string path, StringBuilder result, uint size); }'; $b=[Text.StringBuilder]::new(32768); $n=[UpgradeShortPath]::GetShortPathName($env:MONGLE_TEST_PATH,$b,32768); if($n -eq 0 -or $n -ge 32768){throw ('GetShortPathName failed: '+[Runtime.InteropServices.Marshal]::GetLastWin32Error()+' path='+$env:MONGLE_TEST_PATH)}; $b.ToString()`;
+  const short=(await run('pwsh.exe',['-NoProfile','-NonInteractive','-Command',script],{env:{...process.env,MONGLE_TEST_PATH:file},windowsHide:true,timeout:10000})).stdout.trim();
+  const canonical=promisify(realpath.native);
+  assert.equal(await canonical(short),await canonical(file));
+  assert.notEqual(await canonical(short),await canonical(other));
+  await assert.rejects(canonical(path.join(directory,'missing.exe')),{code:'ENOENT'});
+  if(short.toLowerCase()===file.toLowerCase())t.diagnostic('8.3 aliases unavailable on this volume; existing-path identity checked only');
+});
 const installer='C:\\fixture\\Setup.exe', exe='C:\\fixture\\installed\\MongleTerminal.exe';
 const progress:WindowEvidence={kind:'installer',pid:10,path:installer,visible:true,progress:true,commandLine:'',time:'2026-10-08T00:00:00.000Z'};
 const desktop:WindowEvidence={kind:'desktop',pid:20,path:exe,visible:true,progress:false,commandLine:'"'+exe+'" --updated',time:'2026-10-08T00:00:01.000Z'};
+test('observer diagnostics preserve raw failed observations with bounded records and line length',()=>{
+  const raw=JSON.stringify({...desktop,path:'C:\\Users\\RUNNER~1\\app.exe'});
+  assert.deepEqual(boundedObserverEvents('\uFEFF'+raw+'\r\n{partial'),{totalLines:2,rawLines:[raw,'{partial']});
+  const bounded=boundedObserverEvents(Array.from({length:100},(_,i)=>String(i)+':'+ 'x'.repeat(9000)).join('\n'));
+  assert.equal(bounded.totalLines,100);assert.equal(bounded.rawLines.length,64);
+  assert.ok(bounded.rawLines[0].startsWith('36:'));
+  assert.ok(bounded.rawLines.every(line=>line.length===8192));
+});
 test('both updater generations keep real update/relaunch flags and NSIS /D last',()=>{
   assert.equal(PREVIOUS_PUBLIC_VERSION,'0.3.16');
   assert.deepEqual(updateInstallerArgs('C:\\install path',true),['/S','--updated','--force-run','/currentuser','/D=C:\\install path']);

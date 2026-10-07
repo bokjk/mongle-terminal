@@ -2,6 +2,11 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 
 export const PREVIOUS_PUBLIC_VERSION = '0.3.16';
+/** Diagnostic data only: never replace or relax the full event assertions. */
+export function boundedObserverEvents(raw: string) {
+  const lines = raw.replace(/^\uFEFF/, '').split(/\r?\n/).filter(Boolean);
+  return { totalLines: lines.length, rawLines: lines.slice(-64).map(line => line.slice(0, 8192)) };
+}
 export function updateInstallerArgs(directory: string, legacySilent: boolean) {
   // /D must be last in NSIS; never quote it as part of the argument value.
   return [...(legacySilent ? ['/S'] : []), '--updated', '--force-run', '/currentuser', '/D=' + directory];
