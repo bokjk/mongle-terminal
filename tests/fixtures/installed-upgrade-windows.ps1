@@ -1,4 +1,4 @@
-param([ValidateSet('watch','exit','environment','discover')] [string]$Mode, [string]$Config)
+param([ValidateSet('watch','exit','environment','discover','diagnose')] [string]$Mode, [string]$Config)
 $ErrorActionPreference = 'Stop'
 if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted') { throw 'Disposable GitHub-hosted runner required' }
 $c = Get-Content -LiteralPath $Config -Raw | ConvertFrom-Json
@@ -41,6 +41,21 @@ public class UpgradeWindow {
  public static int FullExit(IntPtr menu){for(int i=0;i<GetMenuItemCount(menu);i++){var s=new StringBuilder(256);GetMenuString(menu,(uint)i,s,s.Capacity,0x400);if(s.ToString().Replace("&","")=="완전 종료…")return (int)GetMenuItemID(menu,i);var sub=GetSubMenu(menu,i);if(sub!=IntPtr.Zero){int id=FullExit(sub);if(id>=0)return id;}}return -1;}
 }
 '@
+if ($Mode -eq 'diagnose') {
+ # Hosted-VM diagnostics only. Never feed this broader list into exit/discover.
+ $processes=@(Get-CimInstance Win32_Process -Filter "Name='MongleTerminal.exe'" | Select-Object -First 16 | ForEach-Object {
+   @{pid=[int]$_.ProcessId;path=$_.ExecutablePath;commandLine=([string]$_.CommandLine).Substring(0,[Math]::Min(4096,([string]$_.CommandLine).Length));sessionId=$_.SessionId;parentPid=$_.ParentProcessId;created=$_.CreationDate}
+ })
+ $windows=@(foreach($h in [UpgradeWindow]::Windows()) {
+   $windowPid=[uint32]0; [void][UpgradeWindow]::GetWindowThreadProcessId($h,[ref]$windowPid)
+   try {$file=(Get-Process -Id $windowPid -ErrorAction Stop).Path} catch {continue}
+   if($file -ine $c.installer -and $file -ine $c.exe){continue}
+   @{pid=$windowPid;path=$file;title=[UpgradeWindow]::Text($h);class=[UpgradeWindow]::Class($h);children=@([UpgradeWindow]::Children($h) | Select-Object -First 16 | ForEach-Object {@{text=[UpgradeWindow]::Text($_);class=[UpgradeWindow]::Class($_)}})}
+ })
+ $windows=@($windows | Select-Object -First 8)
+ @{observerSessionId=(Get-Process -Id $PID).SessionId;processes=$processes;windows=$windows;explorerSessions=@(Get-Process explorer -ErrorAction SilentlyContinue | Select-Object -First 8 | ForEach-Object {@{pid=$_.Id;sessionId=$_.SessionId}})} | ConvertTo-Json -Depth 6 -Compress
+ exit 0
+}
 if ($Mode -eq 'environment') {
  foreach ($entry in $c.PSObject.Properties) { [Environment]::SetEnvironmentVariable($entry.Name, $entry.Value, 'User') }
  $result=[IntPtr]::Zero

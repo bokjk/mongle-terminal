@@ -31,6 +31,25 @@
   ${endIf}
 !macroend
 
+!macro customPageAfterChangeDir
+  !ifdef allowToChangeInstallationDirectory
+    ; assistedInstaller.nsh installs instFilesPre even when the directory page
+    ; was skipped for --updated. That callback appends APP_FILENAME to custom
+    ; paths, moving a prior silent /D installation during a visible update.
+    ; Preserve the resolved existing path for updates; ordinary installs retain
+    ; electron-builder's directory-page sanitization.
+    !undef MUI_PAGE_CUSTOMFUNCTION_PRE
+    !define MUI_PAGE_CUSTOMFUNCTION_PRE mongleInstallFilesPre
+    Function mongleInstallFilesPre
+      ${if} ${isUpdated}
+      ${andIf} ${isForceRun}
+        Return
+      ${endIf}
+      Call instFilesPre
+    FunctionEnd
+  !endif
+!macroend
+
 !macro customFinishPage
   ; Ordinary installs keep the standard finish page without a run option
   ; (runAfterFinish: false). Only an in-app update (--updated --force-run)

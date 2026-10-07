@@ -79,7 +79,7 @@ async function install(file: string) {
   await run(file, ['/S', '/currentuser', `/D=${installDir}`], { windowsHide: true, timeout: 180000 });
   assert.deepEqual(JSON.parse(await readFile(path.join(installDir, 'resources/mongle-installed.json'), 'utf8')), { installed: true });
 }
-async function native(mode: 'exit' | 'environment' | 'discover', config: unknown) {
+async function native(mode: 'exit' | 'environment' | 'discover' | 'diagnose', config: unknown) {
   const file = path.join(root, mode + '-' + randomUUID() + '.json');
   await writeFile(file, JSON.stringify(config));
   return run('pwsh.exe', ['-NoProfile', '-File', windowsFixture, '-Mode', mode, '-Config', file], {windowsHide:true, timeout:60000});
@@ -190,6 +190,29 @@ async function observedUpdate(legacySilent: boolean) {
     });
     assert.deepEqual(JSON.parse(await readFile(path.join(installDir,'resources/mongle-installed.json'),'utf8')), {installed:true});
     return await connectInstalled(version);
+  } catch (error) {
+    // Diagnostics never select a cleanup target or substitute for launch proof.
+    try { stageProof.failureProcesses = JSON.parse((await native('diagnose',{installer:newInstaller,exe})).stdout.replace(/^\uFEFF/,'').trim()); }
+    catch (diagnosticError) { stageProof.processDiagnosticError = String(diagnosticError); }
+    try {
+      const info=JSON.parse(await readFile(path.join(dataDir,'host-info.json'),'utf8'));
+      stageProof.failureHostInfo={pid:info.pid,hostId:info.hostId,bootId:info.bootId,port:info.port,protocolVersion:info.protocolVersion};
+    } catch (diagnosticError) { stageProof.hostInfoDiagnosticError = String(diagnosticError); }
+    try { stageProof.failureMarker=JSON.parse(await readFile(path.join(installDir,'resources/mongle-installed.json'),'utf8')); }
+    catch (diagnosticError) { stageProof.markerDiagnosticError = String(diagnosticError); }
+    try { await assertCandidateBytes(); }
+    catch (diagnosticError) { stageProof.bytesDiagnosticError = String(diagnosticError); }
+    // List only the guarded installation root and one level of child directories;
+    // this exposes accidental APP_FILENAME nesting without accepting that path.
+    try {
+      stageProof.installationEntries=(await readdir(installDir,{withFileTypes:true})).slice(0,32).map(e=>({name:e.name,directory:e.isDirectory()}));
+      stageProof.nestedExecutables=[];
+      for(const entry of stageProof.installationEntries.filter((e:any)=>e.directory)) {
+        const candidate=path.join(installDir,entry.name,'MongleTerminal.exe');
+        try { await access(candidate);stageProof.nestedExecutables.push(candidate); } catch {}
+      }
+    } catch (diagnosticError) { stageProof.directoryDiagnosticError = String(diagnosticError); }
+    throw error;
   } finally {
     try { await stopWatcher(); }
     finally {
@@ -201,8 +224,10 @@ async function observedUpdate(legacySilent: boolean) {
 }
 async function assertCandidateBytes() {
   const installedAsar = sha(await readFile(path.join(installDir, 'resources/app.asar')));
+  proof.installedAsarSha256 = installedAsar;
   assert.equal(installedAsar, sha(await readFile('release/win-unpacked/resources/app.asar')));
   const installedBundle = await bundleFingerprint(path.join(installDir, 'resources/hostbundle'));
+  proof.installedHostBundle = { files: installedBundle.files, sha256: installedBundle.sha256 };
   const candidateBundle = await bundleFingerprint('release/win-unpacked/resources/hostbundle');
   const installedFiles = new Map(installedBundle.entries), candidateFiles = new Map(candidateBundle.entries);
   proof.bundleDifference = {

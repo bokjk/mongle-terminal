@@ -40,6 +40,19 @@ test('both updater generations keep real update/relaunch flags and NSIS /D last'
   assert.deepEqual(updateInstallerArgs('C:\\install path',true),['/S','--updated','--force-run','/currentuser','/D=C:\\install path']);
   assert.deepEqual(updateInstallerArgs('C:\\install path',false),['--updated','--force-run','/currentuser','/D=C:\\install path']);
 });
+test('visible updates preserve existing custom /D paths before the actual file installation page',async()=>{
+  const template=await readFile('node_modules/app-builder-lib/templates/nsis/assistedInstaller.nsh','utf8');
+  const include=await readFile('platform/windows/installer.nsh','utf8');
+  // Pin the real builder contract: its pre-callback runs even if the preceding
+  // directory page was skipped, and appends the name to a custom silent path.
+  assert.match(template,/Function instFilesPre[\s\S]*?StrCpy \$INSTDIR "\$INSTDIR\\\$\{APP_FILENAME\}"[\s\S]*?FunctionEnd/);
+  assert.ok(template.indexOf('!define MUI_PAGE_CUSTOMFUNCTION_PRE instFilesPre')<template.indexOf('!insertmacro customPageAfterChangeDir'));
+  assert.ok(template.indexOf('!insertmacro customPageAfterChangeDir')<template.indexOf('!insertmacro MUI_PAGE_INSTFILES'));
+  const override=include.match(/!macro customPageAfterChangeDir\s+([\s\S]*?)!macroend/)?.[1];assert.ok(override);
+  assert.match(override,/!undef MUI_PAGE_CUSTOMFUNCTION_PRE\s+!define MUI_PAGE_CUSTOMFUNCTION_PRE mongleInstallFilesPre/);
+  assert.match(override,/Function mongleInstallFilesPre\s+\$\{if\} \$\{isUpdated\}\s+\$\{andIf\} \$\{isForceRun\}\s+Return\s+\$\{endIf\}\s+Call instFilesPre\s+FunctionEnd/);
+  assert.doesNotMatch(override,/StrCpy|ExecShell|ExecWait|Exec /,'callback only preserves the already resolved path, never launches an app');
+});
 test('window proof requires a visible NSIS progress control and the actual automatic --updated launch',()=>{
   assert.equal(assertUpdateWindows([progress,desktop],installer,exe,[20]).desktop.pid,20,'normal exit permits OS PID reuse');
   for(const events of [
