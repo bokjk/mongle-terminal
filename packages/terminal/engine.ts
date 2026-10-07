@@ -15,6 +15,7 @@ export class TerminalEngine {
   private closing = false;
   private revision = 0;
   private inputResetGeneration = 0;
+  private notificationCount = 0;
   private title = '';
   private readonly scrollback: number;
   private hasOutput = false;
@@ -44,6 +45,14 @@ export class TerminalEngine {
       if (!this.closing && !this.restoringHistory) options.onResponse(data);
     };
     this.terminal.onData(reply);
+    const notify = () => {
+      if (this.closing || this.restoringHistory || options.notificationsEnabled?.() === false ||
+          this.notificationCount === Number.MAX_SAFE_INTEGER) return;
+      this.notificationCount += 1;
+      options.onNotification?.(this.notificationCount);
+    };
+    // Parse signals, not raw chunks: BEL terminating an OSC is not a bell.
+    this.terminal.onBell(notify);
     this.terminal.onTitleChange(title => { this.title = title.slice(0, 512); });
     this.installHostQueries(reply);
     // ConPTY requests native modifier reporting. xterm 6 does not track 9001.
@@ -65,9 +74,20 @@ export class TerminalEngine {
       this.terminal.parser.registerOscHandler(osc, data => {
         const directory = reportedDirectory(data, osc);
         if (directory && !this.closing && !this.restoringHistory) options.onDirectory?.(directory);
+        // OSC 9 also carries ConEmu commands (cwd, progress, macros, etc.).
+        // All numeric subcommands are excluded, including unknown extensions.
+        if (osc === 9 && data.trim() && !/^\d+(?:;|$)/.test(data.trim())) notify();
         return true;
       });
     }
+    this.terminal.parser.registerOscHandler(777, data => {
+      // rxvt-compatible notification. Payload is never retained or executed.
+      if (data.startsWith('notify;')) {
+        const content = data.slice(7), separator = content.indexOf(';');
+        if (separator >= 0 && (content.slice(0, separator).trim() || content.slice(separator + 1).trim())) notify();
+      }
+      return true;
+    });
   }
 
   private enqueue<T>(operation: () => Promise<T> | T): Promise<T> {
@@ -188,6 +208,7 @@ export class TerminalEngine {
         const make = (scrollback: number): PresentationSnapshot => ({
           kind: 'presentation-v1', version: PRESENTATION_VERSION,
           inputResetGeneration: this.inputResetGeneration,
+          notificationCount: this.notificationCount,
           revision: this.revision, cols: this.terminal.cols, rows: this.terminal.rows,
           data: this.serializer.serialize({ excludeModes: true, scrollback })
           // SerializeAddon ends normal-buffer serialization with the *active*

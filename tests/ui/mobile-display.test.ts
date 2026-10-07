@@ -10,7 +10,7 @@ import { TerminalEngine } from '../../packages/terminal/engine.js';
 const chrome=process.platform==='win32'&&existsSync('C:/Program Files/Google/Chrome/Application/chrome.exe');
 const smaller='터미널 글자 작게';
 const larger='터미널 글자 크게';
-const reset=(size:number)=>`글자 크기 ${size}px · 기본 14px로 복원`;
+const reset=(size:number)=>`글자 크기 ${size}px · 기본 11px로 복원`;
 
 async function openPage(browser:Browser,url:string,errors:string[],width=390,storedFont?:string,storedCompact?:string){
   const page=await browser.newPage({viewport:{width,height:844},isMobile:width<=700,hasTouch:width<=700});
@@ -92,11 +92,13 @@ test('mobile display controls resize the terminal, persist preferences and prese
       const listeners=new Set();const connectionListeners=new Set();let seq=0;let epoch=0;
       let info={id:'terminal',groupId:'group',title:'아주 긴 모바일 터미널 제목과 작업 내용',profileId:'pwsh',cwd:'C:/test',generation:'generation',status:'running',cols:40,rows:20};
       const state=()=>({hostId:'host',bootId:'boot',name:'테스트 PC',version:'0.1.0',protocolVersion:1,capabilities:['control.acquire-if-free'],groups:[{id:'group',name:'모바일 그룹',cwd:'C:/test',profileId:'pwsh',revision:1,layout:{type:'leaf',terminalId:'terminal'}}],terminals:[info],profiles:[],settings:{name:'테스트 PC',recordHistory:true,scrollback:5000}});
-      const frame=()=>{const result={type:'snapshot',terminalId:info.id,generation:info.generation,bootId:'boot',seq:++seq,snapshot:{...${JSON.stringify(snapshot)},cols:info.cols,rows:info.rows}};h.latestSeq=seq;return result;};
+      const frame=()=>{const picture={...${JSON.stringify(snapshot)},cols:info.cols,rows:info.rows};if(h.applicationScroll){picture.data='\\x1b[?1049h\\x1b[?1003h\\x1b[?1006hApplication scroll';picture.modes={...picture.modes,mouseTrackingMode:'any',mouseEncoding:'SGR'};}const result={type:'snapshot',terminalId:info.id,generation:info.generation,bootId:'boot',seq:++seq,snapshot:picture};h.latestSeq=seq;return result;};
       const emitState=()=>listeners.forEach(fn=>fn({type:'state',state:state()}));
       const h=window.displayTest={calls:[],pendingResize:null,pendingAck:null,holdResize:false,holdAck:false,latestSeq:0,ackedSeq:0,lastResizeFont:0,readonlyWrites:[],blurCount:0,dimensions:()=>({cols:info.cols,rows:info.rows}),setConnection:status=>connectionListeners.forEach(fn=>fn({status,owner:false}))};
+      h.showApplication=()=>{h.applicationScroll=true;listeners.forEach(fn=>fn(frame()));};h.inputDelayMs=0;
       const request=async(method,params)=>{
         h.calls.push({method,params});
+        if(method==='terminal.input'&&h.inputDelayMs)await new Promise(resolve=>setTimeout(resolve,h.inputDelayMs));
         if(method==='state.get')return state();
         if(method==='terminals.attach')return frame();
         if(method==='control.acquire'){
@@ -136,8 +138,61 @@ test('mobile display controls resize the terminal, persist preferences and prese
     const browser=await chromium.launch({channel:'chrome',headless:true});
     const errors:string[]=[];
     try{
+      await t.test('production App and TerminalPane keep trusted CLI touch momentum through real input-queue ACK waits',async()=>{
+        const page=await openPage(browser,url,errors,390,'11');
+        try{
+          await page.locator('.xterm-screen').tap();await settleFrames(page);
+          await page.evaluate(()=>(window as any).displayTest.showApplication());await settleFrames(page);
+          const cdp=await page.context().newCDPSession(page);
+          const rect=(await page.locator('.xterm-screen').boundingBox())!;
+          const x=rect.x+40,y=rect.y+30;
+          for(const delay of [0,32]){
+            await page.evaluate(value=>{
+              const h=(window as any).displayTest;h.calls.length=0;h.inputDelayMs=value;
+              h.wheelCount=()=>h.calls.filter((call:any)=>call.method==='terminal.input').reduce((count:number,call:any)=>count+(call.params.data.match(/\x1b\[<6[45];\d+;\d+M/g)||[]).length,0);
+              document.querySelector('.xterm-screen')!.addEventListener('touchend',()=>{h.releaseWheels=h.wheelCount();},{once:true});
+            },delay);
+            await cdp.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x,y,id:1}]});
+            for(let step=1;step<=6;step++)await cdp.send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{x,y:y+step*24,id:1}]});
+            await cdp.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
+            await page.waitForTimeout(700);
+            const counts=await page.evaluate(()=>{const h=(window as any).displayTest;return {release:h.releaseWheels,settled:h.wheelCount()};});
+            assert.ok(counts.release>=2,`ACK ${delay}: live finger movement reaches the app client`);
+            assert.ok(counts.settled>counts.release,`ACK ${delay}: production pane must coast after release: ${JSON.stringify(counts)}`);
+            assert.ok(counts.settled-counts.release<=4);
+            t.diagnostic(`production App trusted touch, ACK ${delay}ms: ${counts.release} at release -> ${counts.settled} settled`);
+          }
+        }finally{await page.close();}
+      });
+      await t.test('mobile touch speed is reachable at 320px and 390px, persists, and never remounts the terminal', async()=>{
+        for(const width of [320,390]){
+          const page=await openPage(browser,url,errors,width);
+          try{
+            const openSettings=()=>page.getByRole('main').getByRole('button',{name:'설정',exact:true}).click();
+            await openSettings();
+            const speed=page.getByRole('combobox',{name:'모바일 스크롤 속도',exact:true});
+            assert.equal(await speed.inputValue(),'0.5');
+            await page.evaluate(()=>{(window as any).scrollTerminalNode=document.querySelector('.terminal-canvas .xterm');});
+            for(const value of ['0.25','0.5','1','1.5','2']){
+              await speed.selectOption(value);
+              await page.waitForFunction(expected=>localStorage.getItem('mongle.touchScrollSpeed')===expected,value);
+              assert.equal(await page.evaluate(()=>(window as any).scrollTerminalNode===document.querySelector('.terminal-canvas .xterm')),true,'Changing speed must not recreate xterm or its input adapter');
+            }
+            const rect=await speed.boundingBox();assert.ok(rect);
+            assert.ok(rect.x>=0&&rect.x+rect.width<=width,'Speed control fits the mobile viewport');
+            assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=document.documentElement.clientWidth),true);
+            await speed.selectOption('0.25');
+            await page.reload();await page.locator('.xterm-helper-textarea').waitFor({state:'attached'});
+            await openSettings();assert.equal(await speed.inputValue(),'0.25');
+            await page.evaluate(()=>localStorage.setItem('mongle.touchScrollSpeed','"invalid"'));
+            await page.reload();await page.locator('.xterm-helper-textarea').waitFor({state:'attached'});
+            await openSettings();assert.equal(await speed.inputValue(),'0.5');
+            assert.equal(await page.evaluate(()=>(window as any).displayTest.calls.some((call:any)=>['terminals.create','terminals.close','terminals.restart','terminal.input'].includes(call.method))),false,'Changing preferences never sends terminal commands');
+          }finally{await page.close();}
+        }
+      });
       await t.test('font controls preserve editable focus during resize and ACK, fit more cells, and respect both bounds',async()=>{
-        const page=await openPage(browser,url,errors);
+        const page=await openPage(browser,url,errors,390,'14');
         try{
           await assertFont(page,14);
           await page.locator('.terminal-canvas').tap();
@@ -179,7 +234,7 @@ test('mobile display controls resize the terminal, persist preferences and prese
           for(let size=11;size<=24;size++){await page.getByRole('button',{name:larger,exact:true}).tap();await assertFont(page,size);}
           assert.equal(await page.getByRole('button',{name:larger,exact:true}).isDisabled(),true);
           await page.getByRole('button',{name:larger,exact:true}).dispatchEvent('click');await assertFont(page,24);
-          await page.getByRole('button',{name:reset(24),exact:true}).tap();await assertFont(page,14);await settleFrames(page);
+          await page.getByRole('button',{name:reset(24),exact:true}).tap();await assertFont(page,11);await settleFrames(page);
           assert.equal(await textarea.evaluate(element=>element===document.activeElement),true);
           assert.equal(await page.evaluate(()=>(window as any).displayTest.blurCount),0,'all display font controls preserve input focus');
           assert.equal(await page.evaluate(()=>(window as any).displayTest.readonlyWrites.includes(true)),false,'font resizes must not toggle read-only');
@@ -188,21 +243,22 @@ test('mobile display controls resize the terminal, persist preferences and prese
         }finally{await page.close();}
       });
 
-      await t.test('font preferences survive reload, settings include every integer, and invalid values restore 14px',async()=>{
+      await t.test('font preferences survive reload, settings include every integer, and invalid values restore 11px',async()=>{
         const page=await openPage(browser,url,errors);
         try{
-          await page.getByRole('button',{name:smaller,exact:true}).tap();await assertFont(page,13);
-          await page.reload();await assertFont(page,13);
+          await assertFont(page,11);
+          await page.getByRole('button',{name:smaller,exact:true}).tap();await assertFont(page,10);
+          await page.reload();await assertFont(page,10);
           await page.locator('.workspace-header').getByRole('button',{name:'설정',exact:true}).tap();
           const select=page.getByRole('combobox',{name:'터미널 글자 크기',exact:true});
           assert.deepEqual(await select.locator('option').evaluateAll(options=>options.map(option=>Number((option as HTMLOptionElement).value))),Array.from({length:15},(_,index)=>10+index));
-          assert.equal(await select.inputValue(),'13');
+          assert.equal(await select.inputValue(),'10');
           await select.selectOption('17');
           await page.getByRole('button',{name:'설정 닫기',exact:true}).tap();await assertFont(page,17);
           await page.reload();await assertFont(page,17);
           for(const invalid of ['9','25','13.5','"16"','null','true','{}','not-json']){
             await page.evaluate(value=>localStorage.setItem('mongle.fontSize',value),invalid);
-            await page.reload();await assertFont(page,14);
+            await page.reload();await assertFont(page,11);
           }
         }finally{await page.close();}
       });
@@ -232,15 +288,15 @@ test('mobile display controls resize the terminal, persist preferences and prese
             assert.equal(await page.evaluate(()=>(window as any).displayTest.blurCount),0,'compact toggle keeps the keyboard open');
             assert.equal(await page.evaluate(()=>(window as any).displayTest.readonlyWrites.includes(true)),false);
             assert.equal(await page.evaluate(()=>localStorage.getItem('mongle.mobileCompact')),'true');
-            for(const size of [13,12,11,10]){await page.getByRole('button',{name:smaller,exact:true}).tap();await assertFont(page,size);}
+            await page.getByRole('button',{name:smaller,exact:true}).tap();await assertFont(page,10);
             await waitForFontGeometry(page,10);
             const compactSmall=await dimensions(page);
             await assertNoHorizontalOverflow(page,width);
             const screenshot=fileURLToPath(new URL(`../../artifacts/ui/mobile-display-${width}.png`,import.meta.url));
             mkdirSync(fileURLToPath(new URL('../../artifacts/ui/',import.meta.url)),{recursive:true});
             await page.screenshot({path:screenshot});
-            t.diagnostic(`${width}px cells: 14px normal ${normal.cols}x${normal.rows}; 10px compact ${compactSmall.cols}x${compactSmall.rows}; screenshot ${screenshot}`);
-            await page.getByRole('button',{name:reset(10),exact:true}).tap();await assertFont(page,14);await waitForFontGeometry(page,14);
+            t.diagnostic(`${width}px cells: 11px normal ${normal.cols}x${normal.rows}; 10px compact ${compactSmall.cols}x${compactSmall.rows}; screenshot ${screenshot}`);
+            await page.getByRole('button',{name:reset(10),exact:true}).tap();await assertFont(page,11);await waitForFontGeometry(page,11);
             await page.getByRole('button',{name:'기본 화면',exact:true}).tap();
             await page.waitForFunction(rows=>(window as any).displayTest.dimensions().rows===rows,normal.rows);await settleFrames(page);
             await page.keyboard.type('restored');
@@ -259,8 +315,9 @@ test('mobile display controls resize the terminal, persist preferences and prese
             t.diagnostic(`${width}px terminal height: normal ${normalHeight}px; compact ${compactHeight}px; gain ${compactHeight-normalHeight}px`);
           }finally{await page.close();}
         }
-        const desktop=await openPage(browser,url,errors,1280,'14','true');
+        const desktop=await openPage(browser,url,errors,1280,undefined,'true');
         try{
+          assert.equal(await desktop.evaluate(()=>localStorage.getItem('mongle.fontSize')),'13','Desktop default remains 13px');
           assert.equal(await desktop.locator('.workspace-header').count(),0,'desktop uses per-region tab headers without an extra workspace toolbar');
           assert.equal(await desktop.locator('.pane-header').isVisible(),true,'mobile compact preference must not hide desktop region controls');
           assert.equal(await desktop.locator('.mobile-display-bar').count(),0);

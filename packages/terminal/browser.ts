@@ -45,6 +45,7 @@ export class BrowserPresentationAdapter {
   private inputResetGeneration: number | undefined;
   private touchContext = 0;
   private touchWheelInput = false;
+  private readonly touchScroll: ReturnType<typeof attachTouchScrollback>;
   private readonly subscriptions: Array<{ dispose(): void }> = [];
   private readonly removeBoundary: () => void;
   private compositionEndTimer: ReturnType<typeof setTimeout> | undefined;
@@ -78,24 +79,27 @@ export class BrowserPresentationAdapter {
   constructor(
     private readonly terminal: Terminal,
     private readonly onInput: (data: string, encoding: TerminalInputEncoding, source?: 'touch-scroll') => void,
-    options: { onTouchScrollInput?: () => void } = {},
+    options: { onTouchScrollInput?: () => void; getTouchScrollSpeed?: () => number; touchMomentumReady?: () => boolean } = {},
   ) {
     this.removeBoundary = suppressRendererResponses(terminal);
     terminal.options.disableStdin = true;
     const touchScreen = terminal.element?.querySelector('.xterm-screen');
-    this.subscriptions.push(
-      attachTouchScrollback(terminal, {
+    this.touchScroll = attachTouchScrollback(terminal, {
         context: () => this.modes && ['vt200', 'drag', 'any'].includes(this.modes.mouseTrackingMode)
           ? this.touchContext : undefined,
         enabled: () => this.acceptsTerminalInput(),
+        momentumReady: options.touchMomentumReady,
         request: options.onTouchScrollInput,
         dispatchWheel: event => {
           this.touchWheelInput = true;
           try { touchScreen?.dispatchEvent(event); }
           finally { this.touchWheelInput = false; }
         },
-      }),
+      }, options.getTouchScrollSpeed);
+    this.subscriptions.push(
+      this.touchScroll,
       terminal.onData(data => {
+        if (!this.touchWheelInput) this.touchScroll.cancel();
         if (!this.acceptsTerminalInput()) return;
         onInput(data, 'utf8', this.touchWheelInput ? 'touch-scroll' : undefined);
         // A following key can force xterm's deferred composition to commit
@@ -103,7 +107,10 @@ export class BrowserPresentationAdapter {
         // before xterm proceeds with the following key.
         if (this.compositionEndTimer !== undefined) this.flushModifiedEnter();
       }),
-      terminal.onBinary(data => { if (this.acceptsTerminalInput()) onInput(data, 'binary', this.touchWheelInput ? 'touch-scroll' : undefined); }),
+      terminal.onBinary(data => {
+        if (!this.touchWheelInput) this.touchScroll.cancel();
+        if (this.acceptsTerminalInput()) onInput(data, 'binary', this.touchWheelInput ? 'touch-scroll' : undefined);
+      }),
     );
     terminal.textarea?.addEventListener('compositionstart', this.composing);
     terminal.textarea?.addEventListener('compositionend', this.composed);
@@ -205,12 +212,14 @@ export class BrowserPresentationAdapter {
         this.modes?.mouseEncoding !== modes.mouseEncoding ||
         (frame.inputResetGeneration !== undefined && frame.inputResetGeneration !== this.inputResetGeneration)) {
       this.touchContext += 1;
+      this.touchScroll.cancel();
     }
     const viewedLines = !atBottom && sameGeometry && old.type === 'normal'
       ? Array.from({ length: frame.rows }, (_, row) => old.getLine(oldViewportY + row)?.translateToString()) : undefined;
     const selection = sameGeometry ? this.terminal.getSelectionPosition?.() : undefined;
     const selectedText = selection ? this.terminal.getSelection() : '';
     const finishPresentation = beginPresentation(this.terminal);
+    const finishTouchPresentation = this.touchScroll.beginPresentation();
     let selectionDrag: ReturnType<typeof captureSelectionDrag>;
     let finishMousePresentation: (() => void) | undefined;
     let complete = false;
@@ -250,6 +259,7 @@ export class BrowserPresentationAdapter {
     } finally {
       finishMousePresentation?.();
       selectionDrag?.finish(false);
+      finishTouchPresentation(complete && !this.disposed);
       setPresentationPending(this.terminal, false);
       finishPresentation(complete && !this.disposed, frame.rows, this.terminal.getSelectionPosition?.());
       if (!this.disposed) this.terminal.refresh?.(0, frame.rows - 1);
@@ -281,6 +291,7 @@ export class BrowserPresentationAdapter {
 
   /** For explicit UI controls such as Esc, Ctrl-C and direction buttons. */
   sendInput(data: string): void {
+    this.touchScroll.cancel();
     if (this.enabled && !this.disposed) this.onInput(data, 'utf8');
   }
 
@@ -290,6 +301,7 @@ export class BrowserPresentationAdapter {
   }
 
   paste(text: string): void {
+    this.touchScroll.cancel();
     if (!this.enabled || this.disposed) return;
     const normalized = text.replace(/\r?\n/g, '\r');
     const bracketed = this.modes?.bracketedPasteMode && this.terminal.options.ignoreBracketedPasteMode !== true;

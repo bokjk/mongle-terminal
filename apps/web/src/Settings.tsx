@@ -4,6 +4,7 @@ import type { AppClient } from '../../../packages/client/index';
 import type { HostState } from '../../../packages/protocol/index';
 import { UpdateSettings } from './UpdateSettings';
 import { RemoteAccessQr } from './RemoteAccessQr';
+import { TOUCH_SCROLL_SPEEDS, touchScrollSpeed } from '../../../packages/terminal/touch-scrollback';
 
 type Tab = 'appearance' | 'host' | 'remote' | 'updates' | 'help';
 type RemoteStatus = { origin?: string | null; enabled: boolean; loopbackUrl?: string };
@@ -31,6 +32,9 @@ export interface SettingsProps {
   owner: boolean;
   theme: 'dark' | 'light';
   fontSize: number;
+  scrollSpeed: number;
+  onScrollSpeed: (value: number) => void;
+  refreshBlocked?: boolean;
   onTheme: (value: 'dark' | 'light') => void;
   onFontSize: (value: number) => void;
   onClose: () => void;
@@ -51,7 +55,7 @@ function dateLabel(value?: string | number) {
 }
 function errorMessage(error: unknown) { return error instanceof Error ? error.message : '요청을 완료하지 못했습니다.'; }
 
-export function Settings({ client, state, owner, theme, fontSize, onTheme, onFontSize, onClose, onError }: SettingsProps) {
+export function Settings({ client, state, owner, theme, fontSize, scrollSpeed, onScrollSpeed, refreshBlocked = false, onTheme, onFontSize, onClose, onError }: SettingsProps) {
   const [tab, setTab] = useState<Tab>('appearance');
   const [name, setName] = useState(state.settings.name);
   const [recordHistory, setRecordHistory] = useState(state.settings.recordHistory);
@@ -184,6 +188,12 @@ export function Settings({ client, state, owner, theme, fontSize, onTheme, onFon
               <div className="setting-row"><label className="setting-label" htmlFor={`${id}-font`}>터미널 글자 크기</label><select id={`${id}-font`} className="input" value={fontSize} onChange={event => onFontSize(Number(event.target.value))}>{Array.from({length:15},(_,index)=>index+10).map(value => <option value={value} key={value}>{value}px</option>)}</select></div>
               <div className="code-box" style={{ fontSize }} aria-label="터미널 글꼴 미리 보기">PS C:\Projects\mongle&gt; 안녕하세요, 몽글터미널</div>
             </div>
+            <div className="settings-section">
+              <h3 className="settings-title">모바일 스크롤</h3>
+              <p className="settings-description" id={`${id}-scroll-help`}>한 번에 너무 많이 이동하면 속도를 낮춰 주세요. 이 기기에 저장되며 다음 스와이프부터 적용됩니다. 마우스 휠 속도는 바뀌지 않습니다.</p>
+              <div className="setting-row"><label className="setting-label" htmlFor={`${id}-scroll`}>모바일 스크롤 속도</label><select id={`${id}-scroll`} className="input" aria-describedby={`${id}-scroll-help`} value={scrollSpeed} onChange={event => onScrollSpeed(touchScrollSpeed(Number(event.target.value)))}>{TOUCH_SCROLL_SPEEDS.map(value => <option key={value} value={value}>{value}배{value === 0.5 ? ' (기본)' : ''}</option>)}</select></div>
+              <p className="hint">천천히 밀면 손가락을 따라가고, 빠르게 넘기면 짧게 감속합니다. 다시 터치하면 멈춥니다. Claude·Codex에서는 프로그램에 따라 이동하는 줄 수가 다를 수 있습니다.</p>
+            </div>
           </>}
           {tab === 'host' && <div className="settings-section"><h3 className="settings-title">{state.name}</h3><p className="settings-description">이 컴퓨터의 이름과 기록 보관 방식을 설정합니다.</p>
             {!owner && <p className="hint">컴퓨터 설정은 해당 컴퓨터의 몽글터미널 앱에서 변경할 수 있습니다.</p>}
@@ -221,8 +231,9 @@ export function Settings({ client, state, owner, theme, fontSize, onTheme, onFon
             </div>
             <div className="settings-section"><div className="form-row"><h3 className="settings-title">연결한 기기</h3><button type="button" className="icon-button" aria-label="연결한 기기 새로 고침" disabled={!!busy} onClick={() => void run('devices', refreshDevices)}><RefreshCw size={16} /></button></div>{activeDevices.length === 0 ? <p className="hint">아직 연결한 기기가 없습니다.</p> : activeDevices.map(device => <div className="device-row" key={device.deviceId}><div className="device-info"><strong>{device.name}</strong><p className="hint">연결: {dateLabel(device.createdAt)}</p>{device.origin && <p className="hint" style={{ overflowWrap: 'anywhere' }}>{device.origin}</p>}{revokeId === device.deviceId && <p className="hint">이 기기의 접속 권한을 해제합니다. 다시 접속하려면 승인이 필요합니다.</p>}</div>{revokeId === device.deviceId ? <div className="form-row"><button type="button" className="button danger" disabled={!!busy} onClick={() => void run(`revoke-${device.deviceId}`, async () => { await client.request('devices.revoke', { deviceId: device.deviceId }); if (mounted.current) { setRevokeId(null); setNotice('기기의 접속 권한을 해제했습니다.'); } await refreshDevices(); })}>연결 해제</button><button type="button" className="button subtle" disabled={!!busy} onClick={() => setRevokeId(null)}>취소</button></div> : <button type="button" className="icon-button" disabled={!!busy} aria-label={`${device.name} 접속 권한 해제`} onClick={() => setRevokeId(device.deviceId)}><Trash2 size={16} /></button>}</div>)}</div>
           </>)}
-          {tab === 'updates' && <UpdateSettings />}
+          {tab === 'updates' && <UpdateSettings refreshBlocked={refreshBlocked} />}
           {tab === 'help' && <>
+            <div className="settings-section"><h3 className="settings-title">목록 오른쪽의 알림 점</h3><p className="settings-description">터미널 프로그램이 완료나 입력 대기 알림을 보내면 해당 작업과 그룹에 점이 표시됩니다. 그 터미널을 열어 화면을 확인하면 사라집니다. 읽음 상태는 이 기기에 저장됩니다.</p><p className="hint">CLI에서 알림을 꺼 두면 표시되지 않습니다. Claude는 알림 채널을 terminal_bell로, Codex는 터미널 알림을 켜서 사용하세요. 점은 작업의 성공 여부를 뜻하지 않습니다.</p></div>
             <div className="settings-section"><h3 className="settings-title">작업은 이 컴퓨터에서 계속됩니다</h3><p className="settings-description">앱 창을 닫아도 몽글터미널의 백그라운드 실행부가 유지되는 동안 터미널 작업이 계속됩니다. 다시 열거나 다른 기기에서 접속하면 실행 중인 세션에 이어서 연결합니다.</p><p className="hint">컴퓨터 종료·재부팅·로그아웃 또는 백그라운드 실행부 종료 시 실행 중인 프로세스는 유지되지 않습니다. 다시 열면 저장된 구성과 보관된 출력을 확인할 수 있으며, 이전 명령을 자동 실행하지 않습니다.</p></div>
             <div className="settings-section"><h3 className="settings-title">원격에서 사용하기</h3><p className="settings-description">대상 컴퓨터가 켜져 있고 Tailscale에 연결되어 있어야 합니다. 모바일 브라우저에서 접속 주소를 열고 홈 화면에 추가하면 앱처럼 사용할 수 있습니다.</p><p className="hint">한 터미널에는 한 기기만 입력할 수 있습니다. 다른 기기에서 제어권을 가져오면 기존 기기는 화면을 보는 상태로 바뀝니다.</p></div>
             <div className="settings-section"><h3 className="settings-title">터미널 단축키</h3><div className="setting-row"><span>선택한 내용 복사</span><kbd>Ctrl + Shift + C</kbd></div><div className="setting-row"><span>붙여넣기</span><kbd>Ctrl + Shift + V</kbd></div><div className="setting-row"><span>출력 검색</span><kbd>Ctrl + Shift + F</kbd></div><p className="hint">분할과 화면 확대는 각 터미널 제목줄에서 사용할 수 있습니다. Ctrl + C는 실행 중인 명령에 중단 신호를 보냅니다.</p></div>

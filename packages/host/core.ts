@@ -30,7 +30,7 @@ const MAX_FRAME_BYTES = 16 * 1024 * 1024;
 type Attachment = { lastSent: number; lastAck: number; pending?: SnapshotEvent };
 type Client = { ctx: ConnectionContext; send: Send; attached: Map<string, Attachment> };
 type Lease = { connectionId: string; deviceName: string; epoch: number; expires: number; ready: boolean; syncSeq: number; inputSeq: number; dedupe: Map<string, {seq:number; hash:string}> };
-type Runtime = { info: TerminalInfo; engine: TerminalEngine; pty?: pty.IPty; stopPty?:()=>Promise<void>; seq: number; epoch: number; lease?: Lease; timer?: ReturnType<typeof setTimeout>; framePending?: boolean; frameDirty?: boolean; checkpointAt: number; lastFrame?: SnapshotEvent; disposed: boolean; pendingBytes: number; directoryChanged?: boolean };
+type Runtime = { info: TerminalInfo; engine: TerminalEngine; pty?: pty.IPty; stopPty?:()=>Promise<void>; seq: number; epoch: number; lease?: Lease; timer?: ReturnType<typeof setTimeout>; framePending?: boolean; frameDirty?: boolean; checkpointAt: number; lastFrame?: SnapshotEvent; disposed: boolean; pendingBytes: number; directoryChanged?: boolean; notificationChanged?: boolean };
 
 /** Owns the shells, independent of every GUI/browser attachment. */
 export class HostCore {
@@ -510,7 +510,7 @@ export class HostCore {
         this.requireClient(client);
         await this.disposeRuntime(info.id);
         this.requireClient(client);
-        info.generation=randomUUID();info.exitCode=undefined;info.historyAvailable=false;info.status='interrupted';info.resumeOnBoot=false;delete info.restoreError;this.group(info.groupId).revision++;
+        info.generation=randomUUID();info.notificationCount=0;info.exitCode=undefined;info.historyAvailable=false;info.status='interrupted';info.resumeOnBoot=false;delete info.restoreError;this.group(info.groupId).revision++;
         for(const connection of this.clients.values())connection.attached.delete(info.id);
         this.archivedSequences.delete(info.id);this.archivedFrames.delete(info.id);this.persist(true,[info.id]);
         try {await this.startTerminal(info,profile,launch);} finally {this.persist();this.broadcastState();}
@@ -616,7 +616,7 @@ export class HostCore {
       if(this.terminals.filter(item=>item.status==='running').length>=32)throw new AppError('LIMIT_REACHED','실행 가능한 터미널 수를 넘어 새 셸을 열지 못했습니다.');
       const profile=this.profile(info.profileId),launch=await resolveShellLaunch(profile,info.cwd);
       const snapshot=this.settings.recordHistory?this.store.getSnapshot(info.id,info.generation):undefined;
-      info.generation=randomUUID();info.historyAvailable=false;delete info.restoreError;
+      info.generation=randomUUID();info.notificationCount=0;info.historyAvailable=false;delete info.restoreError;
       await this.startTerminal(info,profile,launch,snapshot);
       // Commit the replacement generation and its restored history together.
       // A second boot must never see metadata pointing at the old generation's frame.
@@ -637,8 +637,12 @@ export class HostCore {
   private async startTerminal(info:TerminalInfo,profile:ShellProfile,launch:{executable:string;args:string[];cwd:string},history?:PresentationSnapshot) {
     const runtime={} as Runtime;
     Object.assign(runtime,{info,seq:0,epoch:0,checkpointAt:0,disposed:false,pendingBytes:0});
+    info.notificationCount=0;
     delete info.currentCwd;
-    runtime.engine=new TerminalEngine({cols:info.cols,rows:info.rows,scrollback:this.settings.scrollback,onDirectory:directory=>{if(!runtime.disposed&&info.currentCwd!==directory){info.currentCwd=directory;runtime.directoryChanged=true;}},onResponse:(data:string)=>{try{if(runtime.pty && info.status==='running')runtime.pty.write(data);}catch{/* exit can race an emulator reply */}}});
+    runtime.engine=new TerminalEngine({cols:info.cols,rows:info.rows,scrollback:this.settings.scrollback,
+      notificationsEnabled:()=>!runtime.disposed&&!this.closing&&!this.shutdownPrepared&&this.runtimes.get(info.id)===runtime,
+      onNotification:count=>{info.notificationCount=count;runtime.notificationChanged=true;},
+      onDirectory:directory=>{if(!runtime.disposed&&info.currentCwd!==directory){info.currentCwd=directory;runtime.directoryChanged=true;}},onResponse:(data:string)=>{try{if(runtime.pty && info.status==='running')runtime.pty.write(data);}catch{/* exit can race an emulator reply */}}});
     this.runtimes.set(info.id,runtime);
     try {
       if(history)await runtime.engine.restoreHistory(history);
@@ -682,7 +686,7 @@ export class HostCore {
   private async frame(info:TerminalInfo):Promise<SnapshotEvent> {
     const runtime=this.runtimes.get(info.id);
     let snapshot:PresentationSnapshot;
-    if(runtime){snapshot=await runtime.engine.snapshot();if(runtime.directoryChanged&&!runtime.disposed){runtime.directoryChanged=false;this.broadcastState();}}
+    if(runtime){snapshot=await runtime.engine.snapshot();if((runtime.directoryChanged||runtime.notificationChanged)&&!runtime.disposed&&!this.closing&&!this.shutdownPrepared){runtime.directoryChanged=false;runtime.notificationChanged=false;this.broadcastState();}}
     else snapshot=this.archivedFrames.get(info.id) || (this.settings.recordHistory ? this.store.getSnapshot(info.id,info.generation) || await this.blankSnapshot(info) : await this.blankSnapshot(info));
     const seq=runtime?++runtime.seq:(this.archivedSequences.get(info.id) || 0)+1;
     if(!runtime)this.archivedSequences.set(info.id,seq);
@@ -692,7 +696,14 @@ export class HostCore {
     if(runtime)runtime.lastFrame=frame;
     return frame;
   }
-  private async blankSnapshot(info:TerminalInfo):Promise<PresentationSnapshot>{const engine=new TerminalEngine({cols:info.cols,rows:info.rows,scrollback:0,onResponse:()=>{}});try{return await engine.snapshot();}finally{await engine.dispose();}}
+  private async blankSnapshot(info:TerminalInfo):Promise<PresentationSnapshot>{
+    // A stopped generation may retain metadata without output history. Its
+    // empty view still acknowledges that generation's notifications; this
+    // temporary renderer is not a new live process with a reset counter.
+    const notificationCount=info.notificationCount??0;
+    const engine=new TerminalEngine({cols:info.cols,rows:info.rows,scrollback:0,onResponse:()=>{}});
+    try{return {...await engine.snapshot(),notificationCount};}finally{await engine.dispose();}
+  }
   private broadcastFrame(frame:SnapshotEvent,except?:string){for(const [id,client]of this.clients){const a=client.attached.get(frame.terminalId);if(a&&id!==except){a.pending=frame;this.flushAttachment(client,a);}}}
   private flushAttachment(client:Client,attachment:Attachment){if(attachment.pending && attachment.lastAck>=attachment.lastSent){const frame=attachment.pending;attachment.pending=undefined;if(frame.seq>attachment.lastSent){attachment.lastSent=frame.seq;this.send(client,frame);}}}
   private checkpoint(runtime:Runtime,frame:SnapshotEvent){

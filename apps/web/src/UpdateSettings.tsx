@@ -12,7 +12,7 @@ const labels: Record<UpdateState['status'], string> = {
   error: '업데이트를 완료하지 못했습니다.',
 };
 
-export function UpdateSettings() {
+export function UpdateSettings({ refreshBlocked = false }: { refreshBlocked?: boolean }) {
   const bridge = window.mongle;
   const supported = !!(bridge?.getUpdateState && bridge.checkForUpdates && bridge.installUpdate && bridge.onUpdate);
   const [state, setState] = useState<UpdateState | null>(null);
@@ -63,7 +63,14 @@ export function UpdateSettings() {
     }
   }
 
-  if (!bridge) return <div className="settings-section"><h3 className="settings-title">앱 업데이트</h3><p className="settings-description">브라우저에서는 앱을 따로 설치하거나 업데이트하지 않습니다. 접속 대상 컴퓨터의 몽글터미널을 업데이트한 뒤 이 페이지를 새로고침하면 새 화면을 사용할 수 있습니다.</p><p className="hint">컴퓨터 앱의 업데이트는 해당 컴퓨터에서 진행합니다.</p></div>;
+  if (!bridge) return <div className="settings-section">
+    <h3 className="settings-title">화면 새로고침</h3>
+    <p className="settings-description">접속한 컴퓨터의 몽글터미널을 업데이트한 뒤 새로고침하면 새 화면을 사용할 수 있습니다. 홈 화면에 설치한 앱도 다시 설치할 필요가 없습니다.</p>
+    <button type="button" className="button subtle" disabled={refreshBlocked} onClick={() => { if (!refreshBlocked) window.location.reload(); }}><RefreshCw size={16} />화면 새로고침</button>
+    {refreshBlocked && <p className="hint" role="status">저장하지 않았거나 저장 중인 파일이 있습니다. 설정을 닫고 파일을 저장하거나 변경을 취소한 뒤 다시 시도해 주세요.</p>}
+    <p className="hint">화면을 다시 불러오고 연결합니다. 컴퓨터에서 실행 중인 터미널 작업은 계속되며, 열린 파일 탭은 닫힙니다.</p>
+    <p className="hint">컴퓨터 앱의 업데이트는 해당 컴퓨터에서 진행합니다.</p>
+  </div>;
   const pending = busy || (!state && !error) || !!(state && ['checking', 'downloading', 'installing'].includes(state.status));
   const progress = state?.progress !== undefined && Number.isFinite(state.progress) ? Math.max(0, Math.min(100, state.progress)) : undefined;
   const message = state?.message || (state ? labels[state.status] : '업데이트 상태를 확인하고 있습니다.');

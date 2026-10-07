@@ -61,7 +61,10 @@ test('mobile UI preserves resize input within its acknowledged lease and discard
     try{
       const page=await browser.newPage({viewport:{width:390,height:844},isMobile:true,hasTouch:true});page.setDefaultTimeout(5000);
       const inputText=()=>page.evaluate(()=>(window as any).mobileTest.calls.filter((call:any)=>call.method==='terminal.input').map((call:any)=>call.params.data).join(''));
-      const waitForInput=(expected:string)=>page.waitForFunction(expected=>(window as any).mobileTest.calls.filter((call:any)=>call.method==='terminal.input').map((call:any)=>call.params.data).join('')===expected,expected);
+      const waitForInput=async(expected:string)=>{try{await page.waitForFunction(expected=>(window as any).mobileTest.calls.filter((call:any)=>call.method==='terminal.input').map((call:any)=>call.params.data).join('')===expected,expected);}catch(error){
+        const state=await page.evaluate(()=>{const h=(window as any).mobileTest,area=document.querySelector<HTMLTextAreaElement>('.xterm-helper-textarea');return {pendingResize:Boolean(h.pendingResize),pendingAck:Boolean(h.pendingAck),focused:document.activeElement===area,readOnly:area?.readOnly,input:h.calls.filter((call:any)=>call.method==='terminal.input').map((call:any)=>call.params.data).join(''),lastCalls:h.calls.slice(-5)};});
+        throw new Error(`Input did not settle: ${JSON.stringify(state)}`,{cause:error});
+      }};
       const waitForAck=()=>page.waitForFunction(()=>{const h=(window as any).mobileTest;return !h.pendingAck&&h.ackedSeq===h.latestSeq;});
       const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
       await page.addInitScript('window.__name=function(fn){return fn;};');
@@ -162,7 +165,12 @@ test('mobile UI preserves resize input within its acknowledged lease and discard
       await page.keyboard.type('NEW_ACQUIRE_PRE_ACK');
       assert.equal(await inputText(),delivered+'xc');
       await page.evaluate(()=>(window as any).mobileTest.pendingAck());await page.getByText('여기서 제어 중',{exact:true}).waitFor();
-      await page.keyboard.type('d');await waitForInput(delivered+'xcd');
+      // As above, clearing the takeover warning restores the viewport height.
+      // The fake host must answer that resize too; a real host does so normally.
+      await page.waitForFunction(()=>Boolean((window as any).mobileTest.pendingResize));
+      await page.keyboard.type('d');assert.equal(await inputText(),delivered+'xc');
+      await page.evaluate(()=>(window as any).mobileTest.pendingResize());await waitForAck();
+      await waitForInput(delivered+'xcd');
       assert.equal(await inputText(),delivered+'xcd','a replacement lease only sends new input; revoked and acquire-stage input never replay');
       assert.deepEqual(errors,[]);
     }finally{await browser.close();await new Promise<void>(resolve=>server.close(()=>resolve()));}

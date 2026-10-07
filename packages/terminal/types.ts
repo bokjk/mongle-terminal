@@ -5,6 +5,8 @@ export interface PresentationSnapshot {
   revision?: number;
   /** Live-engine RIS generation. Absent on older hosts; never restored into a new PTY. */
   inputResetGeneration?: number;
+  /** Notifications parsed through this exact frame; starts at zero in each live engine. */
+  notificationCount?: number;
   cols: number;
   rows: number;
   data: string;
@@ -42,6 +44,9 @@ export interface TerminalEngineOptions {
   scrollback?: number;
   onResponse: (data: string) => void;
   onDirectory?: (directory: string) => void;
+  onNotification?: (count: number) => void;
+  /** Host lifetime gate; suppress signals without dropping final output/history. */
+  notificationsEnabled?: () => boolean;
 }
 
 export const PRESENTATION_VERSION = 'xterm-6.0.0/serialize-0.14.0/presentation-1';

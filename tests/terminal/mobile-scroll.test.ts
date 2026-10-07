@@ -60,7 +60,7 @@ async function position(page: Page) {
 
 // This goes through Chrome's trusted touch pipeline rather than dispatchEvent,
 // mouse-wheel simulation, or directly setting the terminal scroll position.
-async function swipe(page: Page, touch: CDPSession, direction: 'history' | 'latest') {
+async function swipe(page: Page, touch: CDPSession, direction: 'history' | 'latest', coast = false) {
   const rect = await page.locator('.xterm-screen').boundingBox();
   assert.ok(rect && rect.height > 60);
   const x = rect.x + rect.width / 2;
@@ -70,6 +70,8 @@ async function swipe(page: Page, touch: CDPSession, direction: 'history' | 'late
   for (let step = 1; step <= 8; step += 1) {
     await touch.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y: start + (end - start) * step / 8, id: 1 }] });
   }
+  // Hold before release in distance/encoding checks; inertia has separate tests.
+  if (!coast) await page.waitForTimeout(100);
   await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
 }
@@ -281,6 +283,38 @@ test('real Chrome Android emulation: fullscreen mouse applications receive touch
     }
   }));
 
+test('real Chrome Android emulation: touch speed reduces actual xterm wheel reports in both directions', browserOptions,
+  async () => withMobileTerminal(async (page, touch, engine) => {
+    await engine.resize(40, 30);
+    await engine.write('\x1bc\x1b[?1049h\x1b[?1003h\x1b[?1006h' + 'scroll speed');
+    await page.evaluate(async frame => {
+      const h = (window as any).mongleTerminalTest;
+      await h.adapter.applySnapshot(frame); h.adapter.setInputEnabled(true);
+    }, await engine.snapshot());
+    const counts: Record<string, number> = {};
+    for (const speed of [0.25, 0.5, 1, 1.5, 2]) {
+      await page.evaluate(value => { const h = (window as any).mongleTerminalTest; h.setTouchScrollSpeed(value); }, speed);
+      for (const direction of ['history', 'latest'] as const) {
+        await page.evaluate(() => { (window as any).mongleTerminalTest.inputs.length = 0; });
+        await swipe(page, touch, direction);
+        const reports = (await position(page)).inputs as Array<[string, string]>;
+        const rect = await page.locator('.xterm-screen').boundingBox();
+        const expected = Math.floor(rect!.height * 0.6 * speed / 24);
+        assert.ok(Math.abs(reports.length - expected) <= 1, `speed=${speed}: ${reports.length} reports, expected about ${expected}`);
+        assert.ok(reports.length > 0);
+        const encoding = direction === 'history' ? /^\x1b\[<64;\d+;\d+M$/ : /^\x1b\[<65;\d+;\d+M$/;
+        assert.ok(reports.every(([data, kind]) => kind === 'utf8' && encoding.test(data)));
+        counts[`${speed}:${direction}`] = reports.length;
+      }
+    }
+    for (const direction of ['history', 'latest']) {
+      assert.ok(counts[`0.25:${direction}`] < counts[`0.5:${direction}`]);
+      assert.ok(counts[`0.5:${direction}`] < counts[`1:${direction}`]);
+      assert.ok(counts[`1:${direction}`] < counts[`2:${direction}`]);
+    }
+    recordEvidence('touch-speed', counts);
+  }));
+
 test('real Chrome Android emulation: unsupported alternate mouse modes do not generate keyboard history navigation', browserOptions,
   async () => withMobileTerminal(async (page, touch, engine) => {
     for (const mouseMode of ['', '\x1b[?9h']) {
@@ -292,6 +326,128 @@ test('real Chrome Android emulation: unsupported alternate mouse modes do not ge
       await swipe(page, touch, 'history'); await swipe(page, touch, 'latest');
       assert.deepEqual((await position(page)).inputs, [], 'none/x10 never turns a swipe into CSI or SS3 arrows');
     }
+  }));
+
+test('real Chrome touch: the same physical drag sends the same CLI reports at 11, 14 and 20px', browserOptions,
+  async () => withMobileTerminal(async (page, touch, engine) => {
+    await engine.resize(30, 30);
+    await engine.write('\x1bc\x1b[?1049h\x1b[?1003h\x1b[?1006hfont-independent touch');
+    await page.evaluate(async frame => {
+      const h = (window as any).mongleTerminalTest;
+      await h.adapter.applySnapshot(frame); h.adapter.setInputEnabled(true); h.setTouchScrollSpeed(0.5);
+    }, await engine.snapshot());
+    const counts: Record<string, number> = {};
+    for (const font of [11, 14, 20]) {
+      await page.evaluate(value => { const h = (window as any).mongleTerminalTest; h.terminal.options.fontSize = value; h.inputs.length = 0; }, font);
+      await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+      const rect = (await page.locator('.xterm-screen').boundingBox())!;
+      const x = rect.x + 50, y = rect.y + 20;
+      await touch.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y, id: 1 }] });
+      for (let step = 1; step <= 6; step++) await touch.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y: y + step * 20, id: 1 }] });
+      await page.waitForTimeout(100);
+      await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+      const reports = (await position(page)).inputs as Array<[string, string]>;
+      assert.equal(reports.length, 2, `font ${font}: 120px at default speed = two detents`);
+      counts[font] = reports.length;
+    }
+    recordEvidence('font-independent', counts);
+  }));
+
+test('real Chrome touch: release coasts briefly, new touch stops it and reduced motion stays still', browserOptions,
+  async () => withMobileTerminal(async (page, touch, engine) => {
+    await engine.resize(30, 30);
+    await engine.write(Array.from({ length: 150 }, (_, index) => `momentum-${index}\r\n`).join(''));
+    const snapshot = await engine.snapshot();
+    const evidence: unknown[] = [];
+    for (const action of ['coast', 'retouch', 'reduced']) {
+      await page.emulateMedia({ reducedMotion: action === 'reduced' ? 'reduce' : 'no-preference' });
+      await page.evaluate(async frame => {
+        const h = (window as any).mongleTerminalTest;
+        await h.adapter.applySnapshot(frame); h.terminal.scrollToBottom(); h.setTouchScrollSpeed(0.5);
+        h.releaseViewport = undefined;
+        h.terminal.element.addEventListener('touchend', () => { h.releaseViewport = h.terminal.buffer.active.viewportY; }, { once: true });
+      }, snapshot);
+      await swipe(page, touch, 'history', true);
+      const released = await page.evaluate(() => (window as any).mongleTerminalTest.releaseViewport as number);
+      if (action === 'retouch') {
+        const rect = (await page.locator('.xterm-screen').boundingBox())!;
+        await touch.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: rect.x + 40, y: rect.y + 30, id: 2 }] });
+      }
+      const afterAction = (await position(page)).viewport;
+      await page.waitForTimeout(700);
+      const settled = await position(page);
+      if (action === 'coast') {
+        assert.ok(settled.viewport < released, 'release continues in the same direction');
+        assert.ok(released - settled.viewport <= 14, 'continuation is bounded to 200px plus a row remainder');
+      } else assert.equal(settled.viewport, action === 'retouch' ? afterAction : released);
+      assert.deepEqual(settled.inputs, [], 'history momentum is local only');
+      evidence.push({ action, released, afterAction, settled: settled.viewport });
+      if (action === 'retouch') await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    }
+    recordEvidence('momentum-and-retouch', evidence);
+  }));
+
+test('real Chrome touch: local movement during a pending presentation survives viewport restoration', browserOptions,
+  async () => withMobileTerminal(async (page, touch, engine) => {
+    await engine.resize(30, 30);
+    await engine.write(Array.from({ length: 150 }, (_, index) => `parsing-${index}\r\n`).join(''));
+    const snapshot = await engine.snapshot();
+    await page.evaluate(async frame => {
+      const h = (window as any).mongleTerminalTest;
+      await h.adapter.applySnapshot(frame); h.terminal.scrollToLine(70); h.setTouchScrollSpeed(0.5);
+    }, snapshot);
+    const rect = (await page.locator('.xterm-screen').boundingBox())!;
+    const x = rect.x + 40, y = rect.y + 20;
+    await touch.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y, id: 1 }] });
+    await touch.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y: y + 32, id: 1 }] });
+    const before = (await position(page)).viewport;
+    await page.evaluate(frame => {
+      const h = (window as any).mongleTerminalTest;
+      const write = h.terminal.write.bind(h.terminal);
+      h.terminal.write = (data: string, done: () => void) => write(data, () => {
+        h.finishWrite = done; h.terminal.write = write;
+      });
+      h.pendingFrame = h.adapter.applySnapshot(frame);
+    }, snapshot);
+    await page.waitForFunction(() => !!(window as any).mongleTerminalTest.finishWrite);
+    await touch.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y: y + 80, id: 1 }] });
+    const firstPaint = await page.evaluate(async () => {
+      const h = (window as any).mongleTerminalTest; h.finishWrite(); await h.pendingFrame;
+      const buffer = h.terminal.buffer.active;
+      return { painted: h.terminal.element.querySelector('.xterm-rows').firstElementChild.textContent.trimEnd(),
+        expected: buffer.getLine(buffer.viewportY).translateToString(true) };
+    });
+    assert.equal(firstPaint.painted, firstPaint.expected, 'the first committed paint includes held touch movement, before another RAF');
+    const after = (await position(page)).viewport;
+    assert.ok(after < before, `touch during parsing must survive restoring the old viewport: ${before} -> ${after}`);
+    assert.deepEqual((await position(page)).inputs, []);
+    await touch.send('Input.dispatchTouchEvent', { type: 'touchCancel', touchPoints: [] });
+    recordEvidence('pending-presentation', { before, after });
+  }));
+
+test('real Chrome touch: CLI momentum tolerates a short ACK without queuing delayed reports', browserOptions,
+  async () => withMobileTerminal(async (page, touch, engine) => {
+    await engine.resize(30, 30);
+    await engine.write('\x1bc\x1b[?1049h\x1b[?1003h\x1b[?1006hACK timing');
+    const evidence: unknown[] = [];
+    for (const delay of [0, 32, 200]) {
+      await page.evaluate(async ({ frame, delay }) => {
+        const h = (window as any).mongleTerminalTest;
+        await h.adapter.applySnapshot(frame); h.adapter.setInputEnabled(true);
+        h.setTouchScrollSpeed(0.5); h.setTouchAckDelay(delay); h.inputs.length = 0;
+        h.terminal.element.addEventListener('touchend', () => { h.releaseCount = h.inputs.length; }, { once: true });
+      }, { frame: await engine.snapshot(), delay });
+      await swipe(page, touch, 'history', true);
+      const released = await page.evaluate(() => (window as any).mongleTerminalTest.releaseCount as number);
+      await page.waitForTimeout(700);
+      const settled = (await position(page)).inputs as Array<[string, string]>;
+      if (delay < 80) assert.ok(settled.length > released, `ACK ${delay}ms: actual xterm wheel dispatch must continue after release`);
+      else assert.equal(settled.length, released, 'a slow ACK cancels instead of replaying later');
+      assert.ok(settled.length - released <= 4, 'coasting stays bounded, including when the connection recovers');
+      assert.ok(settled.every(([data]) => /^\x1b\[<64;\d+;\d+M$/.test(data)));
+      evidence.push({ delay, released, settled: settled.length });
+    }
+    recordEvidence('cli-momentum-ack', evidence);
   }));
 
 test('real Chrome Android emulation: live pans survive presentation frames but stop at real input boundaries', browserOptions,

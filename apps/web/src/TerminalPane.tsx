@@ -5,6 +5,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { SearchAddon } from '@xterm/addon-search';
 import { Columns2, Rows2, Maximize2, Minimize2, X, Search, Copy, ClipboardPaste, RotateCcw, Pencil, Keyboard, Eye, SquareTerminal, GripVertical, Plus } from 'lucide-react';
 import { BrowserPresentationAdapter } from '../../../packages/terminal/browser';
+import { DEFAULT_TOUCH_SCROLL_SPEED } from '../../../packages/terminal/touch-scrollback';
 import type { AppClient } from '../../../packages/client/index';
 import type { HostState, SnapshotEvent, TerminalInfo } from '../../../packages/protocol/index';
 import { transformInput } from '../../../packages/ui/layout';
@@ -14,9 +15,12 @@ import { terminalThemes as themes, terminalMinimumContrast } from './terminal-th
 import { terminalLabel, outsideWorktree } from './worktree-labels';
 import { useTerminalWorktree, type TerminalWorktreeActions } from './use-terminal-worktree';
 import { TerminalInputQueue } from './terminal-input-queue';
+import type { PresentedNotification } from './use-terminal-notifications';
 
 export interface PaneActions { key(data:string):void; paste(text:string):void; focus():void; search():void; }
 export interface PaneProps {
+  onPresentedNotification?(value:PresentedNotification):void;
+  touchScrollSpeed?: number;
   worktreeActions?:TerminalWorktreeActions;
   client: AppClient; state: HostState; info: TerminalInfo; connected: boolean; owner:boolean; connectionId?:string; selected:boolean; maximized:boolean; tabbed?:boolean; tabs?:ReactNode; onNewTab?:()=>void; canAddTab?:boolean; fontSize:number; theme:'dark'|'light'; ctrl:boolean; alt:boolean;
   onSelect():void; onSplit(axis:'horizontal'|'vertical'):void; onMaximize():void; onClose():void; onRename():void; onRestart():void; onMove():void; onClearHistory():void; onTerminate():void;
@@ -76,6 +80,8 @@ export function TerminalPane(props:PaneProps) {
 
   useEffect(() => {
     if (!mount.current) return;
+    const invalidatePresentation=()=>current.current.onPresentedNotification?.({hostId:state.hostId,bootId:state.bootId,terminalId:info.id,generation:info.generation,count:0});
+    invalidatePresentation();
     let disposed = false;
     // React runs the previous scope's cleanup first. Keep its outstanding-input
     // latch on that old boot, then bind this effect to the exact new session.
@@ -127,7 +133,11 @@ export function TerminalPane(props:PaneProps) {
       const transformed=transformInput(data,current.current.ctrl,current.current.alt,source);
       if(!ready.current&&resizeInput.current?.epoch!==epoch.current)return;
       inputQueue?.enqueue(transformed,encoding);
-    }, { onTouchScrollInput: () => { void acquireRef.current(false,'intent'); } });
+    }, {
+      onTouchScrollInput: () => { void acquireRef.current(false,'intent'); },
+      getTouchScrollSpeed: () => current.current.touchScrollSpeed ?? DEFAULT_TOUCH_SCROLL_SPEED,
+      touchMomentumReady: () => ready.current && !resizeInput.current && !!inputQueue && !inputQueue.hasPendingInput,
+    });
     adapterRef.current = adapter;
     // Match the Windows console workflow: finish a mouse selection to copy it.
     // Copy on release, never on every selection event (snapshots restore the
@@ -170,7 +180,9 @@ export function TerminalPane(props:PaneProps) {
       while(pendingFrame&&!disposed){
         const item=pendingFrame;pendingFrame=undefined;let applied=false;
         try{
-          if(item.event.seq>=lastSeq.current){await adapter.applySnapshot(item.event.snapshot);if(disposed)break;lastSeq.current=item.event.seq;setHistoryTruncated(Boolean((item.event.snapshot as any).historyTruncated));}
+          if(item.event.seq>=lastSeq.current){await adapter.applySnapshot(item.event.snapshot);if(disposed)break;lastSeq.current=item.event.seq;setHistoryTruncated(Boolean((item.event.snapshot as any).historyTruncated));
+            current.current.onPresentedNotification?.({hostId:state.hostId,bootId:state.bootId,terminalId:info.id,generation:info.generation,count:item.event.snapshot.notificationCount??0});
+          }
           const ackEpoch=item.lease??epoch.current;
           await client.request('terminal.ack',{...targetRef.current(),seq:lastSeq.current,...(ackEpoch!==undefined?{epoch:ackEpoch}:{})});
           if(disposed)break;
@@ -298,7 +310,7 @@ export function TerminalPane(props:PaneProps) {
     const keyMap:Record<string,'ArrowUp'|'ArrowDown'|'ArrowLeft'|'ArrowRight'>={'\x1b[A':'ArrowUp','\x1b[B':'ArrowDown','\x1b[C':'ArrowRight','\x1b[D':'ArrowLeft'};
     current.current.register(info.id,{key:data=>{void runInputIntent(()=>keyMap[data]?adapter.sendKey(keyMap[data]):adapter.sendInput(data));},paste:text=>{void current.current.confirmPaste(text).then(approved=>{if(approved&&!disposed)void runInputIntent(()=>adapter.paste(text));});},focus:()=>startInputRef.current(),search:()=>setSearchOpen(true)});
     const pasteTarget=mount.current;
-    return()=>{disposed=true;stopInput(true);removeTap();resizeInput.current=undefined;ready.current=false;epoch.current=undefined;connectionId.current=undefined;pendingFrame?.waiters.forEach(resolve=>resolve(false));pendingFrame=undefined;unsubscribe();observer.disconnect();clearTimeout(resizeTimer);pasteTarget?.removeEventListener('paste',handlePaste,true);pasteTarget?.removeEventListener('mousedown',beginSelection,true);window.removeEventListener('mouseup',finishSelection);osc52.dispose();adapter.dispose();terminal.dispose();current.current.register(info.id,null);void client.request('terminals.detach',{id:info.id}).catch(()=>{});};
+    return()=>{disposed=true;invalidatePresentation();stopInput(true);removeTap();resizeInput.current=undefined;ready.current=false;epoch.current=undefined;connectionId.current=undefined;pendingFrame?.waiters.forEach(resolve=>resolve(false));pendingFrame=undefined;unsubscribe();observer.disconnect();clearTimeout(resizeTimer);pasteTarget?.removeEventListener('paste',handlePaste,true);pasteTarget?.removeEventListener('mousedown',beginSelection,true);window.removeEventListener('mouseup',finishSelection);osc52.dispose();adapter.dispose();terminal.dispose();current.current.register(info.id,null);void client.request('terminals.detach',{id:info.id}).catch(()=>{});};
   },[client,info.id,info.generation,state.hostId,state.bootId,props.connected]);
 
   useEffect(()=>{if(termRef.current){termRef.current.options.fontSize=props.fontSize;termRef.current.options.theme=themes[props.theme];}const frame=requestAnimationFrame(()=>void resizeRef.current());return()=>cancelAnimationFrame(frame);},[props.fontSize,props.theme]);
