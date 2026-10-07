@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { realpath } from 'node:fs';
 import { promisify } from 'node:util';
 import { readFile, mkdtemp, mkdir, writeFile, copyFile, rm } from 'node:fs/promises';
@@ -8,9 +9,22 @@ import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { installedClaudeVersion } from '../../packages/host/claude-integration';
 import { installedCodexVersion } from '../../packages/host/codex-integration';
-import { PREVIOUS_PUBLIC_VERSION, updateInstallerArgs, assertUpdateWindows, assertExactAgentRestores, findUpdatedDesktop, boundedObserverEvents, readInstalledHost, type WindowEvidence, type AgentFixtureRecord } from '../fixtures/installed-upgrade-evidence';
+import { PREVIOUS_PUBLIC_VERSION, updateInstallerArgs, assertUpdateWindows, assertExactAgentRestores, findUpdatedDesktop, boundedObserverEvents, readInstalledHost, removeVerifiedFixture, type WindowEvidence, type AgentFixtureRecord } from '../fixtures/installed-upgrade-evidence';
 
 const run=promisify(execFile);
+test('fixture cleanup waits only for EPERM, revalidates bytes and never hides a failure',async()=>{
+  const bytes=Buffer.from('owned fixture'),hash=createHash('sha256').update(bytes).digest('hex');
+  let attempts=0,reads=0,waits=0;
+  const locked=Object.assign(new Error('launcher still exiting'),{code:'EPERM'});
+  await removeVerifiedFixture(async()=>{reads++;return bytes;},async()=>{if(++attempts<3)throw locked;},hash,5000,async()=>{waits++;});
+  assert.equal(attempts,3);assert.equal(reads,3);assert.equal(waits,2);
+  attempts=0;let changed=false;
+  await assert.rejects(removeVerifiedFixture(async()=>changed?Buffer.from('changed'):bytes,async()=>{attempts++;throw locked;},hash,5000,async()=>{changed=true;}),/changed fixture/);
+  assert.equal(attempts,1);
+  for(const error of [Object.assign(new Error('denied'),{code:'EACCES'}),locked]) {
+    await assert.rejects(removeVerifiedFixture(async()=>bytes,async()=>{throw error;},hash,0,async()=>{assert.fail('must not retry');}),error);
+  }
+});
 test('installed readiness retries missing/stale host-info and retains only a coherent authenticated connection',async()=>{
   const state={version:'0.3.16',hostId:'host',bootId:'boot'};
   const info={pid:42,hostId:'host',bootId:'boot'};
@@ -145,6 +159,12 @@ test('Windows PowerShell provides UI Automation types without operating a deskto
   assert.match(source,/if\(\$windowPid -ne \$c.pid\) \{ continue \}/);
   assert.match(source,/\$item.Current.ProcessId -ne \$c.pid/);
   assert.match(source,/\$button.Current.ProcessId -eq \$c.pid/);
+  assert.match(source,/if\(actual!=shellPid \|\| GetAncestor\(hit,2\)!=root\)return false;/,'right click is restricted to the observed notification-area root and shell PID');
+  assert.match(source,/Path -ine \$c.exe\)\{throw 'Desktop path changed before tray activation'/);
+  assert.match(source,/\$icons.Count -gt 1\)\{throw 'Ambiguous Mongle tray icons/);
+  assert.match(source,/\$trayClass -notin @\('Shell_TrayWnd','NotifyIconOverflowWindow'\)/);
+  assert.doesNotMatch(source,/keybd_event|TapKey/,'frameless Electron has no Alt menu; never send blind keys into a live terminal');
+  assert.match(source,/\$visited -lt 64/,'raw UIA diagnostics stay bounded');
 });
 
 test('native observation bridge and isolated CLI launchers compile; fixture version probes launch no model',{skip:process.platform!=='win32'},async t=>{

@@ -36,3 +36,9 @@
 [네 번째 설치 검사](https://github.com/bokjk/mongle-terminal/actions/runs/37659722797)는 기존 앱 준비, 표시된 NSIS 진행 막대, 기존 경로의 `--updated` 자동 재실행, 설치 payload 일치와 작업 공간 자동 복원을 확인했다. 이후 시험용 Claude 연동 상태가 `unavailable`여서 중단했으며, 후속 대화 ID 복원은 실행하지 않았다. 실패 정리의 네이티브 메뉴 조작도 확인창을 찾지 못했다. 시험 CLI 검색 환경과 종료 조작을 보완하고 재검사하며, 부분 통과를 전체 설치 검사 성공으로 표시하지 않는다.
 
 [같은 커밋의 전체 회귀](https://github.com/bokjk/mongle-terminal/actions/runs/37659723004)는 572개 중 556 통과·1 실패·15 생략, 네이티브 2/2였다. 실제 Windows 짧은 경로 검사의 PowerShell 보조 코드 컴파일이 10초 제한을 넘겼다. 해당 보조 프로세스의 제한 시간을 30초로 늘리며 경로 신원·다른 파일 거부 검증은 유지한다.
+
+### 다섯 번째 검사의 종료 메뉴 자동화
+
+[다섯 번째 설치 검사](https://github.com/bokjk/mongle-terminal/actions/runs/37661812533)에서는 설치·자동 재실행·payload·작업 공간 복원에 이어 시험용 Claude·Codex 연동과 네 개 대화 ID 저장까지 진행했다. 재설치 전 정상 종료 단계에서 네이티브 메뉴와 UI Automation의 메뉴 항목을 찾지 못해 실패했다. 기존 PATH 폴더에 배치한 시험 CLI는 실제 패키지의 버전 검색에서 인식됐으며 기존 파일·레지스트리·PATH 값은 바꾸지 않았다. 두 번째 설치와 정확한 대화 재개 검증은 아직 완료하지 않았다.
+
+Electron 44.4.5의 [창 생성 코드](https://github.com/electron/electron/blob/v44.4.5/shell/browser/native_window.cc#L97)와 [메뉴 코드](https://github.com/electron/electron/blob/v44.4.5/shell/browser/ui/views/root_view.cc#L50)를 확인했다. 현재 `titleBarStyle: hidden` 창에는 상단 메뉴를 만들지 않으므로 Alt 키로도 열 수 없다. 시험 종료 조작은 제품이 실제 제공하는 트레이 메뉴를 사용하도록 보완한다.

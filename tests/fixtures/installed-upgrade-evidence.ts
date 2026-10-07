@@ -1,7 +1,21 @@
 import assert from 'node:assert/strict';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 
 export const PREVIOUS_PUBLIC_VERSION = '0.3.16';
+/** A C# fixture launcher can outlive its Node child briefly during normal exit. */
+export async function removeVerifiedFixture(read:()=>Promise<Buffer>, remove:()=>Promise<void>, expectedSha256:string,
+  timeoutMs=5000, pause:()=>Promise<void>=()=>new Promise(resolve=>setTimeout(resolve,100))) {
+  const deadline=Date.now()+timeoutMs;
+  for(;;) {
+    assert.equal(createHash('sha256').update(await read()).digest('hex'),expectedSha256,'Refusing to remove a changed fixture');
+    try {await remove();return;}
+    catch(error) {
+      if((error as NodeJS.ErrnoException).code!=='EPERM'||Date.now()>=deadline)throw error;
+      await pause();
+    }
+  }
+}
 interface InstalledHostState { version: string; hostId: string; bootId: string }
 interface InstalledHostInfo { pid: number; hostId: string; bootId: string }
 /** One coherent readiness attempt. Failed/unverified connections never escape. */

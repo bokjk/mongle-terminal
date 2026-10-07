@@ -1,6 +1,8 @@
 param([ValidateSet('watch','exit','environment','discover','diagnose')] [string]$Mode, [string]$Config)
 $ErrorActionPreference = 'Stop'
 if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted') { throw 'Disposable GitHub-hosted runner required' }
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+$OutputEncoding = [Console]::OutputEncoding
 $c = Get-Content -LiteralPath $Config -Raw | ConvertFrom-Json
 if ($Mode -eq 'discover') {
  # Failure cleanup only: exact installed executable, automatic launch flag and
@@ -28,6 +30,19 @@ public class UpgradeWindow {
  [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern int GetClassName(IntPtr h,StringBuilder s,int n);
  [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern int GetWindowText(IntPtr h,StringBuilder s,int n);
  [DllImport("user32.dll")] public static extern IntPtr GetMenu(IntPtr h);
+ [StructLayout(LayoutKind.Sequential)] public struct Point { public int X,Y; }
+ [DllImport("user32.dll")] static extern bool SetCursorPos(int x,int y);
+ [DllImport("user32.dll")] static extern IntPtr WindowFromPoint(Point point);
+ [DllImport("user32.dll")] static extern IntPtr GetAncestor(IntPtr h,uint flags);
+ [DllImport("user32.dll")] static extern void mouse_event(uint flags,uint x,uint y,uint data,UIntPtr extra);
+ public static bool RightClickTray(IntPtr root,uint shellPid,int x,int y){
+   var point=new Point {X=x,Y=y};var hit=WindowFromPoint(point);uint actual;GetWindowThreadProcessId(hit,out actual);
+   if(actual!=shellPid || GetAncestor(hit,2)!=root)return false;
+   if(!SetCursorPos(x,y))return false;
+   hit=WindowFromPoint(point);GetWindowThreadProcessId(hit,out actual);
+   if(actual!=shellPid || GetAncestor(hit,2)!=root)return false;
+   mouse_event(8,0,0,0,UIntPtr.Zero);mouse_event(16,0,0,0,UIntPtr.Zero);return true;
+ }
  [DllImport("user32.dll")] public static extern IntPtr GetSubMenu(IntPtr h,int i);
  [DllImport("user32.dll")] public static extern int GetMenuItemCount(IntPtr h);
  [DllImport("user32.dll")] public static extern uint GetMenuItemID(IntPtr h,int i);
@@ -67,14 +82,61 @@ if ($Mode -eq 'exit') {
  if ($p.Path -ine $c.exe) { throw 'Desktop path mismatch' }
  $sent=$false; $confirmed=$false
  Add-Type -AssemblyName UIAutomationClient,UIAutomationTypes
- $probes=@{}; $uiaErrors=@(); $expanded=$false
+ # Bounded raw-view traversal also exposes Chromium Views controls which are
+ # Buttons or Custom controls rather than UIA MenuItems. Never inspect other apps.
+ function Get-UpgradeUiaSnapshot($element) {
+   $walker=[System.Windows.Automation.TreeWalker]::RawViewWalker
+   $queue=[System.Collections.Queue]::new();$queue.Enqueue(@{element=$element;depth=0})
+   $result=@();$visited=0
+   while($queue.Count -gt 0 -and $visited -lt 64) {
+     $next=$queue.Dequeue();$visited++;$current=$next.element
+     if($current.Current.ProcessId -ne $c.pid){continue}
+     $name=[string]$current.Current.Name
+     $result+=@{name=$name.Substring(0,[Math]::Min(128,$name.Length));type=$current.Current.ControlType.ProgrammaticName;offscreen=$current.Current.IsOffscreen;depth=$next.depth}
+     if($next.depth -ge 5){continue}
+     $child=$walker.GetFirstChild($current)
+     while($null -ne $child -and $queue.Count -lt 64){$queue.Enqueue(@{element=$child;depth=($next.depth+1)});$child=$walker.GetNextSibling($child)}
+   }
+   return $result
+ }
+ # Electron v44.4.5 RootView::SetMenu omits the menu bar for titleBarStyle:hidden.
+ # Use the production tray menu, not Alt or an injected application accelerator.
+ $probes=@{}; $uiaErrors=@(); $trayOpened=$false; $trayAttempts=0; $overflowOpened=$false; $trayProbes=@{}
  $deadline=[DateTime]::UtcNow.AddSeconds(45)
  while ([DateTime]::UtcNow -lt $deadline) {
+   if(-not $sent -and -not $trayOpened -and $trayAttempts -lt 3) {
+     try {
+       if((Get-Process -Id $c.pid -ErrorAction Stop).Path -ine $c.exe){throw 'Desktop path changed before tray activation'}
+       $icons=@();$chevrons=@()
+       foreach($trayWindow in [UpgradeWindow]::Windows()) {
+         $trayClass=[UpgradeWindow]::Class($trayWindow)
+         if($trayClass -notin @('Shell_TrayWnd','NotifyIconOverflowWindow')){continue}
+         $shellPid=[uint32]0;[void][UpgradeWindow]::GetWindowThreadProcessId($trayWindow,[ref]$shellPid)
+         if((Get-Process -Id $shellPid -ErrorAction Stop).Path -ine (Join-Path $env:SystemRoot 'explorer.exe')){continue}
+         $trayRoot=[System.Windows.Automation.AutomationElement]::FromHandle($trayWindow)
+         $buttons=$trayRoot.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty,[System.Windows.Automation.ControlType]::Button))
+         $trayProbes[$trayClass]=@($buttons | Select-Object -First 24 | ForEach-Object {$n=[string]$_.Current.Name;$a=[string]$_.Current.AutomationId;@{name=$n.Substring(0,[Math]::Min(128,$n.Length));automationId=$a.Substring(0,[Math]::Min(128,$a.Length));offscreen=$_.Current.IsOffscreen}})
+         foreach($button in $buttons) {
+           if($button.Current.ProcessId -ne $shellPid -or $button.Current.IsOffscreen -or -not $button.Current.IsEnabled){continue}
+           $name=$button.Current.Name
+           if($name -in @('몽글터미널','몽글터미널 · 업데이트 준비 완료')){$icons+=@{element=$button;root=$trayWindow;pid=$shellPid}}
+           if($trayClass -eq 'Shell_TrayWnd' -and $name -in @('Notification Chevron','Show hidden icons','숨겨진 아이콘 표시')){$chevrons+=$button}
+         }
+       }
+       if($icons.Count -gt 1){throw 'Ambiguous Mongle tray icons; refusing to click'}
+       if($icons.Count -eq 1) {
+         $icon=$icons[0];$point=$icon.element.GetClickablePoint();$trayAttempts++
+         $trayOpened=[UpgradeWindow]::RightClickTray($icon.root,$icon.pid,[int]$point.X,[int]$point.Y)
+       } elseif(-not $overflowOpened -and $chevrons.Count -eq 1) {
+         $chevrons[0].GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke();$overflowOpened=$true
+       }
+     } catch {if($uiaErrors.Count -lt 8){$uiaErrors+=($_.Exception.Message.Substring(0,[Math]::Min(512,$_.Exception.Message.Length)))}}
+   }
    foreach($h in [UpgradeWindow]::Windows()) {
      $windowPid=[uint32]0; [void][UpgradeWindow]::GetWindowThreadProcessId($h,[ref]$windowPid)
      if($windowPid -ne $c.pid) { continue }
      $menu=[UpgradeWindow]::GetMenu($h)
-     $probeKey=([UpgradeWindow]::Class($h))+'|'+([UpgradeWindow]::Text($h))+'|'+$sent
+     $probeKey=([UpgradeWindow]::Class($h))+'|'+([UpgradeWindow]::Text($h))+'|'+$sent+'|'+$trayOpened
      if($probes.Count -lt 16 -and -not $probes.ContainsKey($probeKey)) {
        $probes[$probeKey]=@{title=[UpgradeWindow]::Text($h);class=[UpgradeWindow]::Class($h);nativeMenu=($menu -ne [IntPtr]::Zero);children=@([UpgradeWindow]::Children($h) | Select-Object -First 12 | ForEach-Object {@{text=[UpgradeWindow]::Text($_);class=[UpgradeWindow]::Class($_)}})}
      }
@@ -86,23 +148,17 @@ if ($Mode -eq 'exit') {
        if(-not $sent) {
          try {
            $element=[System.Windows.Automation.AutomationElement]::FromHandle($h)
-           $items=$element.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty,[System.Windows.Automation.ControlType]::MenuItem))
+           if($probes.ContainsKey($probeKey) -and -not $probes[$probeKey].ContainsKey('uiaControls')){$probes[$probeKey].uiaControls=@(Get-UpgradeUiaSnapshot $element)}
+           $menuCondition=[System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty,[System.Windows.Automation.ControlType]::MenuItem)
+           if($trayOpened){$menuCondition=[System.Windows.Automation.OrCondition]::new($menuCondition,[System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty,[System.Windows.Automation.ControlType]::Button))}
+           $items=$element.FindAll([System.Windows.Automation.TreeScope]::Descendants,$menuCondition)
            $names=@($items | Select-Object -First 16 | ForEach-Object {$_.Current.Name})
            if($probes.ContainsKey($probeKey)){$probes[$probeKey].menuItems=$names}
            foreach($item in $items) {
              if($item.Current.ProcessId -ne $c.pid){continue}
+             if($item.Current.IsOffscreen -or -not $item.Current.IsEnabled){continue}
              if($item.Current.Name.Replace('&','') -eq '완전 종료…') {
                $item.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke();$sent=$true;break
-             }
-           }
-           if(-not $sent -and -not $expanded) {
-             foreach($item in $items) {
-               if($item.Current.ProcessId -eq $c.pid -and $item.Current.Name.Replace('&','') -eq '몽글터미널') {
-                 $expand=$null
-                 if($item.TryGetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern,[ref]$expand)){$expand.Expand()}
-                 else {$item.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()}
-                 $expanded=$true;break
-               }
              }
            }
          } catch {if($uiaErrors.Count -lt 8){$uiaErrors+=($_.Exception.Message.Substring(0,[Math]::Min(512,$_.Exception.Message.Length)))}}
@@ -130,10 +186,10 @@ if ($Mode -eq 'exit') {
        } catch {if($uiaErrors.Count -lt 8){$uiaErrors+=($_.Exception.Message.Substring(0,[Math]::Min(512,$_.Exception.Message.Length)))}}
      }
    }
-   if($confirmed) { @{menuInvoked=$sent;confirmationClicked=$true;probes=@($probes.Values);uiaErrors=$uiaErrors} | ConvertTo-Json -Depth 6 -Compress; exit 0 }
+   if($confirmed) { @{menuInvoked=$sent;confirmationClicked=$true;trayOpened=$trayOpened;trayProbes=$trayProbes;probes=@($probes.Values);uiaErrors=$uiaErrors} | ConvertTo-Json -Depth 6 -Compress; exit 0 }
    Start-Sleep -Milliseconds 100
  }
- $diagnostic=@{menuInvoked=$sent;confirmationClicked=$confirmed;probes=@($probes.Values);uiaErrors=$uiaErrors} | ConvertTo-Json -Depth 6 -Compress
+ $diagnostic=@{menuInvoked=$sent;confirmationClicked=$confirmed;trayOpened=$trayOpened;trayAttempts=$trayAttempts;overflowOpened=$overflowOpened;trayProbes=$trayProbes;probes=@($probes.Values);uiaErrors=$uiaErrors} | ConvertTo-Json -Depth 6 -Compress
  throw "Could not invoke and confirm the real full-exit menu: $diagnostic"
 }
 # Observer is ready before the installer is launched. Only records visible windows

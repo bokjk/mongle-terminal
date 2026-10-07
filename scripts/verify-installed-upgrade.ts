@@ -10,7 +10,7 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import { connectOwnerPipe } from '../packages/local-ipc/index';
 import type { HostState, TerminalInfo } from '../packages/protocol/index';
-import { PREVIOUS_PUBLIC_VERSION, updateInstallerArgs, assertUpdateWindows, assertExactAgentRestores, findUpdatedDesktop, boundedObserverEvents, readInstalledHost, type WindowEvidence, type AgentFixtureRecord } from '../tests/fixtures/installed-upgrade-evidence';
+import { PREVIOUS_PUBLIC_VERSION, updateInstallerArgs, assertUpdateWindows, assertExactAgentRestores, findUpdatedDesktop, boundedObserverEvents, readInstalledHost, removeVerifiedFixture, type WindowEvidence, type AgentFixtureRecord } from '../tests/fixtures/installed-upgrade-evidence';
 import { version } from '../package.json';
 
 assert.equal(process.platform, 'win32');
@@ -406,7 +406,7 @@ try {
   if (owner) { await owner.request('host.shutdown').catch(() => {}); owner.close(); }
   if (child && child.exitCode === null && endpoint) await evaluate('setTimeout(()=>upgradeElectron.app.quit(),30);true').catch(() => {});
   for(const entry of [...fixturePathFiles].reverse()) {
-    try {assert.equal(sha(await readFile(entry.file)),entry.sha256,'Refusing to remove a changed fixture');await unlink(entry.file);}
+    try {await removeVerifiedFixture(()=>readFile(entry.file),()=>unlink(entry.file),entry.sha256);}
     catch(error){proof.fixtureCleanupError=String(error);proof.passed=false;}
   }
   if(!proof.passed)proof.oldStartupDiagnostics={version:oldVersion,stderrTail:startupStderr,exit:startupExit};
