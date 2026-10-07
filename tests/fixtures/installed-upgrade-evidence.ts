@@ -2,6 +2,28 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 
 export const PREVIOUS_PUBLIC_VERSION = '0.3.16';
+interface InstalledHostState { version: string; hostId: string; bootId: string }
+interface InstalledHostInfo { pid: number; hostId: string; bootId: string }
+/** One coherent readiness attempt. Failed/unverified connections never escape. */
+export async function readInstalledHost<C extends {request<T>(name: string): Promise<T>;close():void}>(
+  connect:()=>Promise<C>, readInfo:()=>Promise<InstalledHostInfo>,
+  expected:{version:string;dataDir:string;hostId?:string},
+) {
+  const connection=await connect();
+  try {
+    const state=await connection.request<InstalledHostState>('state.get');
+    assert.equal(state.version,expected.version,'Installed host version is not ready');
+    const info=await readInfo();
+    const identity=await connection.request<InstalledHostInfo & {dataDir:string}>('host.info');
+    assert.equal(info.hostId,state.hostId);assert.equal(info.bootId,state.bootId);
+    assert.equal(identity.hostId,state.hostId);assert.equal(identity.bootId,state.bootId);
+    assert.equal(path.resolve(identity.dataDir),path.resolve(expected.dataDir));
+    assert.ok(Number.isSafeInteger(info.pid) && info.pid>0);
+    if(identity.pid!==undefined)assert.equal(identity.pid,info.pid);
+    if(expected.hostId)assert.equal(state.hostId,expected.hostId,'Cleanup must connect to the same installed owner host');
+    return {connection,info,state};
+  } catch(error) {connection.close();throw error;}
+}
 /** Diagnostic data only: never replace or relax the full event assertions. */
 export function boundedObserverEvents(raw: string) {
   const lines = raw.replace(/^\uFEFF/, '').split(/\r?\n/).filter(Boolean);

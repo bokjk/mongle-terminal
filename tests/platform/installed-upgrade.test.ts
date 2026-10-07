@@ -6,9 +6,33 @@ import { promisify } from 'node:util';
 import { readFile, mkdtemp, mkdir, writeFile, copyFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
-import { PREVIOUS_PUBLIC_VERSION, updateInstallerArgs, assertUpdateWindows, assertExactAgentRestores, findUpdatedDesktop, boundedObserverEvents, type WindowEvidence, type AgentFixtureRecord } from '../fixtures/installed-upgrade-evidence';
+import { PREVIOUS_PUBLIC_VERSION, updateInstallerArgs, assertUpdateWindows, assertExactAgentRestores, findUpdatedDesktop, boundedObserverEvents, readInstalledHost, type WindowEvidence, type AgentFixtureRecord } from '../fixtures/installed-upgrade-evidence';
 
 const run=promisify(execFile);
+test('installed readiness retries missing/stale host-info and retains only a coherent authenticated connection',async()=>{
+  const state={version:'0.3.16',hostId:'host',bootId:'boot'};
+  const info={pid:42,hostId:'host',bootId:'boot'};
+  const expected={version:'0.3.16',hostId:'host',dataDir:path.resolve('fixture-profile')};
+  let closed=0;
+  const connect=async()=>({close(){closed++;},async request<T>(name:string){return (name==='state.get'?state:{...info,dataDir:expected.dataDir}) as T;}});
+  await assert.rejects(readInstalledHost(connect,async()=>{throw Object.assign(new Error('not written yet'),{code:'ENOENT'});},expected),{code:'ENOENT'});
+  assert.equal(closed,1);
+  await assert.rejects(readInstalledHost(connect,async()=>({...info,bootId:'previous-boot'}),expected));
+  assert.equal(closed,2);
+  const ready=await readInstalledHost(connect,async()=>info,expected);
+  assert.equal(ready.info.pid,42);assert.equal(closed,2);
+  ready.connection.close();assert.equal(closed,3);
+  // Old desktop cleanup must keep its actual version rather than the candidate.
+  await assert.rejects(readInstalledHost(connect,async()=>info,{...expected,version:'0.3.17'}));
+  assert.equal(closed,4);
+  for(const patch of [{hostId:'unrelated'},{bootId:'other'},{pid:43},{dataDir:path.resolve('wrong-profile')}]) {
+    const wrong=async()=>({close(){closed++;},async request<T>(name:string){return (name==='state.get'?state:{...info,dataDir:expected.dataDir,...patch}) as T;}});
+    await assert.rejects(readInstalledHost(wrong,async()=>info,expected));
+  }
+  assert.equal(closed,8);
+  await assert.rejects(readInstalledHost(connect,async()=>info,{...expected,hostId:'another-owner'}));
+  assert.equal(closed,9);
+});
 test('native realpath expands actual Windows short aliases without accepting another file',{skip:process.platform!=='win32'},async t=>{
   // A workspace file avoids MSIX TEMP redirection between Node and PowerShell.
   const base=path.resolve('.test-data');await mkdir(base,{recursive:true});

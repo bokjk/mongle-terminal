@@ -10,7 +10,7 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import { connectOwnerPipe } from '../packages/local-ipc/index';
 import type { HostState, TerminalInfo } from '../packages/protocol/index';
-import { PREVIOUS_PUBLIC_VERSION, updateInstallerArgs, assertUpdateWindows, assertExactAgentRestores, findUpdatedDesktop, boundedObserverEvents, type WindowEvidence, type AgentFixtureRecord } from '../tests/fixtures/installed-upgrade-evidence';
+import { PREVIOUS_PUBLIC_VERSION, updateInstallerArgs, assertUpdateWindows, assertExactAgentRestores, findUpdatedDesktop, boundedObserverEvents, readInstalledHost, type WindowEvidence, type AgentFixtureRecord } from '../tests/fixtures/installed-upgrade-evidence';
 import { version } from '../package.json';
 
 assert.equal(process.platform, 'win32');
@@ -57,6 +57,7 @@ let child: ChildProcess | undefined, endpoint = '', owner: Awaited<ReturnType<ty
 let desktopPid = 0, restoreEnvironment: string | undefined;
 let watcher: ChildProcess | undefined, watcherStop = '';
 let updateSince = '', expectedHostId = '';
+let launchedVersion = '', startupStderr = '', startupExit: {code:number|null;signal:NodeJS.Signals|null}|undefined;
 const pids = new Set<number>();
 async function until<T>(read: () => Promise<T>, valid: (value: T) => boolean, label: string, timeout = 45000): Promise<T> {
   const deadline = Date.now() + timeout; let last: unknown;
@@ -85,35 +86,31 @@ async function native(mode: 'exit' | 'environment' | 'discover' | 'diagnose', co
   return run('pwsh.exe', ['-NoProfile', '-File', windowsFixture, '-Mode', mode, '-Config', file], {windowsHide:true, timeout:60000});
 }
 async function connectInstalled(expectedVersion: string) {
-  try {
   process.env.MONGLE_OWNER_HELPER = path.join(installDir, 'resources/hostbundle/platform/windows/OwnerPipe.exe');
-  const state = await until(async () => { owner?.close(); owner = await connectOwnerPipe({ dataDir }); return owner.request<HostState>('state.get'); }, s => s.version === expectedVersion, 'authenticated installed host');
-  const info = JSON.parse(await readFile(path.join(dataDir, 'host-info.json'), 'utf8'));
-  const identity = await owner!.request<{hostId:string;bootId:string;pid?:number;dataDir:string}>('host.info');
-  assert.equal(info.hostId, state.hostId); assert.equal(info.bootId, state.bootId);
-  assert.equal(identity.hostId, state.hostId); assert.equal(identity.bootId, state.bootId);
-  assert.equal(path.resolve(identity.dataDir), path.resolve(dataDir));
-  if (expectedHostId) assert.equal(state.hostId, expectedHostId, 'Cleanup must connect to the same installed owner host');
-  else expectedHostId = state.hostId;
+  owner?.close(); owner = undefined;
+  const {connection,info,state}=await until(()=>readInstalledHost(
+    ()=>connectOwnerPipe({dataDir}),
+    async()=>JSON.parse(await readFile(path.join(dataDir,'host-info.json'),'utf8')),
+    {version:expectedVersion,dataDir,hostId:expectedHostId},
+  ),Boolean,'coherent authenticated installed host');
+  // Publish only after version, file and authenticated identity agree.
+  owner=connection;expectedHostId ||= state.hostId;
   pids.add(info.pid);
   return info;
-  } catch (error) {
-    // An authenticated pipe with a mismatched host/boot/data-directory is not
-    // authorised for cleanup. Never retain it for the finally shutdown path.
-    owner?.close(); owner = undefined;
-    throw error;
-  }
 }
 async function start(expectedVersion: string) {
   // Every previous stage completed fullExit; do not track reusable numeric
   // PIDs from an earlier installation in the next stage's cleanup assertion.
   pids.clear();
   endpoint = '';
+  launchedVersion=expectedVersion;startupStderr='';startupExit=undefined;
   const env: NodeJS.ProcessEnv = { ...process.env, MONGLE_DATA_DIR: dataDir }; delete env.ELECTRON_RUN_AS_NODE;
   child = spawn(exe, ['--inspect=127.0.0.1:0'], { env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
   desktopPid = child.pid!;
   pids.add(child.pid!);
-  child.stderr!.on('data', bytes => { endpoint ||= String(bytes).match(/ws:\/\/127\.0\.0\.1:\d+\/[a-f0-9-]+/)?.[0] || ''; });
+  child.stderr!.on('data', bytes => { startupStderr=(startupStderr+String(bytes)).slice(-16384);endpoint ||= startupStderr.match(/ws:\/\/127\.0\.0\.1:\d+\/[a-f0-9-]+/)?.[0] || ''; });
+  child.on('exit',(code,signal)=>{startupExit={code,signal};});
+  child.on('error',error=>{startupStderr=(startupStderr+'\n'+String(error)).slice(-16384);});
   await until(async () => endpoint, Boolean, 'main inspector');
   // The inspector can accept requests before Electron has read package.json.
   // At that point getVersion() may still return the four-part Windows resource
@@ -182,11 +179,11 @@ async function observedUpdate(legacySilent: boolean) {
       stageProof.observedEvents = boundedObserverEvents(raw);
       const events: WindowEvidence[] = raw.replace(/^\uFEFF/,'').trim().split(/\r?\n/).filter(Boolean).map(line=>JSON.parse(line));
       const desktop = findUpdatedDesktop(events,exe,updateSince);
-      if (desktop) { desktopPid=desktop.pid; pids.add(desktopPid); }
+      if (desktop) { desktopPid=desktop.pid; launchedVersion=version;pids.add(desktopPid); }
       return assertUpdateWindows(events,newInstaller,exe,previousPids);
     }, Boolean, 'visible NSIS progress and automatic --updated desktop', 45000).then(evidence=>{
       Object.assign(stageProof,evidence,{automaticRelaunch:true,progressVisible:true});
-      desktopPid=evidence.desktop.pid;pids.add(desktopPid);
+      desktopPid=evidence.desktop.pid;launchedVersion=version;pids.add(desktopPid);
     });
     assert.deepEqual(JSON.parse(await readFile(path.join(installDir,'resources/mongle-installed.json'),'utf8')), {installed:true});
     return await connectInstalled(version);
@@ -367,14 +364,14 @@ try {
       const found: WindowEvidence[] = JSON.parse((await native('discover',{exe,since:updateSince})).stdout.trim());
       const desktop = findUpdatedDesktop(found,exe,updateSince);
       if (desktop) {
-        desktopPid=desktop.pid; pids.add(desktopPid);
+        desktopPid=desktop.pid;launchedVersion=version; pids.add(desktopPid);
         proof.failureCleanupDesktop={pid:desktopPid,path:desktop.path};
-        await connectInstalled(version);
+        await connectInstalled(launchedVersion);
       }
     } catch(error) {proof.desktopDiscoveryCleanupError=String(error);proof.passed=false;}
   }
   if (!owner && desktopPid && alive(desktopPid)) {
-    await connectInstalled(version).catch(error=>{proof.ownerCleanupError=String(error);proof.passed=false;});
+    await connectInstalled(launchedVersion).catch(error=>{proof.ownerCleanupError=String(error);proof.passed=false;});
   }
   if (owner && desktopPid && alive(desktopPid)) await fullExit().catch(error=>{proof.fullExitCleanupError=String(error);proof.passed=false;});
   if (owner) { await owner.request('host.shutdown').catch(() => {}); owner.close(); }
@@ -382,6 +379,7 @@ try {
   if (restoreEnvironment) {
     await native('environment',JSON.parse(await readFile(restoreEnvironment,'utf8'))).catch(error=>{proof.environmentCleanupError=String(error);proof.passed=false;});
   }
+  if(!proof.passed)proof.oldStartupDiagnostics={version:oldVersion,stderrTail:startupStderr,exit:startupExit};
   await writeFile(path.join(output, 'result.json'), JSON.stringify(proof, null, 2));
   console.log(JSON.stringify(proof, null, 2));
   if (!proof.passed) process.exitCode=1;
