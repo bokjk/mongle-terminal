@@ -12,6 +12,8 @@ export interface PersistedHost {
   repositories?: Repository[];
   worktrees?: Worktree[];
   worktreeOperations?: WorktreeOperation[];
+  /** Host-private exact agent conversations by terminal id; validated again on load. */
+  agentSessions?: Record<string, { generation: string; session: { provider: string; sessionId: string; cwd?: string } }>;
 }
 
 export interface PersistedSnapshot {

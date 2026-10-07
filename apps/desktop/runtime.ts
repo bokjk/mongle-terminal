@@ -45,6 +45,9 @@ export async function launchHost(root: string, dataDir: string): Promise<number>
   const node = path.join(root, 'runtime/node.exe'), launcher = path.join(root, 'platform/windows/HostLauncher.exe'), entry = path.join(root, 'dist/host/main.cjs');
   await Promise.all([node, launcher, entry].map(file => access(file)));
   const integrationArgs = process.env.MONGLE_CLAUDE_CONFIG_DIR ? ['--claude-config-dir', process.env.MONGLE_CLAUDE_CONFIG_DIR] : process.env.MONGLE_DATA_DIR ? [] : ['--claude-integration'];
+  // Same rule for Codex: isolated profiles touch only an explicitly named Codex home.
+  if (process.env.MONGLE_CODEX_HOME) integrationArgs.push('--codex-home', process.env.MONGLE_CODEX_HOME);
+  else if (!process.env.MONGLE_DATA_DIR) integrationArgs.push('--codex-integration');
   const { stdout } = await execFileAsync(launcher, [node, entry, dataDir, ...integrationArgs], { cwd: root, windowsHide: true, timeout: 20_000, maxBuffer: 32_768 });
   const pid = Number(stdout.trim()); if (!Number.isInteger(pid) || pid < 1) throw new Error('호스트 실행 응답을 확인하지 못했습니다.'); return pid;
 }

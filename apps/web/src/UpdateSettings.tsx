@@ -46,7 +46,7 @@ export function UpdateSettings({ refreshBlocked = false }: { refreshBlocked?: bo
       <div className="form-row">
         {state?.status === 'ready' ? <button type="button" className="button primary" disabled={pending} onClick={() => void run(true)}><Download size={16} />업데이트 설치 후 다시 시작</button> : <button type="button" className="button subtle" disabled={pending || state?.status === 'unsupported'} onClick={() => void run(false)}>{pending ? <LoaderCircle size={16} className="spin" /> : <RefreshCw size={16} />}업데이트 확인</button>}
       </div>
-      <p className="hint">설치하면 이 기기에서 실행 중인 모든 터미널 작업과 이 기기로의 원격 연결이 종료됩니다. 저장된 그룹·분할과 보관된 출력은 다시 열 수 있지만, 셸은 새로 시작되며 실행 중인 프로그램과 저장하지 않은 작업은 복원되지 않습니다.</p>
+      <p className="hint">설치하면 이 기기에서 실행 중인 모든 터미널 작업과 이 기기로의 원격 연결이 종료됩니다. 저장된 그룹·분할과 보관된 출력은 다시 열 수 있지만, 셸은 새로 시작됩니다. 연동으로 대화가 확인된 Claude·Codex는 같은 대화를 다시 열며, 진행 중 작업·미저장 내용은 복원하지 않고 이전 요청을 다시 보내지 않습니다.</p>
     </>}
     {error && <p className="error-text" role="alert">{error}</p>}
   </div>;
