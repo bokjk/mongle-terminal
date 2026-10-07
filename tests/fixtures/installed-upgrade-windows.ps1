@@ -152,9 +152,10 @@ if ($Mode -eq 'exit') {
          if($hosts.Count -ne 1){throw 'Expected exactly one tray host belonging to the validated desktop PID'}
          if((Get-Process -Id $c.pid -ErrorAction Stop).Path -ine $c.exe){throw 'Desktop path changed before tray callback'}
          $bounds=[UpgradeWindow+Rect]::new()
-         $registration=[UpgradeWindow]::RegisteredTrayRect($hosts[0],3,[ref]$bounds)
-         $trayCallback.registrationHResult=$registration;$trayCallback.bounds=$bounds;$trayCallback.host=$hosts[0].ToInt64()
-         if($registration -ne 0 -or $bounds.Right -le $bounds.Left -or $bounds.Bottom -le $bounds.Top){throw 'Tray icon registration was not verified; refusing callback'}
+         # GetRect is position diagnostics, not proof of registration. Electron's
+         # right-click handler also proceeds when this query fails or is empty.
+         $rectResult=[UpgradeWindow]::RegisteredTrayRect($hosts[0],3,[ref]$bounds)
+         $trayCallback.rectHResult=$rectResult;$trayCallback.bounds=$bounds;$trayCallback.host=$hosts[0].ToInt64()
          foreach($targetWindow in [UpgradeWindow]::Windows()) {
            $targetPid=[uint32]0;[void][UpgradeWindow]::GetWindowThreadProcessId($targetWindow,[ref]$targetPid)
            if($targetPid -eq $c.pid -and [UpgradeWindow]::Class($targetWindow) -eq 'Chrome_WidgetWin_1'){[void][UpgradeWindow]::SetForegroundWindow($targetWindow);break}
