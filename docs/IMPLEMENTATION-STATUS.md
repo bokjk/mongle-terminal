@@ -1,10 +1,24 @@
 # 구현·검증 상태
 
+**0.3.14 공개 배포 완료(2026-10-07):** [공개 릴리스](https://github.com/bokjk/mongle-terminal-releases/releases/tag/v0.3.14). [PR 검사 37552799912](https://github.com/bokjk/mongle-terminal/actions/runs/37552799912): 460 통과·실패 0·15 생략. [최종 태그 검사 37553799324](https://github.com/bokjk/mongle-terminal/actions/runs/37553799324): 461 통과·실패 0·14 생략. [설치 교체 검사 37552799928](https://github.com/bokjk/mongle-terminal/actions/runs/37552799928)와 설치 payload 일치, 공개 첨부 5개 전체 다운로드·해시, Electron 업데이트 다운로드 검증을 통과했다. 이전 공개 릴리스 파일은 유지했다.
+
+> 아래 준비·대기·오류·미적용 문구는 당시의 이력이다. 현재 공개 상태는 위 완료 기록을 따른다.
+
 **공개 후 CI 재개와 정책 적용(2026-10-07):** PR #48 전체 회귀 460 통과·실패 0·선택 15 생략, 별도 네이티브 2/2와 실제 NSIS 교체·복원·정상 정리를 통과해 dev에 병합했다. PR 설명 수정 중 기존 Windows/설치 검사가 취소되거나 필수 상태가 덮어써지지 않음을 확인했다. 0.3.14 후보는 이 최신 base와 공개 소스용 초안 보존 수정을 포함해 재검사한다. [실제 CI 증거](validation/actions-usage.md).
 
 **0.3.14 공개 배포 대기(2026-10-07):** 수정·문서·커밋·푸시는 완료했으나 GitHub Actions 예산 제한이 새 CI 실행 자체를 차단했다. 로컬 보존 흐름 20개와 타입·문서 검사는 통과했다. CI job-token 조회, 새 버전 PR/태그 검사·공개 게시·익명 다운로드는 미완료이며 공개 채널은 0.3.12다. [차단 증거와 재개 순서](validation/public-release-0.3.14.md#actions-예산으로-실행-차단).
 
-**0.3.14 배포 준비(2026-10-07):** CLI 드래그·Shift 자동 복사와 모바일 전체화면 터치 스크롤 수정을 공개 준비한다. 0.3.13 태그는 회귀 456 통과·0 실패·14 선택 생략, 네이티브 2/2와 실제 NSIS 교체·복원을 통과했으나 배포 파일 보존에 실패해 공개하지 않았다. 자동화 토큰의 초안 목록 누락에 대응해 GraphQL 조회와 ID 기반 확인을 보완한다. 새 버전의 PR·최종 태그·공개 다운로드 검증은 진행 중이며 현재 공개는 0.3.12다. [0.3.14 배포 기록](validation/public-release-0.3.14.md), [0.3.13 미배포 기록](validation/public-release-0.3.13.md).
+<!-- release-0.3.14-finalized -->
+
+**0.3.14 공개 배포 완료(2026-10-07):** [공개 릴리스](https://github.com/bokjk/mongle-terminal-releases/releases/tag/v0.3.14). [PR 검사 37552799912](https://github.com/bokjk/mongle-terminal/actions/runs/37552799912): 460 통과·실패 0·15 생략. [최종 태그 검사 37553799324](https://github.com/bokjk/mongle-terminal/actions/runs/37553799324): 461 통과·실패 0·14 생략. [설치 교체 검사 37552799928](https://github.com/bokjk/mongle-terminal/actions/runs/37552799928)와 설치 payload 일치, 공개 첨부 5개 전체 다운로드·해시, Electron 업데이트 다운로드 검증을 통과했다. 이전 공개 릴리스 파일은 유지했다. [최종 증거](validation/public-release-0.3.14.md#0314-final).
+
+모든 필수 검사를 통과한 windows-release artifact의 동일 파일을 공개했다.
+
+모바일은 Chrome의 화면·trusted touch 에뮬레이션과 실제 Claude·Codex PTY 연결을 검증했다. 실물 휴대폰·삼성 인터넷·OS 키보드·외부 Tailscale 네트워크 검증으로 표현하지 않는다. Claude의 Jump to bottom 안내가 가린 글자의 복사 누락은 사용자에게 설명하고 허용된 알려진 제약으로 남는다. 사용 중인 설치본의 자동 교체·모든 CLI 버전의 검증을 뜻하지 않는다.
+
+> 이후 미배포·준비·진행 중 문구는 각 검사 당시의 이력이며, 현재 공개 상태는 위 최종 기록을 따른다.
+
+> 배포 준비 당시 기록: **0.3.14 배포 준비(2026-10-07):** CLI 드래그·Shift 자동 복사와 모바일 전체화면 터치 스크롤 수정을 공개 준비한다. 0.3.13 태그는 회귀 456 통과·0 실패·14 선택 생략, 네이티브 2/2와 실제 NSIS 교체·복원을 통과했으나 배포 파일 보존에 실패해 공개하지 않았다. 자동화 토큰의 초안 목록 누락에 대응해 GraphQL 조회와 ID 기반 확인을 보완한다. 새 버전의 PR·최종 태그·공개 다운로드 검증은 진행 중이며 현재 공개는 0.3.12다. [0.3.14 배포 기록](validation/public-release-0.3.14.md), [0.3.13 미배포 기록](validation/public-release-0.3.13.md).
 **소스 공개 전환(2026-10-07):** 사용자 승인으로 소스 저장소 공개, 비공개 취약점 제보 활성화, dev/main ruleset active 적용을 API로 확인했다. 기존 배포 저장소·업데이트 주소·라이선스·결제 설정은 유지한다. 앞선 예산 차단·비공개·규칙 미적용 문구는 당시 기록이다. 새 버전의 실제 CI·배포는 별도로 진행한다. [공개 전 점검과 설정](validation/source-publication.md).
 
 **공개 협업용 CI 정책(2026-10-07, PR #48·미적용):** 모든 코드 PR의 전체 회귀는 유지하며, 웹 UI·개발 문서만 추가·수정할 때 별도 설치 리허설을 생략하도록 보완했다. Windows 아이콘 원본·동봉 문서·설치 관련 변경·삭제·불명확한 범위·배포 PR·수동 실행은 설치 검사를 유지한다. 관련 로컬 검사 35개와 세 workflow의 actionlint 검사를 통과했다. 실제 Actions 실행은 예산 제한으로 미검증이며, 저장소 공개·라이선스·결제 설정은 바꾸지 않았다. [정책과 검증 범위](validation/actions-usage.md).
