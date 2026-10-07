@@ -163,6 +163,8 @@ PowerShell·명령 프롬프트와 설치된 Git Bash·WSL을 사용합니다. C
 
 ## 개발과 기여
 
+소스 저장소는 공개되어 있습니다. 설치 파일과 자동 업데이트는 기존 [배포 전용 저장소](https://github.com/bokjk/mongle-terminal-releases/releases/latest)를 유지합니다. 문제 보고·기여 절차와 현재 라이선스 상태는 [기여 안내](CONTRIBUTING.md), 취약점의 비공개 접수는 [보안 제보 안내](SECURITY.md)를 확인하세요.
+
 0.3.10의 측정 조건은 [응답성·안정성 검증 기록](docs/validation/responsiveness-reliability.md)에, 공식 태그·패키지 검사와 공개 파일 전체 다운로드·해시 결과는 [배포 기록](docs/validation/public-release-0.3.10.md)에 정리했습니다. 실제 사용자 설치본 교체는 별도입니다.
 
 **Windows 11 x64 · Node.js 24.x · Chrome**이 필요합니다. 소스 저장소 접근 권한이 있는 환경에서 실행합니다.
@@ -184,6 +186,10 @@ npm.cmd run dev
 아이콘은 빌드 전용 `sharp`로 원본 PNG에서 생성합니다. 예전 `IconBuilder.exe`를 컴파일하거나 실행하지 않으며 백신 검사 제외가 필요하지 않습니다. 기존 파일의 탐지 재현과 확인 범위는 [알약 검사 기록](docs/validation/antivirus-icon-builder.md)에 정리했습니다.
 
 변경은 **`dev`에서 만든 주제 브랜치 → `dev` PR**로 제출합니다. 배포는 **`dev` → `main` PR**을 거칩니다. 격리 실행, 필수 검사와 문서 기준은 [기여 안내](CONTRIBUTING.md)를 확인하세요.
+
+자동 검사 구성은 PR 설명·알려진 문서 변경을 짧은 Linux 검사로 분리하고, 코드 변경·배포 PR에는 Windows 전체 검증을 유지합니다. 병합 직전 최신 base를 반영한 검사 결과를 확인하며, 병합 후 중복 빌드는 실행하지 않습니다. 최종 태그의 설치 파일 검증은 별도로 수행합니다. 구성의 실제 적용·검증 상태는 [Actions 사용량 기록](docs/validation/actions-usage.md)을 참고하세요.
+
+공개 협업을 고려해 코드 PR의 전체 회귀 검사는 유지합니다. 웹 UI만 추가·수정한 기여 PR은 별도 설치 리허설을 생략하지만, 데스크톱·호스트·패키징·의존성·설치본에 담기는 문서·Windows 아이콘 원본 변경 및 배포 PR은 실제 설치·교체·복원 검사도 수행합니다. 이 검사 정책 준비가 저장소 공개나 라이선스 변경을 뜻하지는 않습니다.
 
 <details>
 <summary>개발 명령과 코드 구조</summary>

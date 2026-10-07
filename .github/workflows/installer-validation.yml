@@ -2,30 +2,64 @@ name: Installed upgrade validation
 
 on:
   pull_request:
-    paths: ['apps/**', 'packages/**', 'platform/**', 'scripts/**', 'package*.json', '.github/workflows/installer-validation.yml']
+    types: [opened, synchronize, reopened, edited]
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: installed-upgrade-${{ github.event.pull_request.number || github.ref }}
+  group: installed-upgrade-${{ github.event.pull_request.number || github.ref }}-${{ github.event.action == 'edited' && !github.event.changes.base && 'metadata' || 'code' }}
   cancel-in-progress: true
 
 jobs:
-  installed-upgrade:
-    name: Real NSIS upgrade and restore
-    runs-on: windows-2022
-    timeout-minutes: 25
+  scope:
+    if: github.event.action != 'edited' || github.event.changes.base
+    name: Installed upgrade scope
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      installer_required: ${{ steps.scope.outputs.installer_required }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '24'
+      - id: scope
+        run: node scripts/ci-scope.ts --installer
+  installed-upgrade:
+    name: ${{ github.event.action == 'edited' && !github.event.changes.base && 'Installed upgrade (PR text only)' || 'Real NSIS upgrade and restore' }}
+    needs: scope
+    if: ${{ always() && (github.event.action != 'edited' || github.event.changes.base) }}
+    runs-on: ${{ needs.scope.outputs.installer_required == 'false' && 'ubuntu-24.04' || 'windows-2022' }}
+    timeout-minutes: 25
+    steps:
+      - name: Require a valid installation test decision
+        env:
+          SCOPE_RESULT: ${{ needs.scope.result }}
+          INSTALLER_REQUIRED: ${{ needs.scope.outputs.installer_required }}
+        shell: bash
+        run: |
+          test "$SCOPE_RESULT" = success
+          case "$INSTALLER_REQUIRED" in
+            true) echo 'Actual installed upgrade tests follow.' ;;
+            false) echo 'UI or developer prose only: no NSIS installation was performed. Code PRs still require the full regression suite.' >> "$GITHUB_STEP_SUMMARY" ;;
+            *) echo 'Missing or invalid installation scope.' >&2; exit 1 ;;
+          esac
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        if: needs.scope.outputs.installer_required == 'true'
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        if: needs.scope.outputs.installer_required == 'true'
+        with:
+          node-version: '24'
           cache: npm
       - name: Prepare locked dependencies and native runtimes
+        if: needs.scope.outputs.installer_required == 'true'
         shell: pwsh
         run: |
           npm.cmd ci
@@ -39,14 +73,16 @@ jobs:
           node node_modules/electron/install.js
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Build candidate installer without publishing
+        if: needs.scope.outputs.installer_required == 'true'
         run: npm.cmd run package
       - name: Install old version, replace with candidate and restore workspace
+        if: needs.scope.outputs.installer_required == 'true'
         run: node --import tsx scripts/verify-installed-upgrade.ts
       - name: Record installed verification in job logs
-        if: always()
+        if: always() && needs.scope.outputs.installer_required == 'true'
         run: node --import tsx scripts/record-validation-summary.ts installed
       - name: Preserve installation evidence
-        if: always()
+        if: always() && needs.scope.outputs.installer_required == 'true'
         continue-on-error: true
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:

@@ -2,7 +2,7 @@
 
 작은 버그 수정, 사용 경험 개선, 문서와 재현 가능한 문제 보고를 환영합니다. **한 PR은 한 가지 목적에 집중하고, 바뀐 동작·검증·문서를 함께 제출해 주세요.**
 
-현재 저장소는 비공개이며 프로젝트 자체의 공개 라이선스는 아직 정하지 않았습니다. 이 가이드는 협업 준비 문서이며 공개 사용·재배포 허가를 추가하지 않습니다. 접근 권한이 있는 기여자는 아래 절차를 따릅니다. 공개 전환 후에는 같은 절차를 fork 기반으로 사용할 수 있습니다.
+소스 저장소는 공개되어 있으며 아래 절차로 fork 기반 기여를 받습니다. 프로젝트 자체의 공개 라이선스는 아직 정하지 않았으며, 저장소 공개가 별도의 사용·재배포 허가를 추가하지는 않습니다. 설치 파일과 자동 업데이트는 기존 배포 전용 저장소를 유지합니다.
 
 ## 브랜치와 PR 대상
 
@@ -131,7 +131,13 @@ AI 도구로 작성한 코드도 제출자가 설명하고 검증할 책임이 �
 
 ### 자동 검사와 병합 제한의 현재 상태
 
-[Contribution checks](.github/workflows/ci.yml)는 모든 `pull_request`와 `main`·`dev` push에서 **Windows checks** 작업을 실행하도록 구성되어 있습니다. push는 `docs/**`와 `.md` 문서만 바뀌면 건너뛰지만 PR은 문서만 바뀌어도 검사하며, PR 본문 수정도 재검사합니다. 필수 섹션·검증 설명·확인 체크리스트와 선택한 변경 분류에 따른 문서 동반 여부를 검사하고 타입·빌드·기본 회귀·배포 문서 검사를 수행합니다. 내부 변경은 README/CHANGELOG 수정을 일괄 강제하지 않고 문서 영향 설명을 요구합니다. 자동 검사는 설명의 진실성이나 변경 분류의 정확성까지 판단할 수 없으므로 리뷰가 필요합니다.
+공개 협업 기준으로 모든 코드 PR의 전체 회귀 검사를 유지하며, 변경 파일에 해당하는 일부 테스트만 선택하지 않습니다. 별도 [설치 업그레이드 검사](.github/workflows/installer-validation.yml)는 `apps/web/` UI와 알려진 개발 문서의 추가·수정만 있는 PR에서 생략합니다. Windows 아이콘 원본(`apps/web/public/mongle-terminal-icon.png`), 설치본에 포함되는 `docs/USER-GUIDE.md`·`docs/THIRD-PARTY-NOTICES.md`·`docs/licenses/`는 예외로 반드시 검사합니다. 데스크톱·호스트·플랫폼·스크립트·의존성·설정·시험·미확인 경로, 삭제·파일 유형 변경도 설치 검사를 수행합니다. 배포 PR과 수동 실행은 항상 전체 설치 검사를 수행하며, 범위 판정 실패는 검사 실패로 처리합니다. 생략 시 요약에 실제 설치 미실행을 표시합니다. 이 정책은 저장소 공개 범위나 라이선스를 변경하지 않습니다.
+
+[PR description](.github/workflows/pr-description.yml)은 PR을 열거나 커밋·설명을 수정할 때 Linux에서 필수 섹션·검증 설명·확인 체크리스트와 문서 동반 여부를 검사합니다. 앱 의존성 설치나 빌드를 하지 않습니다. 내부 변경은 README/CHANGELOG 수정을 일괄 강제하지 않고 문서 영향 설명을 요구합니다. 자동 검사는 설명의 진실성이나 변경 분류의 정확성까지 판단할 수 없으므로 리뷰가 필요합니다.
+
+[Contribution checks](.github/workflows/ci.yml)는 PR 개설·커밋 갱신·재개·대상 브랜치 변경 때 범위를 판정합니다. `dev` 대상이며 루트 README·CHANGELOG·CONTRIBUTING·SECURITY·AGENTS 문서 또는 `docs/`의 Markdown만 바뀌면 Linux에서 배포 문서 정합성을 검사하고 **Windows checks** 요약에 런타임 검사를 하지 않았다고 명시합니다. 코드·설정·의존성·시험·워크플로 변경, 삭제·이름 변경에 포함된 코드, 빈 변경 목록, 수동 실행, `dev` → `main` 배포 PR은 기존 Windows 타입·빌드·네이티브·전체 회귀 검사를 유지합니다. 범위 판정이나 문서 검사가 실패하면 필수 검사도 실패합니다.
+
+PR 제목·본문만 수정하거나 초안을 정식 PR로 바꿀 때 전체 검사를 다시 시작하지 않습니다. 본문 수정은 진행 중인 Windows 작업을 취소하거나 그 결과를 성공으로 바꾸지 않습니다. 병합 뒤 `dev`·`main` push의 중복 전체 검사는 제거하며, **병합 직전 최신 head와 최신 base를 반영한 PR 검사 결과**를 확인합니다. 검사 뒤 base가 진행했으면 주제 브랜치를 최신 base로 갱신해 다시 검사합니다. 설치 업그레이드 검사와 최종 태그의 패키지·네이티브·NSIS 검증은 별도로 유지합니다. [사용량 조사와 검증 범위](docs/validation/actions-usage.md).
 
 [PR target policy](.github/workflows/pr-target.yml)는 PR 대상 변경·안내 코멘트·**PR target branch** 상태 기록에 쓰기 권한이 필요해 `pull_request_target`으로 실행됩니다. 권한은 저장소 읽기와 PR·커밋 상태 쓰기로 제한합니다. 기본 브랜치의 정책 스크립트 하나만 체크아웃해 실행하고 PR의 코드를 받거나 실행하지 않으므로, PR에서 정책 파일을 바꿔도 병합 전에는 적용되지 않습니다. 기여 코드는 읽기 권한만 있는 `pull_request`의 **Windows checks**에서만 실행됩니다.
 
@@ -139,12 +145,12 @@ CI 설정 추가와 실제 GitHub Actions 실행 완료는 별개입니다. 서�
 
 | 브랜치 | 서버 측 규칙 |
 |---|---|
-| `dev` | PR 필수, 승인 1명, 새 커밋 시 기존 승인 무효화, **Windows checks**·**PR target branch** 통과, 삭제·강제 push 금지 |
-| `main` | PR 필수, 저장소 관리자만 갱신(배포 PR 병합), **Windows checks**·**PR target branch** 통과, 삭제·강제 push 금지 |
+| `dev` | PR 필수, 승인 1명, 새 커밋 시 기존 승인 무효화, 최신 base 반영 및 **Windows checks**·**PR description**·**PR target branch** 통과, 삭제·강제 push 금지 |
+| `main` | PR 필수, 저장소 관리자만 갱신(배포 PR 병합), 최신 base 반영 및 **Windows checks**·**PR description**·**PR target branch** 통과, 삭제·강제 push 금지 |
 
-저장소 관리자 역할은 두 규칙을 우회할 수 있습니다. **GitHub 무료 요금제의 비공개 저장소는 ruleset과 브랜치 보호를 지원하지 않아(브랜치 보호 API 403 확인) 서버 측 병합 차단이 아직 적용되지 않았습니다.** 그동안은 `main` 대상 PR의 자동 `dev` 이동, **PR target branch**·**Windows checks** 실패 표시와 유지보수자 리뷰가 규칙을 지키는 수단이며, 실패한 PR의 병합을 서버가 막지는 않습니다. 저장소 공개 여부나 요금제는 이 문서만으로 바꾸지 않습니다. 소유자 본인이 작성한 PR은 스스로 승인할 수 없으므로 공개 협업 시 승인 가능한 유지보수자와 우회 사용 기준도 함께 정합니다.
+2026-10-07 소스 공개 후 두 ruleset을 **active**로 적용하고 API 응답을 확인했습니다(`dev`: 24617240, `main`: 24617242). 앞선 비공개 무료 저장소의 API 403·미적용 기록과 구분합니다. 저장소 관리자 역할은 두 규칙을 우회할 수 있지만 직접 push나 실패 검사 무시에 사용하지 않습니다. 소유자가 작성한 PR은 자신을 승인할 수 없으므로, 최신 base의 필수 검사·해당 설치 검사 통과와 독립 코드 검토를 확인한 뒤 PR 병합에 한해 관리자 권한을 사용하고 근거를 기록합니다.
 
-유지보수자는 공개 전환 후 다음 순서로 적용하고 확인합니다. GitHub Actions의 `integration_id`(15368), 저장소 관리자 역할의 `actor_id`(5)와 `pull_request` 규칙 값은 아직 실제 GitHub 응답으로 확인하지 않았습니다.
+유지보수자는 규칙을 바꿀 때 다음 순서로 적용하고 확인합니다. GitHub Actions의 `integration_id`(15368), 저장소 관리자 역할의 `actor_id`(5) 및 `pull_request` 규칙은 생성 API에서 수락됐습니다. 실제 PR 상태 연결은 해당 PR 결과와 함께 확인합니다.
 
 1. 저장소 Administration 쓰기 권한이 있는 소유자 계정으로 `gh auth login`합니다.
 2. `node scripts/apply-branch-rules.ts --dry-run`으로 생성·갱신 계획을 확인한 뒤 `node scripts/apply-branch-rules.ts`로 적용합니다.
