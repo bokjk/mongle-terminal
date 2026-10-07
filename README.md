@@ -163,6 +163,8 @@ PowerShell·명령 프롬프트와 설치된 Git Bash·WSL을 사용합니다. C
 
 ## 개발과 기여
 
+소스 저장소는 공개되어 있습니다. 설치 파일과 자동 업데이트는 기존 [배포 전용 저장소](https://github.com/bokjk/mongle-terminal-releases/releases/latest)를 유지합니다. 문제 보고·기여 절차와 현재 라이선스 상태는 [기여 안내](CONTRIBUTING.md), 취약점의 비공개 접수는 [보안 제보 안내](SECURITY.md)를 확인하세요.
+
 0.3.10의 측정 조건은 [응답성·안정성 검증 기록](docs/validation/responsiveness-reliability.md)에, 공식 태그·패키지 검사와 공개 파일 전체 다운로드·해시 결과는 [배포 기록](docs/validation/public-release-0.3.10.md)에 정리했습니다. 실제 사용자 설치본 교체는 별도입니다.
 
 **Windows 11 x64 · Node.js 24.x · Chrome**이 필요합니다. 소스 저장소 접근 권한이 있는 환경에서 실행합니다.
