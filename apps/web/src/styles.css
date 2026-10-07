@@ -134,6 +134,10 @@ button.host-select:hover { background: var(--surface-hover); border-color: var(-
 .worktree-row.selected { background: var(--accent-dim); color: var(--text); }
 .worktree-row.selected::before { content: ''; position: absolute; left: -9px; top: 8px; bottom: 8px; width: 2px; border-radius: 2px; background: var(--accent); }
 .worktree-main { display: flex; flex: 1; gap: 7px; align-items: center; min-width: 0; padding: 5px 5px 5px 6px; border: 0; background: transparent; text-align: left; color: inherit; }
+.notification-dot { display: inline-block; width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: var(--accent-strong); box-shadow: 0 0 0 1px var(--surface); }
+.worktree-main > .notification-dot, .group-main > .notification-dot { margin-left: auto; margin-right: 5px; }
+.notification-indicator { position: relative; }
+.notification-indicator > .notification-dot { position: absolute; top: 4px; right: 3px; }
 .worktree-symbol { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 30px; color: var(--text-muted); }
 .selected .worktree-symbol { color: var(--accent); }
 .worktree-details { display: flex; flex-direction: column; min-width: 0; }

@@ -14,7 +14,7 @@ export interface ProjectInspection { commonDir: string; root: string; selectedPa
 export interface WorktreeOperation { id: string; requestId: string; fingerprint: string; kind: 'create' | 'remove'; repositoryId: string; groupId: string; worktreeId: string; status: 'pending' | 'running' | 'succeeded' | 'failed' | 'attention'; createdAt: number; name?: string; path?: string; branch?: string; head?: string; terminalId?: string; message?: string; }
 export interface ShellProfile { id: string; name: string; executable: string; args: string[]; kind: 'powershell' | 'cmd' | 'wsl' | 'bash'; }
 export interface Controller { connectionId: string; deviceName: string; epoch: number; ready: boolean; }
-export interface TerminalInfo { id: string; groupId: string; title: string; profileId: string; cwd: string; currentCwd?: string; generation: string; status: 'running' | 'exited' | 'interrupted'; cols: number; rows: number; pid?: number; exitCode?: number; controller?: Controller; historyAvailable?: boolean; resumeOnBoot?: boolean; restoreError?: string; worktreeId?: string; }
+export interface TerminalInfo { id: string; groupId: string; title: string; profileId: string; cwd: string; currentCwd?: string; generation: string; status: 'running' | 'exited' | 'interrupted'; cols: number; rows: number; pid?: number; exitCode?: number; controller?: Controller; historyAvailable?: boolean; resumeOnBoot?: boolean; restoreError?: string; worktreeId?: string; notificationCount?: number; }
 export interface HostSettings { name: string; recordHistory: boolean; scrollback: number; }
 export interface HostState { hostId: string; bootId: string; name: string; version: string; protocolVersion: number; capabilities?: string[]; groups: Group[]; terminals: TerminalInfo[]; profiles: ShellProfile[]; settings: HostSettings; storageError?: string; repositories?: Repository[]; worktrees?: Worktree[]; worktreeOperations?: WorktreeOperation[]; }
 export interface ConnectionContext { id: string; deviceId: string; deviceName: string; owner: boolean; }
@@ -32,7 +32,7 @@ export interface GitChange { path: string; originalPath?: string; index: GitStat
 export type GitListing = { state: 'not-repository' | 'unavailable'; root: string; message: string } | { state: 'repository'; root: string; repositoryRoot: string; branch: string; detached: boolean; changes: GitChange[]; truncated: boolean };
 export interface RpcRequest { type: 'request'; id: string; method: string; params: unknown; }
 export type RpcResponse = { type: 'response'; id: string; ok: true; result: any } | { type: 'response'; id: string; ok: false; error: { code: string; message: string } };
-export interface PresentationSnapshot { kind: 'presentation-v1'; data: string; cols: number; rows: number; modes: Record<string, unknown>; version: string; inputResetGeneration?: number; }
+export interface PresentationSnapshot { kind: 'presentation-v1'; data: string; cols: number; rows: number; modes: Record<string, unknown>; version: string; inputResetGeneration?: number; notificationCount?: number; }
 export interface SnapshotEvent { type: 'snapshot'; terminalId: string; generation: string; bootId: string; seq: number; snapshot: PresentationSnapshot; }
 export type HostEvent = { type: 'state'; state: HostState } | SnapshotEvent | { type: 'pairings'; requests: unknown[] } | { type: 'notice'; code: string; message: string };
 export type ServerMessage = RpcResponse | HostEvent;
