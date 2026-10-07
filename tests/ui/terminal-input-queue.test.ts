@@ -34,6 +34,15 @@ function encodingRuns(requests: Array<{ data: string; encoding: Encoding }>) {
   return runs;
 }
 
+test('queued cancel keys preserve event boundaries through delayed acknowledgements',async()=>{
+  const {queue,requests,failures}=controlledQueue();
+  queue.enqueue('in-flight','utf8');
+  for(const data of ['typing','\x03','\x1b','\x1b','\x1b[A','\x1b[27u','\x1b[99;5u','after'])queue.enqueue(data,'utf8');
+  await acknowledgeAll(requests);
+  assert.deepEqual(requests.map(r=>r.data),['in-flight','typing','\x03','\x1b','\x1b','\x1b[A','\x1b[27u','\x1b[99;5u','after']);
+  assert.deepEqual(failures,[]);
+});
+
 test('large Korean, emoji and binary input keeps exact encoding order in UTF-8 bounded batches', async () => {
   const { queue, requests, failures } = controlledQueue();
   const input: Array<{ data: string; encoding: Encoding }> = [

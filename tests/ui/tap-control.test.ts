@@ -223,10 +223,17 @@ test('input intent transfers control consistently while background events preser
         await menu.getByRole('button',{name:/^복사/}).click();assert.equal((await acquisitions(page)).length,0,'copying through the menu does not take control');
         await page.evaluate(()=>(window as any).tapTest.clipboard='line one\nline two');
         await page.locator('.terminal-canvas').click({button:'right'});const confirmation=page.getByRole('dialog',{name:'여러 줄을 붙여넣을까요?',exact:true});await confirmation.waitFor();assert.equal((await acquisitions(page)).length,0,'confirmation precedes acquisition');
+        await expect(confirmation.getByRole('button',{name:'붙여넣기',exact:true})).toBeFocused();
+        await page.keyboard.press('Tab');await expect(confirmation.getByRole('button',{name:'닫기',exact:true})).toBeFocused();
+        await page.keyboard.press('Shift+Tab');await expect(confirmation.getByRole('button',{name:'붙여넣기',exact:true})).toBeFocused();
+        await page.keyboard.press('Escape');await confirmation.waitFor({state:'detached'});
+        assert.equal((await acquisitions(page)).length,0);assert.equal(await input(page),'');
+        await page.locator('.terminal-canvas').click({button:'right'});await confirmation.waitFor();
         await confirmation.getByRole('button',{name:'취소',exact:true}).click();assert.equal((await acquisitions(page)).length,0);assert.equal(await input(page),'');
         await page.locator('.terminal-canvas').click({button:'right',modifiers:['Shift']});await menu.waitFor();assert.equal((await acquisitions(page)).length,0);
         await menu.getByRole('button',{name:/^붙여넣기/}).click();await confirmation.waitFor();assert.equal((await acquisitions(page)).length,0);
-        await confirmation.getByRole('button',{name:'붙여넣기',exact:true}).click();await page.getByText('여기서 제어 중',{exact:true}).waitFor();
+        await expect(confirmation.getByRole('button',{name:'붙여넣기',exact:true})).toBeFocused();
+        await page.keyboard.press('Enter');await page.getByText('여기서 제어 중',{exact:true}).waitFor();
         await page.waitForFunction(()=>(window as any).tapTest.calls.some((call:any)=>call.method==='terminal.input'));
         assert.equal((await acquisitions(page)).length,1);assert.equal(await input(page),'line one\rline two');
       }finally{await page.close();}

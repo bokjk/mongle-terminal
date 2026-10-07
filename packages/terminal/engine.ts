@@ -2,6 +2,7 @@ import Headless from '@xterm/headless';
 import type { Terminal } from '@xterm/headless';
 import { SerializeAddon } from '@xterm/addon-serialize';
 import { reportedDirectory } from '../shell-profiles/integration.js';
+import { ClaudeTaskState } from './agent-status.js';
 import { clearScrollback, isPresentationPending, presentationExtras } from './pinned-xterm.js';
 import { assertGeometry, PRESENTATION_VERSION } from './types.js';
 import type { PresentationSnapshot, TerminalEngineOptions, TerminalModes } from './types.js';
@@ -22,6 +23,7 @@ export class TerminalEngine {
   private historyRestored = false;
   private restoringHistory = false;
   private win32InputMode = false;
+  private observeAgentInput: (data:string)=>void = ()=>{};
 
   constructor(options: TerminalEngineOptions) {
     assertGeometry(options.cols, options.rows);
@@ -80,7 +82,16 @@ export class TerminalEngine {
         return true;
       });
     }
+    const agent = new ClaudeTaskState(options.agentToken || '');
+    this.observeAgentInput = data => {
+      if(this.closing || options.notificationsEnabled?.() === false)return;
+      const update=agent.cancelInput(data);if(update)options.onAgentStatus?.(update.status);
+    };
     this.terminal.parser.registerOscHandler(777, data => {
+      if (!this.closing && !this.restoringHistory && options.notificationsEnabled?.() !== false) {
+        const update = agent.accept(data);
+        if (update) { options.onAgentStatus?.(update.status); if(update.notify) notify(); }
+      }
       // rxvt-compatible notification. Payload is never retained or executed.
       if (data.startsWith('notify;')) {
         const content = data.slice(7), separator = content.indexOf(';');
@@ -99,6 +110,8 @@ export class TerminalEngine {
     this.tail = result.catch(() => undefined);
     return result;
   }
+
+  observeInput(data:string): Promise<void> {return this.enqueue(()=>this.observeAgentInput(data));}
 
   write(data: string | Uint8Array): Promise<void> {
     if (this.closing) return Promise.reject(new Error('Terminal engine is disposed.'));

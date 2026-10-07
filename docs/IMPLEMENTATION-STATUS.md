@@ -1,5 +1,13 @@
 # 구현·검증 상태
 
+**0.3.16 배포 준비(2026-10-07):** Claude 자동 연동·작업 중 맥동·확인 전 완료 종, 붙여넣기 Enter 포커스, Git Bash 현재 경로 수정을 포함한다. 최종 전체 검사와 CI 산출물·공개 업데이트 검증을 진행하며 [배포 기록](validation/public-release-0.3.16.md)에 실제 결과를 기록한다. 현재 공개 채널은 0.3.15다.
+
+**PDF 제보 수정(2026-10-07, 미배포):** 여러 줄 붙여넣기 확인창의 최초 포커스를 붙여넣기 버튼으로 지정하고 Git Bash가 현재 폴더를 Windows 경로로 보고하도록 수정했다. 두 제보를 수정 전 검사 실패로 재현한 뒤 실제 셸·파일 RPC 6/6, 붙여넣기·제어권 13/13, 관련 회귀 17/17, 타입·빌드·문서·디렉터리 패키징을 통과했다. Astra가 최종 네이티브 앱의 시작 폴더·한글 공백 폴더 이동 후 파일 목록/열기/Git, Enter 붙여넣기와 Esc·취소를 확인했다. 사용자 설치본 적용·배포는 하지 않았다. [원인과 검증](validation/pdf-bug-report.md).
+
+**Claude 자동 연결·작업 상태(2026-10-07, 미배포):** Windows 네이티브 Claude 2.1.292 이상에 관리 훅을 자동 병합하고 작업 중·응답 완료·확인 요청·오류를 구분한다. 좁은 목록에는 아이콘과 툴팁, 모바일 전환 목록에는 라벨을 표시한다. 기존 설정·훅을 보존하고 수정 전 백업하며, 완료 상태와 읽음 강조를 분리한다. 백엔드 영향 검사 178 통과·0 실패·1 선택 생략, 중단 키·병렬 승인 요청 보완 후 영향 검사 25/25, 최종 화면·입력 검사 24/24, 타입·빌드·문서·디렉터리 패키징 통과. Astra가 최종 패키지에서 실제 Claude의 working→completed와 읽음 전후 강조를 확인했다. 시험 앱·호스트 잔류 0개이며 기존 사용자 앱은 유지했다. 실제 승인 대기·오류·중단 조작·실물 모바일은 별도 범위이며 사용자 설치본 적용·공개 배포는 아직 아니다. [검증과 제약](validation/claude-task-status.md).
+
+아래 0.3.15 배포 기록은 기존 버전 결과이며 위 미배포 변경을 포함하지 않는다.
+
 <!-- release-0.3.15-finalized -->
 
 **0.3.15 공개 배포 완료(2026-10-07):** [공개 릴리스](https://github.com/bokjk/mongle-terminal-releases/releases/tag/v0.3.15). [개발 PR 검사](https://github.com/bokjk/mongle-terminal/actions/runs/37585036031) 499 통과·0 실패·15 생략, [배포 PR 검사](https://github.com/bokjk/mongle-terminal/actions/runs/37586578183) 499 통과·0 실패·15 생략, [최종 태그 검사](https://github.com/bokjk/mongle-terminal/actions/runs/37587926965) 500 통과·0 실패·14 생략. 네이티브 2/2와 [실제 NSIS 교체·복원](https://github.com/bokjk/mongle-terminal/actions/runs/37586578164), 최종 태그 설치 payload 일치, 공개 첨부 5개 익명 전체 다운로드·해시, 실제 Electron의 격리 버전 어댑터로 0.3.14→0.3.15 다운로드 및 동일 버전 최신 상태 확인을 통과했다. 이전 공개 릴리스는 변경하지 않았다. [최종 증거](validation/public-release-0.3.15.md#0315-final).

@@ -1,4 +1,4 @@
-import { randomUUID, createHash } from 'node:crypto';
+import { randomUUID, randomBytes, createHash } from 'node:crypto';
 import { hostname, homedir } from 'node:os';
 import { readFile, realpath, stat, unlink } from 'node:fs/promises';
 import { join, dirname, basename } from 'node:path';
@@ -61,7 +61,7 @@ export class HostCore {
   private fileReads = new Map<string, number>();
   private fileDocuments = new Map<string, { client: Client; root: string; path: string; absolutePath: string }>();
 
-  constructor(private options: { dataDir: string; name?: string }) {
+  constructor(private options: { dataDir: string; name?: string; claudeIntegration?: import('../protocol/index.js').ClaudeIntegration }) {
     this.settings = {name: options.name || hostname(), recordHistory: true, scrollback: 5000};
   }
   async init(): Promise<void> {
@@ -80,7 +80,7 @@ export class HostCore {
       this.repositories = saved.repositories || [];
       this.worktrees = (saved.worktrees || []).map(item=>item.status==='removing'?{...item,status:'missing',reason:'삭제 결과를 확인하려면 목록을 새로고침해 주세요.'}:item);
       this.worktreeOperations = (saved.worktreeOperations || []).map(item=>item.status==='pending'||item.status==='running'?{...item,status:'attention',message:'호스트가 재시작되었습니다. 목록을 새로고침해 작업 결과를 확인해 주세요.'}:item);
-      this.terminals = saved.terminals.map(({controller, pid, ...info}) => ({...info, status: info.status === 'running' ? 'interrupted' : info.status, resumeOnBoot: info.status === 'running' || info.resumeOnBoot === true || legacyResume.has(info.id), historyAvailable: Boolean(this.settings.recordHistory && this.store.getSnapshot(info.id, info.generation))}));
+      this.terminals = saved.terminals.map(({controller, pid, agentStatus, agentProvider, ...info}) => ({...info, status: info.status === 'running' ? 'interrupted' : info.status, resumeOnBoot: info.status === 'running' || info.resumeOnBoot === true || legacyResume.has(info.id), historyAvailable: Boolean(this.settings.recordHistory && this.store.getSnapshot(info.id, info.generation))}));
     } else {
       this.groups = [{id:randomUUID(),name:'기본 그룹',cwd:homedir(),profileId:this.profiles[0]?.id || '',revision:0,layout:null}];
     }
@@ -113,7 +113,7 @@ export class HostCore {
     return result;
   }
   getState(): HostState {
-    return structuredClone({ hostId:this.hostId, bootId:this.bootId, name:this.settings.name, version:APP_VERSION, protocolVersion:PROTOCOL_VERSION, capabilities:['control.acquire-if-free','files.read','files.edit','files.pdf','git.read','layout.tabs','worktrees.manage','worktrees.terminal-context'], groups:this.groups, terminals:this.terminals, repositories:this.repositories,worktrees:this.worktrees,worktreeOperations:this.worktreeOperations,profiles:this.profiles, settings:this.settings, ...(this.storageError ? {storageError:this.storageError} : {}) });
+    return structuredClone({ hostId:this.hostId, bootId:this.bootId, name:this.settings.name, version:APP_VERSION, protocolVersion:PROTOCOL_VERSION, capabilities:['control.acquire-if-free','files.read','files.edit','files.pdf','git.read','layout.tabs','worktrees.manage','worktrees.terminal-context'], groups:this.groups, terminals:this.terminals, repositories:this.repositories,worktrees:this.worktrees,worktreeOperations:this.worktreeOperations,profiles:this.profiles, settings:this.settings, ...(this.options.claudeIntegration ? {claudeIntegration:this.options.claudeIntegration} : {}), ...(this.storageError ? {storageError:this.storageError} : {}) });
   }
   connect(ctx: ConnectionContext, send: Send): void {
     if (!this.initialized || this.closing || this.shutdownPrepared) throw new AppError('HOST_UNAVAILABLE','호스트가 준비되지 않았습니다.');
@@ -559,6 +559,7 @@ export class HostCore {
         if(p.clientInputSeq<=lease.inputSeq)throw new AppError('STALE_INPUT','이미 지난 입력 번호입니다. 입력을 자동으로 재전송하지 마세요.');
         const data=p.encoding==='binary'?Buffer.from(p.data,'latin1'):p.data;
         try {runtime.pty!.write(data);}catch{throw new AppError('WRITE_FAILED','터미널 입력을 전달하지 못했습니다.');}
+        if(p.data==='\x03'||p.data==='\x1b'||p.data==='\x1b[27u'||p.data==='\x1b[99;5u')void runtime.engine.observeInput(p.data).then(()=>this.scheduleFrame(runtime)).catch(()=>{});
         lease.inputSeq=p.clientInputSeq;lease.dedupe.set(p.inputId,{seq:p.clientInputSeq,hash});if(lease.dedupe.size>2048)lease.dedupe.delete(lease.dedupe.keys().next().value!);
         return {accepted:true,inputId:p.inputId,clientInputSeq:p.clientInputSeq,duplicate:false};
       }
@@ -638,15 +639,21 @@ export class HostCore {
     const runtime={} as Runtime;
     Object.assign(runtime,{info,seq:0,epoch:0,checkpointAt:0,disposed:false,pendingBytes:0});
     info.notificationCount=0;
+    delete info.agentStatus; delete info.agentProvider;
+    const agentToken = this.options.claudeIntegration?.status === 'ready' && profile.kind !== 'wsl' ? randomBytes(32).toString('hex') : undefined;
     delete info.currentCwd;
     runtime.engine=new TerminalEngine({cols:info.cols,rows:info.rows,scrollback:this.settings.scrollback,
       notificationsEnabled:()=>!runtime.disposed&&!this.closing&&!this.shutdownPrepared&&this.runtimes.get(info.id)===runtime,
       onNotification:count=>{info.notificationCount=count;runtime.notificationChanged=true;},
+      agentToken,
+      onAgentStatus:status=>{info.agentStatus=status;info.agentProvider='claude';runtime.notificationChanged=true;},
       onDirectory:directory=>{if(!runtime.disposed&&info.currentCwd!==directory){info.currentCwd=directory;runtime.directoryChanged=true;}},onResponse:(data:string)=>{try{if(runtime.pty && info.status==='running')runtime.pty.write(data);}catch{/* exit can race an emulator reply */}}});
     this.runtimes.set(info.id,runtime);
     try {
       if(history)await runtime.engine.restoreHistory(history);
-      const integration=shellIntegration(profile,launch.args,safeShellEnvironment());
+      const environment=safeShellEnvironment();
+      if(agentToken)environment.MONGLE_AGENT_TOKEN=agentToken;
+      const integration=shellIntegration(profile,launch.args,environment);
       runtime.pty=pty.spawn(launch.executable,integration.args,{name:'xterm-256color',cols:info.cols,rows:info.rows,cwd:launch.cwd,env:integration.env,useConpty:true,useConptyDll:true});
       runtime.stopPty=installPtyLifecycle(runtime.pty);
     } catch {
@@ -662,7 +669,7 @@ export class HostCore {
     });
     runtime.pty.onExit(({exitCode})=>{
       if(runtime.disposed || this.runtimes.get(info.id)!==runtime)return;
-      info.status='exited';info.exitCode=exitCode;delete info.pid;runtime.pty=undefined;this.revoke(runtime);
+      info.status='exited';info.exitCode=exitCode;delete info.pid;delete info.agentStatus;delete info.agentProvider;runtime.pty=undefined;this.revoke(runtime);
       if(!this.closing && !this.shutdownPrepared)info.resumeOnBoot=false;
       this.persist();this.broadcastState();
       // A completed process no longer needs a 5,000-line mutable VT engine.

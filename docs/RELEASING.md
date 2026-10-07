@@ -1,5 +1,15 @@
 # 배포와 자동 업데이트
 
+**0.3.16 배포 준비(2026-10-07):** Claude 자동 연동·작업 중 맥동·확인 전 완료 종, 붙여넣기 Enter 포커스, Git Bash 현재 경로 수정을 포함한다. 최종 전체 검사와 CI 산출물·공개 업데이트 검증을 진행하며 [배포 기록](validation/public-release-0.3.16.md)에 실제 결과를 기록한다. 현재 공개 채널은 0.3.15다.
+
+## 0.3.16의 Claude 자동 연동
+
+0.3.16 배포 후보에 포함한다. 데스크톱이 새 실행부를 시작할 때 `--claude-integration`을 전달하여 지원되는 Windows Claude의 사용자 설정에 관리 훅을 병합한다. 기존 실행부에 다시 연결하는 것만으로 새 훅이 설치되지는 않는다. 실행 중인 작업을 종료하거나 셸을 자동 재시작하지 않으며, 새 터미널부터 상태 토큰을 받는다.
+
+기존 설정 백업, 관리 훅 스크립트, SHA-256으로 검증한 독립 Node 런타임 복사본은 Claude 설정 폴더에 보관한다. 설치 파일/ZIP을 옮기거나 제거해도 훅의 실행 파일 경로가 깨지지 않으며 몽글 토큰이 없는 세션에서는 상태를 보내지 않는다. 시스템 PATH나 Claude 인증은 변경하지 않는다. 패키지는 별도 훅 다운로드가 필요하지 않다.
+
+개발·E2E는 `MONGLE_DATA_DIR`를 지정해 사용자 설정 설치를 기본 차단한다. 연동 시험만 `MONGLE_CLAUDE_CONFIG_DIR`로 별도 시험 설정 폴더를 명시한다. 실제 설치·업데이트와 개인 설정에 대한 자동 설치는 별도 검증 범위로 기록한다.
+
 <!-- release-0.3.15-finalized -->
 
 **0.3.15 공개 배포 완료(2026-10-07):** [공개 릴리스](https://github.com/bokjk/mongle-terminal-releases/releases/tag/v0.3.15). [개발 PR 검사](https://github.com/bokjk/mongle-terminal/actions/runs/37585036031) 499 통과·0 실패·15 생략, [배포 PR 검사](https://github.com/bokjk/mongle-terminal/actions/runs/37586578183) 499 통과·0 실패·15 생략, [최종 태그 검사](https://github.com/bokjk/mongle-terminal/actions/runs/37587926965) 500 통과·0 실패·14 생략. 네이티브 2/2와 [실제 NSIS 교체·복원](https://github.com/bokjk/mongle-terminal/actions/runs/37586578164), 최종 태그 설치 payload 일치, 공개 첨부 5개 익명 전체 다운로드·해시, 실제 Electron의 격리 버전 어댑터로 0.3.14→0.3.15 다운로드 및 동일 버전 최신 상태 확인을 통과했다. 이전 공개 릴리스는 변경하지 않았다. [최종 증거](validation/public-release-0.3.15.md#0315-final).
