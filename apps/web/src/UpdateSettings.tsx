@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
 import { Download, LoaderCircle, RefreshCw } from 'lucide-react';
 import type { UpdateState } from '../../../packages/client/index';
+import { INSTALL_STEPS, useAppUpdate } from './update-store';
 
 const labels: Record<UpdateState['status'], string> = {
   unsupported: '이 앱에서는 자동 업데이트를 사용할 수 없습니다.',
@@ -8,60 +8,15 @@ const labels: Record<UpdateState['status'], string> = {
   checking: '새 버전을 확인하고 있습니다.',
   downloading: '업데이트를 다운로드하고 있습니다.',
   ready: '업데이트 설치를 준비했습니다.',
-  installing: '터미널 구성을 보관하고 업데이트를 설치하고 있습니다.',
+  installing: '업데이트 설치를 준비하고 있습니다.',
   error: '업데이트를 완료하지 못했습니다.',
 };
 
 export function UpdateSettings({ refreshBlocked = false }: { refreshBlocked?: boolean }) {
   const bridge = window.mongle;
-  const supported = !!(bridge?.getUpdateState && bridge.checkForUpdates && bridge.installUpdate && bridge.onUpdate);
-  const [state, setState] = useState<UpdateState | null>(null);
-  const [error, setError] = useState('');
-  const [busy, setBusy] = useState(false);
-  const mounted = useRef(false);
-  const operation = useRef(false);
-  const eventVersion = useRef(0);
-
-  useEffect(() => {
-    mounted.current = true;
-    let active = true;
-    if (!supported) return () => { mounted.current = false; };
-    // Subscribe first. A slower IPC response must not replace a newer event.
-    const unsubscribe = bridge!.onUpdate!(value => {
-      eventVersion.current += 1;
-      if (active) { setState(value); setError(''); }
-    });
-    const version = eventVersion.current;
-    void bridge!.getUpdateState!().then(value => {
-      if (active && eventVersion.current === version) setState(value);
-    }).catch(failure => {
-      if (active && eventVersion.current === version) setError(failure instanceof Error ? failure.message : '업데이트 상태를 확인하지 못했습니다.');
-    });
-    return () => { active = false; mounted.current = false; unsubscribe(); };
-  }, [bridge, supported]);
-
-  async function run(install: boolean) {
-    if (!supported || operation.current) return;
-    operation.current = true;
-    setBusy(true); setError('');
-    const version = eventVersion.current;
-    try {
-      if (install) {
-        await bridge!.installUpdate!();
-        // A cancelled native confirmation leaves the downloaded update ready.
-        const next = await bridge!.getUpdateState!();
-        if (mounted.current && eventVersion.current === version) setState(next);
-      } else {
-        const next = await bridge!.checkForUpdates!();
-        if (mounted.current && eventVersion.current === version) setState(next);
-      }
-    } catch (failure) {
-      if (mounted.current) setError(failure instanceof Error ? failure.message : '업데이트를 완료하지 못했습니다.');
-    } finally {
-      operation.current = false;
-      if (mounted.current) setBusy(false);
-    }
-  }
+  // One app-wide subscription shared with the sidebar notice keeps both views in step.
+  const { supported, state, error, busy, store } = useAppUpdate();
+  const run = (install: boolean) => install ? store.install() : store.check();
 
   if (!bridge) return <div className="settings-section">
     <h3 className="settings-title">화면 새로고침</h3>
@@ -82,7 +37,12 @@ export function UpdateSettings({ refreshBlocked = false }: { refreshBlocked?: bo
       {state?.availableVersion && <div className="setting-row"><span>새 버전</span><strong>{state.availableVersion}</strong></div>}
       <p className={state?.status === 'error' ? 'error-text' : 'hint'} role={state?.status === 'error' ? 'alert' : 'status'}>{message}</p>
       {state?.status === 'downloading' && <div className="form-row"><progress aria-label="업데이트 다운로드 진행률" max={100} value={progress} />{progress !== undefined && <span>{Math.round(progress)}%</span>}</div>}
-      {state?.status !== 'unsupported' && <p className="hint">새 버전은 자동으로 확인하고 다운로드합니다. 설치는 아래 버튼을 누른 뒤 확인 창에서 결정합니다.</p>}
+      {state?.status === 'installing' && <ol className="update-steps" aria-label="업데이트 설치 단계">{INSTALL_STEPS.map((step, index) => {
+        const current = INSTALL_STEPS.findIndex(item => item.phase === state.phase);
+        const stepState = index < current ? 'done' : index === current ? 'current' : 'todo';
+        return <li key={step.phase} className={stepState} aria-current={stepState === 'current' ? 'step' : undefined}>{stepState === 'current' ? <LoaderCircle size={12} className="spin" aria-hidden="true" /> : <span className="update-step-dot" aria-hidden="true" />}{step.label}</li>;
+      })}</ol>}
+      {state?.status !== 'unsupported' && <p className="hint">새 버전은 자동으로 확인하고 다운로드합니다. 준비되면 사이드바 아래에 알림이 표시되며, 설치는 버튼을 누른 뒤 확인 창에서 결정합니다. 앱이 닫힌 뒤에는 설치 창에 진행 상황이 표시되고, 끝나면 앱이 다시 열립니다.</p>}
       <div className="form-row">
         {state?.status === 'ready' ? <button type="button" className="button primary" disabled={pending} onClick={() => void run(true)}><Download size={16} />업데이트 설치 후 다시 시작</button> : <button type="button" className="button subtle" disabled={pending || state?.status === 'unsupported'} onClick={() => void run(false)}>{pending ? <LoaderCircle size={16} className="spin" /> : <RefreshCw size={16} />}업데이트 확인</button>}
       </div>

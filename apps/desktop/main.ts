@@ -302,23 +302,25 @@ function setupUpdater() {
       if (state.status !== lastStatus) {
         configureApplicationMenu(); updateTrayMenu();
         if (state.status === 'ready' && Notification.isSupported()) {
-          const notification = new Notification({ title: '몽글터미널 업데이트 준비 완료', body: `${state.availableVersion} 버전을 설치할 수 있습니다. 작업을 저장한 뒤 설정의 앱 업데이트에서 설치해 주세요.` });
+          const notification = new Notification({ title: '몽글터미널 업데이트 준비 완료', body: `${state.availableVersion} 버전을 설치할 수 있습니다. 작업을 저장한 뒤 사이드바 아래의 업데이트 버튼이나 트레이 메뉴에서 설치해 주세요.` });
           notification.on('click', openWindow); notification.show();
         }
         lastStatus = state.status;
       }
     },
-    async prepareInstall() {
+    async prepareInstall(report) {
       if (protectUnsavedFiles()) return false;
       let prepared = false;
       await fullExit.run({
         async confirm({ runningTerminals, recordHistory }) {
           const options = { type: 'warning' as const, title: '몽글터미널 업데이트',
             message: '작업을 저장하고 업데이트를 설치할까요?',
-            detail: `현재 컴퓨터의 터미널 ${runningTerminals}개와 원격 접속을 종료하고 새 버전으로 다시 시작합니다. 다른 컴퓨터의 터미널은 종료하지 않습니다.\n\n그룹과 분할 배치${recordHistory ? ', 보관 중인 출력 기록' : ''}는 저장되며 새 셸로 복원됩니다. 실행 중인 Claude 등의 프로그램과 저장하지 않은 작업은 이어서 실행되지 않습니다.`,
+            detail: `현재 컴퓨터의 터미널 ${runningTerminals}개와 원격 접속을 종료하고 새 버전으로 다시 시작합니다. 다른 컴퓨터의 터미널은 종료하지 않습니다.\n\n그룹과 분할 배치${recordHistory ? ', 보관 중인 출력 기록' : ''}는 저장되며 새 셸로 복원됩니다. 실행 중인 Claude 등의 프로그램과 저장하지 않은 작업은 이어서 실행되지 않습니다.\n\n앱이 닫히면 설치 창에 진행 상황이 표시되고, 설치가 끝나면 몽글터미널이 다시 열립니다.`,
             buttons: ['취소', '설치 후 다시 시작'], defaultId: 0, cancelId: 0, noLink: true };
           const result = window && !window.isDestroyed() ? await dialog.showMessageBox(window, options) : await dialog.showMessageBox(options);
-          return result.response === 1;
+          const accepted = result.response === 1;
+          if (accepted) report('saving');
+          return accepted;
         },
         quitDesktop: () => { prepared = true; },
         showError: message => dialog.showErrorBox('업데이트를 설치하지 못했습니다', message),

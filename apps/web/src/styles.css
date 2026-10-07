@@ -829,3 +829,27 @@ details.command-menu { flex: 0 0 auto; width: auto; max-height: none; overflow: 
   .markdown-preview { padding: 20px; }
   .file-workspace.with-editor > .file-explorer { top: 44px; }
 }
+
+/* Persistent app update notice (sidebar footer card / collapsed rail badge). */
+.sidebar-footer { flex-wrap: wrap; }
+.update-notice { order: -1; flex: 1 1 100%; display: flex; flex-direction: column; gap: 7px; min-width: 0; padding: 9px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text-secondary); font-size: 11px; }
+.update-notice.ready { border-color: var(--accent); background: var(--accent-dim); }
+.update-notice.error { border-color: var(--danger); background: var(--danger-dim); }
+.update-notice-head { display: flex; align-items: center; gap: 7px; min-width: 0; color: var(--text); }
+.update-notice-head strong { min-width: 0; font-weight: 600; line-height: 15px; overflow-wrap: anywhere; }
+.update-notice-head > svg { flex-shrink: 0; color: var(--accent); }
+.update-notice.error .update-notice-head > svg { color: var(--danger); }
+.update-notice progress { width: 100%; height: 6px; accent-color: var(--accent); }
+.update-notice-text { margin: 0; line-height: 15px; color: var(--text-secondary); overflow-wrap: anywhere; }
+.update-steps { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.update-steps li { display: flex; align-items: center; gap: 7px; color: var(--text-muted); line-height: 14px; }
+.update-steps li.current { color: var(--text); font-weight: 600; }
+.update-steps li.done { color: var(--success); }
+.update-steps li > svg { flex-shrink: 0; color: var(--accent); }
+.update-step-dot { flex-shrink: 0; width: 6px; height: 6px; margin: 0 2.5px; border-radius: 50%; background: currentColor; }
+.sidebar-footer .update-notice .button.update-notice-action { width: 100%; min-height: 28px; justify-content: center; padding: 5px 8px; }
+.sidebar-footer .update-notice .button.update-notice-action.subtle { border-color: var(--border); }
+.update-rail-badge { position: relative; color: var(--accent); }
+.update-rail-badge.error { color: var(--danger); }
+.update-rail-dot { position: absolute; top: 3px; right: 3px; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--surface); }
+.update-rail-badge.error .update-rail-dot { background: var(--danger); }

@@ -89,7 +89,9 @@ test('update settings preserve newer events, gate repeated actions, show native 
     const refresh = page.getByRole('button', { name: '화면 새로고침', exact: true });
     assert.equal(await refresh.isEnabled(), true);
     assert.equal(await page.getByRole('button', { name: '업데이트 확인', exact: true }).count(), 0, 'Browser must not offer local native update controls');
-    assert.equal(await page.evaluate('window.calls.filter(value=>value==="unsubscribe").length'), 1);
+    // Update state is one app-wide store shared with the sidebar notice, so unmounting settings
+    // keeps the bridge subscription; the store releases it only when the bridge itself changes.
+    assert.equal(await page.evaluate('window.calls.filter(value=>value==="unsubscribe").length'), 1, 'Switching away from the desktop bridge releases its subscription');
     await page.evaluate('window.render("blocked")');
     await page.getByRole('status').filter({ hasText: '저장하지 않았거나 저장 중인 파일' }).waitFor();
     assert.equal(await refresh.isDisabled(), true, 'Unsaved files and pending saves must prevent page reload');

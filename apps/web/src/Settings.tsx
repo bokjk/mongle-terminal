@@ -7,6 +7,7 @@ import { RemoteAccessQr } from './RemoteAccessQr';
 import { TOUCH_SCROLL_SPEEDS, touchScrollSpeed } from '../../../packages/terminal/touch-scrollback';
 
 type Tab = 'appearance' | 'host' | 'remote' | 'updates' | 'help';
+export type SettingsTab = Tab;
 type RemoteStatus = { origin?: string | null; enabled: boolean; loopbackUrl?: string };
 type Diagnosis = { installed: boolean; connected: boolean; dnsName?: string; origin?: string; serveEnabled?: boolean; message?: string };
 type PairingRequest = { requestId: string; name: string; status: string; createdAt: string | number; expiresAt: string | number };
@@ -35,6 +36,8 @@ export interface SettingsProps {
   scrollSpeed: number;
   onScrollSpeed: (value: number) => void;
   refreshBlocked?: boolean;
+  /** Tab shown first, e.g. 'updates' when opened from the sidebar update notice. */
+  initialTab?: Tab;
   onTheme: (value: 'dark' | 'light') => void;
   onFontSize: (value: number) => void;
   onClose: () => void;
@@ -55,8 +58,8 @@ function dateLabel(value?: string | number) {
 }
 function errorMessage(error: unknown) { return error instanceof Error ? error.message : '요청을 완료하지 못했습니다.'; }
 
-export function Settings({ client, state, owner, theme, fontSize, scrollSpeed, onScrollSpeed, refreshBlocked = false, onTheme, onFontSize, onClose, onError }: SettingsProps) {
-  const [tab, setTab] = useState<Tab>('appearance');
+export function Settings({ client, state, owner, theme, fontSize, scrollSpeed, onScrollSpeed, refreshBlocked = false, initialTab = 'appearance', onTheme, onFontSize, onClose, onError }: SettingsProps) {
+  const [tab, setTab] = useState<Tab>(initialTab);
   const [name, setName] = useState(state.settings.name);
   const [recordHistory, setRecordHistory] = useState(state.settings.recordHistory);
   const [busy, setBusy] = useState<string | null>(null);

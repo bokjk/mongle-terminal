@@ -4,7 +4,8 @@ import { createClient, type ConnectionInfo, type SavedHost } from '../../../pack
 import { APP_VERSION, findLeaf, leafIds, groupRepositoryIds, type LayoutLeaf, type Group, type HostState, type LayoutNode, type TerminalInfo, type ProjectInspection } from '../../../packages/protocol/index';
 import { updateRatio } from '../../../packages/ui/layout';
 import { TerminalPane, type PaneActions } from './TerminalPane';
-import { Settings } from './Settings';
+import { Settings, type SettingsTab } from './Settings';
+import { UpdateNotice } from './UpdateNotice';
 import { SplitTree } from './SplitTree';
 import { usePaneDrag } from './use-pane-drag';
 import { FileExplorer } from './FileExplorer';
@@ -41,6 +42,7 @@ export function App(){
   const [filesOpen,setFilesOpen] = useState(()=>preference<unknown>('mongle.files.open',false)===true);
   useEffect(()=>savePreference('mongle.files.open',filesOpen),[filesOpen]);
   const [settingsOpen,setSettingsOpen] = useState(false);
+  const [settingsTab,setSettingsTab] = useState<SettingsTab>();
   const [editor,setEditor] = useState<Editor>();
   const currentEditor = useRef(editor);currentEditor.current=editor;
   const [projectEditor,setProjectEditor] = useState<{group?:Group}>();
@@ -225,6 +227,7 @@ export function App(){
         {state&&!state.groups.length&&<p className="hint sidebar-empty">그룹을 만들어 작업을<br/>한곳에 모아 보세요.</p>}
       </nav></div>
       <div className="sidebar-footer">
+        {window.mongle&&<UpdateNotice compact={!mobile&&sidebarCollapsed} onExpand={()=>setSidebarCollapsed(false)} onOpenSettings={state?()=>{setSettingsTab('updates');setSettingsOpen(true);}:undefined}/>}
         {!mobile&&group?.layout&&<><button className="button subtle new-terminal-drag" aria-label="새 터미널" disabled={!connected} draggable={paneDrag.enabled} title="새 터미널 · 끌어서 원하는 위치에 분할" onPointerDown={paneDrag.pointerStart} onDragStart={event=>paneDrag.start(event)} onDragEnd={paneDrag.cancel} onClick={()=>{if(paneDrag.clickAllowed())setEditor({kind:'new-terminal'});}}><Plus size={16}/><span className="sidebar-action-label">새 터미널</span></button></>}
         {!mobile&&<button className="button subtle" aria-label="파일 탐색기" aria-expanded={filesOpen} disabled={!state} onClick={()=>setFilesOpen(open=>!open)} title="파일 탐색기"><Folder size={17}/><span className="sidebar-action-label">파일 탐색기</span></button>}
         <button className="button subtle" aria-label="설정" disabled={!state} onClick={()=>setSettingsOpen(true)} title="설정"><SettingsIcon size={17}/><span className="sidebar-action-label">설정</span><span className="version">v{state?.version||APP_VERSION}</span></button><div className="sidebar-note"><span className="connection-dot connected"/>창을 닫아도 작업은 계속돼요</div>
@@ -265,7 +268,7 @@ export function App(){
       {fileDocs.visible&&!group?.layout&&<div className="orphan-file-editor"><Suspense fallback={<p className="file-message">편집기를 여는 중…</p>}><FileEditorPanel files={fileDocs} treeOpen={false} onToggleTree={()=>setFilesOpen(true)} maximized={true} onMaximize={()=>fileDocs.setVisible(false)} onError={notify}/></Suspense></div>}
       <footer className="status-bar"><span><span className={`connection-dot ${connected?'connected':'offline'}`}/>{connected?'세션 연결됨':'오프라인'}</span><span>{state?`${state.terminals.filter(t=>t.status==='running').length}개 실행 중`:'연결 대기'}</span>{fileDocs.documents.length>0&&<button className="open-files-status" onClick={()=>fileDocs.setVisible(true)}>열린 파일 {fileDocs.documents.length}{fileDocs.unsaved?` · 수정 중 ${fileDocs.unsaved}`:''}</button>}<span className="status-right">{connection.owner?'이 컴퓨터':'원격 연결'} · {group?.cwd||'몽글터미널'}</span></footer>
     </main>
-    {settingsOpen&&state&&<Settings client={client} state={state} owner={connection.owner} theme={theme} fontSize={fontSize} scrollSpeed={scrollSpeed} onScrollSpeed={setScrollSpeed} refreshBlocked={fileDocs.unsaved > 0 || fileDocs.documents.some(doc => doc.saving)} onTheme={setTheme} onFontSize={setFontSize} onClose={()=>setSettingsOpen(false)} onError={notify}/>}
+    {settingsOpen&&state&&<Settings initialTab={settingsTab} client={client} state={state} owner={connection.owner} theme={theme} fontSize={fontSize} scrollSpeed={scrollSpeed} onScrollSpeed={setScrollSpeed} refreshBlocked={fileDocs.unsaved > 0 || fileDocs.documents.some(doc => doc.saving)} onTheme={setTheme} onFontSize={setFontSize} onClose={()=>{setSettingsOpen(false);setSettingsTab(undefined);}} onError={notify}/>}
     {editor&&<EditorModal key={`${state?.hostId}:${group?.id}:${editor.kind}:${editor.kind==='group'?editor.group?.id:editor.kind==='new-terminal'?editor.tabTarget||editor.splitTarget:''}`} editor={editor} state={state} group={group} activeId={activeId} pickDirectory={connected&&connection.owner&&window.mongle?.selectDirectory?path=>window.mongle!.selectDirectory!(path):undefined} onClose={()=>setEditor(undefined)} onSubmit={async values=>{
       const selection=hostSelection.current,navigation=projectNavigation.current,hostId=state?.hostId,bootId=state?.bootId;
       const sameHost=()=>selection===hostSelection.current&&layoutContext.current.hostId===hostId&&layoutContext.current.bootId===bootId;
