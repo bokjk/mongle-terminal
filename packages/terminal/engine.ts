@@ -49,9 +49,10 @@ export class TerminalEngine {
     this.terminal.onData(reply);
     const notify = () => {
       if (this.closing || this.restoringHistory || options.notificationsEnabled?.() === false ||
-          this.notificationCount === Number.MAX_SAFE_INTEGER) return;
+          this.notificationCount === Number.MAX_SAFE_INTEGER) return false;
       this.notificationCount += 1;
       options.onNotification?.(this.notificationCount);
+      return true;
     };
     // Parse signals, not raw chunks: BEL terminating an OSC is not a bell.
     this.terminal.onBell(notify);
@@ -88,12 +89,14 @@ export class TerminalEngine {
     });
     this.observeAgentInput = data => {
       if(this.closing || options.notificationsEnabled?.() === false)return;
-      const update=agent.cancelInput(data);if(update)options.onAgentStatus?.(update.status);
+      const update=agent.observeInput(data);if(update)options.onAgentStatus?.(update.status);
     };
     this.terminal.parser.registerOscHandler(777, data => {
       if (!this.closing && !this.restoringHistory && options.notificationsEnabled?.() !== false) {
         const update = agent.accept(data);
-        if (update) { options.onAgentStatus?.(update.status); if(update.notify) notify(); }
+        // The host records which notification number belongs to this alert, so a later plain
+        // BEL/OSC notification is never presented as Claude's completion.
+        if (update) { const notified = update.notify && notify(); options.onAgentStatus?.(update.status, notified ? this.notificationCount : undefined); }
       }
       // rxvt-compatible notification. Payload is never retained or executed.
       if (data.startsWith('notify;')) {

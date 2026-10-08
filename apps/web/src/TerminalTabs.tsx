@@ -3,14 +3,14 @@ import { GitBranch, SquareTerminal, X } from 'lucide-react';
 import type { TerminalInfo, Worktree } from '../../../packages/protocol/index';
 import { terminalLabel } from './worktree-labels';
 import type { TabInsertion } from '../../../packages/ui/layout';
-import { terminalStatus, terminalStatusDescription, TerminalStatusBadge } from './TerminalStatus';
+import { terminalStatus, terminalStatusDescription, TerminalStatusBadge, type TerminalNotices } from './TerminalStatus';
 
-export function TerminalTabs({terminals,activeId,connected,worktrees,insertion,onSelect,onClose,onRename,clickAllowed,dragEnabled,onDragStart,onDragEnd,unread}:{
+export function TerminalTabs({terminals,activeId,connected,worktrees,insertion,onSelect,onClose,onRename,clickAllowed,dragEnabled,onDragStart,onDragEnd,notices}:{
   terminals:TerminalInfo[];activeId:string;connected:boolean;worktrees?:Worktree[];
   onSelect:(id:string,focusTab?:boolean)=>void;onClose:(terminal:TerminalInfo)=>void;onRename:(terminal:TerminalInfo)=>void;clickAllowed:()=>boolean;
   dragEnabled:boolean;onDragStart:(event:DragEvent<HTMLElement>,id:string)=>void;onDragEnd:()=>void;
   insertion?:TabInsertion;
-  unread?:ReadonlySet<string>;
+  notices?:TerminalNotices;
 }){
   const buttons=useRef(new Map<string,HTMLButtonElement>());
   const ids=terminals.map(terminal=>terminal.id).join(',');
@@ -26,7 +26,7 @@ export function TerminalTabs({terminals,activeId,connected,worktrees,insertion,o
     onSelect(id,true);
   }
   return <div className="terminal-tabs" role="tablist" aria-label="터미널 탭">
-    {terminals.map(terminal=>{const worktree=worktrees?.find(w=>w.id===terminal.worktreeId);const Icon=worktree?GitBranch:SquareTerminal;const status=terminalStatus(terminal,unread?.has(terminal.id)===true);return <div key={terminal.id} className={`terminal-tab ${terminal.id===activeId?'active':''}`} data-tab-id={terminal.id} data-drop-side={insertion?.id===terminal.id?insertion.side:undefined}>
+    {terminals.map(terminal=>{const worktree=worktrees?.find(w=>w.id===terminal.worktreeId);const Icon=worktree?GitBranch:SquareTerminal;const status=terminalStatus(terminal,notices?.get(terminal.id));return <div key={terminal.id} className={`terminal-tab ${terminal.id===activeId?'active':''}`} data-tab-id={terminal.id} data-drop-side={insertion?.id===terminal.id?insertion.side:undefined}>
       <button ref={button=>{if(button)buttons.current.set(terminal.id,button);else buttons.current.delete(terminal.id);}}
         id={`terminal-tab-${terminal.id}`} className="terminal-tab-select pane-title" role="tab"
         aria-label={terminalLabel(terminal,worktrees)} aria-selected={terminal.id===activeId}

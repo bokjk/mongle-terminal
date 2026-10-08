@@ -134,23 +134,43 @@ button.host-select:hover { background: var(--surface-hover); border-color: var(-
 .worktree-row.selected { background: var(--accent-dim); color: var(--text); }
 .worktree-row.selected::before { content: ''; position: absolute; left: -9px; top: 8px; bottom: 8px; width: 2px; border-radius: 2px; background: var(--accent); }
 .worktree-main { display: flex; flex: 1; gap: 7px; align-items: center; min-width: 0; padding: 5px 5px 5px 6px; border: 0; background: transparent; text-align: left; color: inherit; }
-.terminal-status { display: inline-flex; align-items: center; gap: 4px; flex: 0 0 auto; white-space: nowrap; padding: 3px 5px; border-radius: 5px; color: var(--text-secondary); font-size: 10px; font-weight: 500; line-height: 16px; }
-.terminal-status > svg { flex: 0 0 auto; }
+.terminal-status { display: inline-flex; align-items: center; gap: 5px; flex: 0 0 auto; white-space: nowrap; padding: 2px 4px; color: var(--text-secondary); font-size: 10px; font-weight: 500; line-height: 16px; }
+/* One fixed slot: a row never shifts when its state changes shape. */
+.terminal-status-icon { position: relative; display: inline-grid; place-items: center; flex: 0 0 auto; width: 14px; height: 14px; }
+.terminal-status-icon > svg { display: block; }
+/* Working: a thin arc turning on a faint track. */
 .terminal-status-working { color: var(--accent-strong); }
-.terminal-working-pulse { animation: terminal-working-pulse 2s ease-in-out infinite; }
-@keyframes terminal-working-pulse { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
-.terminal-status-attention { color: var(--warning); background: var(--warning-dim); }
-.terminal-status-error { color: var(--danger); background: var(--danger-dim); }
-.terminal-status[data-unread="true"] { font-weight: 650; box-shadow: inset 0 0 0 1px currentColor; }
-.terminal-status-completed[data-unread="true"], .terminal-status-notification { color: var(--accent-strong); background: var(--accent-dim); }
-.terminal-status-compact { padding: 3px; }
+.terminal-status-spinner { animation: terminal-status-spin .9s linear infinite; }
+.terminal-status-spinner circle, .terminal-status-spinner path { fill: none; stroke: currentColor; stroke-width: 2; }
+.terminal-status-track { opacity: .22; }
+.terminal-status-arc { stroke-linecap: round; }
+@keyframes terminal-status-spin { to { transform: rotate(360deg); } }
+/* An unseen completion or notification: one quiet dot instead of a bell or outline. */
+.terminal-status-completed, .terminal-status-notification { color: var(--accent-strong); }
+.terminal-status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim); animation: terminal-status-arrive .24s ease-out; }
+@keyframes terminal-status-arrive { from { transform: scale(.3); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+.terminal-status-attention { color: var(--warning); }
+.terminal-status-error { color: var(--danger); }
+/* Several terminals: another unseen alert behind a busier state. */
+.terminal-status-also { position: absolute; top: -2px; right: -3px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 1.5px var(--bg); }
+.sidebar .terminal-status-also { box-shadow: 0 0 0 1.5px var(--sidebar); }
+.terminal-status-compact { padding: 2px; }
 .terminal-status-compact .terminal-status-label { display: none; }
 .worktree-main > .terminal-status, .group-main > .terminal-status { margin-left: auto; }
 .worktree-main > .terminal-status, .group-main > .terminal-status { padding: 3px; }
 .worktree-main > .terminal-status .terminal-status-label, .group-main > .terminal-status .terminal-status-label { display: none; }
 .notification-indicator { position: relative; }
-.notification-indicator > .terminal-status { position: absolute; bottom: 0; right: -3px; padding: 1px; border-radius: 4px; background: var(--surface); }
-.notification-indicator > .terminal-status > svg { width: 12px; height: 12px; }
+.notification-indicator > .terminal-status { position: absolute; top: 0; right: 0; padding: 1px; border-radius: 50%; background: var(--bg); }
+.sidebar .notification-indicator > .terminal-status { background: var(--sidebar); }
+.notification-indicator > .terminal-status .terminal-status-icon { width: 11px; height: 11px; }
+.notification-indicator > .terminal-status svg { width: 10px; height: 10px; }
+.notification-indicator > .terminal-status .terminal-status-dot { width: 6px; height: 6px; box-shadow: none; }
+/* Disconnected: the last known state stays readable but stops moving. */
+.terminal-status[data-stale="true"] { opacity: .55; }
+.terminal-status[data-stale="true"] .terminal-status-spinner { animation-play-state: paused; }
+/* Mobile switcher: this terminal beside its title, other terminals beside the count. */
+.mobile-panel-others { display: inline-flex; flex: 0 0 auto; }
+.mobile-panel-others:empty { display: none; }
 .worktree-symbol { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 30px; color: var(--text-muted); }
 .selected .worktree-symbol { color: var(--accent); }
 .worktree-details { display: flex; flex-direction: column; min-width: 0; }
