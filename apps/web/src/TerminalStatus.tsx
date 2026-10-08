@@ -68,7 +68,7 @@ export function terminalStatusDescription(status: TerminalStatusSummary | undefi
 function StatusIcon({kind}: {kind: TerminalStatusKind}) {
   if (kind === 'working') return <svg className="terminal-status-spinner" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
     <circle className="terminal-status-track" cx="8" cy="8" r="6"/>
-    <path className="terminal-status-arc" d="M8 2a6 6 0 0 1 5.91 7.04"/>
+    <path className="terminal-status-arc" d="M8 2a6 6 0 0 1 4.24 10.24"/>
   </svg>;
   if (kind === 'attention') return <MessageCircleQuestion size={13} aria-hidden="true"/>;
   if (kind === 'error') return <CircleAlert size={13} aria-hidden="true"/>;

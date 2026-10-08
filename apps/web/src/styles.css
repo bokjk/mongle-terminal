@@ -138,11 +138,11 @@ button.host-select:hover { background: var(--surface-hover); border-color: var(-
 /* One fixed slot: a row never shifts when its state changes shape. */
 .terminal-status-icon { position: relative; display: inline-grid; place-items: center; flex: 0 0 auto; width: 14px; height: 14px; }
 .terminal-status-icon > svg { display: block; }
-/* Working: a thin arc turning on a faint track. */
+/* Working: an arc of 135 degrees turning on a faint track, weighted to read beside the unread dot. */
 .terminal-status-working { color: var(--accent-strong); }
 .terminal-status-spinner { animation: terminal-status-spin .9s linear infinite; }
-.terminal-status-spinner circle, .terminal-status-spinner path { fill: none; stroke: currentColor; stroke-width: 2; }
-.terminal-status-track { opacity: .22; }
+.terminal-status-spinner circle, .terminal-status-spinner path { fill: none; stroke: currentColor; stroke-width: 2.5; }
+.terminal-status-track { opacity: .28; }
 .terminal-status-arc { stroke-linecap: round; }
 @keyframes terminal-status-spin { to { transform: rotate(360deg); } }
 /* An unseen completion or notification: one quiet dot instead of a bell or outline. */

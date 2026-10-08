@@ -23,7 +23,7 @@ export class TerminalEngine {
   private historyRestored = false;
   private restoringHistory = false;
   private win32InputMode = false;
-  private observeAgentInput: (data:string)=>void = ()=>{};
+  private observeAgentInput: (data:string)=>boolean = ()=>false;
 
   constructor(options: TerminalEngineOptions) {
     assertGeometry(options.cols, options.rows);
@@ -88,8 +88,9 @@ export class TerminalEngine {
       onPrompt: () => options.onShellPrompt?.(),
     });
     this.observeAgentInput = data => {
-      if(this.closing || options.notificationsEnabled?.() === false)return;
+      if(this.closing || options.notificationsEnabled?.() === false)return false;
       const update=agent.observeInput(data);if(update)options.onAgentStatus?.(update.status);
+      return update!==undefined;
     };
     this.terminal.parser.registerOscHandler(777, data => {
       if (!this.closing && !this.restoringHistory && options.notificationsEnabled?.() !== false) {
@@ -117,7 +118,8 @@ export class TerminalEngine {
     return result;
   }
 
-  observeInput(data:string): Promise<void> {return this.enqueue(()=>this.observeAgentInput(data));}
+  /** A delivered key, observed after all output received before it. True when the agent status changed. */
+  observeInput(data:string): Promise<boolean> {return this.enqueue(()=>this.observeAgentInput(data));}
 
   write(data: string | Uint8Array): Promise<void> {
     if (this.closing) return Promise.reject(new Error('Terminal engine is disposed.'));

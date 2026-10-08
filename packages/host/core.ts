@@ -7,7 +7,7 @@ import { z } from 'zod';
 import { APP_VERSION, PROTOCOL_VERSION, AppError, appendTab, dimensionSchema, groupRepositoryIds, idSchema, leafIds, removeLeaf, splitLeaf } from '../protocol/index.js';
 import type { ConnectionContext, Group, HostSettings, HostState, LayoutNode, PresentationSnapshot, Send, ShellProfile, SnapshotEvent, TerminalInfo, Repository, Worktree, WorktreeOperation, ProjectInspection } from '../protocol/index.js';
 import { HostStore, type PersistedHost, type PersistedSnapshot } from '../storage/index.js';
-import { isAgentInputSignal, validAgentSession, type AgentSessionIdentity } from '../terminal/agent-status.js';
+import { agentInputSignal, validAgentSession, type AgentSessionIdentity } from '../terminal/agent-status.js';
 import { AGENT_PIPE_NAME, agentResumeCommand, isTerminalReportOnly, resolveAgentExecutable } from '../shell-profiles/agent-resume.js';
 import { detectShellProfiles, resolveShellLaunch, safeShellEnvironment } from '../shell-profiles/index.js';
 import { TerminalEngine } from '../terminal/engine.js';
@@ -574,9 +574,12 @@ export class HostCore {
         // Focus/mouse/device reports sent by an attaching view are not typing.
         if(runtime.pendingResume&&!isTerminalReportOnly(p.data))this.abandonResume(runtime);
         try {runtime.pty!.write(data);}catch{throw new AppError('WRITE_FAILED','터미널 입력을 전달하지 못했습니다.');}
-        // Delivered cancel keys and request answers may only lower a shown Claude status; no hook follows them.
-        // Always queue behind already received output: the observer decides with the parsed status.
-        if(isAgentInputSignal(p.data))void runtime.engine.observeInput(p.data).then(()=>this.scheduleFrame(runtime)).catch(()=>{});
+        // Claude sends no hook after a cancel key or a rejected request, and keys that can move a dialog's
+        // selection decide what its Enter means. Only that meaning, never the typed text nor a focus/device
+        // report, queues behind already received output: the observer decides with the parsed status. A
+        // request is visible only after its hook was parsed, so plain text counts only while one is shown.
+        const agentSignal=isTerminalReportOnly(p.data,false)?undefined:agentInputSignal(p.data,runtime.info.agentStatus==='attention');
+        if(agentSignal!==undefined)void runtime.engine.observeInput(agentSignal).then(changed=>{if(changed)this.scheduleFrame(runtime);}).catch(()=>{});
         lease.inputSeq=p.clientInputSeq;lease.dedupe.set(p.inputId,{seq:p.clientInputSeq,hash});if(lease.dedupe.size>2048)lease.dedupe.delete(lease.dedupe.keys().next().value!);
         return {accepted:true,inputId:p.inputId,clientInputSeq:p.clientInputSeq,duplicate:false};
       }

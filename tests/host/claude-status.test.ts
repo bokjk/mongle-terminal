@@ -27,7 +27,7 @@ test('real PTY carries scoped agent state to viewers and notification frames wit
   const terminal:TerminalInfo=await core.handle('terminals.create',{groupId:core.getState().groups[0].id,profileId:'agent-fixture',cwd:dataDir},ctx);
   const current=()=>core.getState().terminals.find(x=>x.id===terminal.id)!;
   let nonce=0;
-  const emit=async(event:string)=>{await writeFile(signal,JSON.stringify({event,nonce:++nonce}));};
+  const emit=async(event:string,extra:Record<string,unknown>={})=>{await writeFile(signal,JSON.stringify({event,...extra,nonce:++nonce}));};
   await emit('UserPromptSubmit');await until(()=>current().agentStatus==='working');
   assert.equal(current().notificationCount,0);
   await emit('PermissionRequest');await until(()=>current().agentStatus==='attention');
@@ -52,6 +52,20 @@ test('real PTY carries scoped agent state to viewers and notification frames wit
   await until(()=>current().agentStatus==='idle');
   assert.equal(current().notificationCount,3);
   assert.equal(current().agentNotificationCount,3,'lowering a request is not a new alert');
+  // Enter alone picks Claude's preselected approval; a focus report from the view is not a key.
+  const tool='c'.repeat(64);
+  await emit('PreToolUse',{tool,call:'d'.repeat(64)});await until(()=>current().agentStatus==='working');
+  await emit('PermissionRequest',{tool});await until(()=>current().agentStatus==='attention');
+  await core.handle('terminal.input',{...ref,epoch:lease.epoch,inputId:randomUUID(),clientInputSeq:2,data:'\x1b[I'},ctx);
+  await core.handle('terminal.input',{...ref,epoch:lease.epoch,inputId:randomUUID(),clientInputSeq:3,data:'\r'},ctx);
+  await until(()=>current().agentStatus==='working');
+  assert.equal(current().agentNotificationCount,4);
+  // Claude also moves a selection with J/K: a letter typed while the request is shown makes Enter provisional.
+  await emit('PreToolUse',{tool,call:'e'.repeat(64)});await new Promise(r=>setTimeout(r,150));
+  await emit('PermissionRequest',{tool});await until(()=>current().agentStatus==='attention');
+  await core.handle('terminal.input',{...ref,epoch:lease.epoch,inputId:randomUUID(),clientInputSeq:4,data:'j'},ctx);
+  await core.handle('terminal.input',{...ref,epoch:lease.epoch,inputId:randomUUID(),clientInputSeq:5,data:'\r'},ctx);
+  await until(()=>current().agentStatus==='idle');
   await core.handle('terminals.terminate',ref,ctx);
   assert.ok(current().agentStatus !== 'working');
   await core.close();

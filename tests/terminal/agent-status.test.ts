@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { TerminalEngine } from '../../packages/terminal/engine.js';
-import { ClaudeTaskState, isAgentInputSignal } from '../../packages/terminal/agent-status.js';
+import { ClaudeTaskState, agentInputSignal } from '../../packages/terminal/agent-status.js';
 import { PRESENTATION_VERSION } from '../../packages/terminal/types.js';
 
 const token = 'a'.repeat(64), session = 'b'.repeat(64);
@@ -127,6 +127,7 @@ test('an answer to one of two pending requests keeps attention for the other',()
   state.accept(payload('PreToolUse',{tool:digest('c'),call:digest('1')}));state.accept(payload('PreToolUse',{tool:digest('d'),call:digest('2')}));
   state.accept(payload('PermissionRequest',{tool:digest('c')}));state.accept(payload('PermissionRequest',{tool:digest('d')}));
   assert.equal(state.observeInput('\r'),undefined);
+  assert.equal(state.observeInput('\x1b[B'),undefined,'a key moves the selection of the next visible request');
   assert.deepEqual(state.observeInput('\r'),{status:'idle',notify:false});
 });
 
@@ -137,7 +138,47 @@ test('identical parallel calls each keep their own permission request',()=>{
   state.accept(payload('PermissionRequest',{tool}));state.accept(payload('PermissionRequest',{tool}));
   assert.equal(state.observeInput('\r'),undefined,'the second request is still visible');
   assert.equal(state.accept(payload('PostToolUse',{tool,call:digest('1')})),undefined);
+  assert.deepEqual(state.observeInput('\r'),{status:'idle',notify:false},'the next dialog and its selection are not known');
+});
+
+test('Enter on the preselected first option keeps an approved long tool visible as work',()=>{
+  const state=new ClaudeTaskState(token),tool=digest('c');
+  state.accept(payload('UserPromptSubmit'));
+  state.accept(payload('PreToolUse',{tool,call:digest('1')}));
+  assert.deepEqual(state.accept(payload('PermissionRequest',{tool})),{status:'attention',notify:true});
+  // Claude 2.1.294 preselects "1. Yes"; the approved tool sends no hook until it ends (47 s in the app QA).
+  assert.deepEqual(state.observeInput('\r'),{status:'working',notify:false});
+  assert.equal(state.accept(payload('Notification',{notification:'permission_prompt'})),undefined,'a late reminder is not a new request');
+  assert.equal(state.accept(payload('PostToolUse',{tool,call:digest('1')})),undefined,'the same work goes on');
+  assert.deepEqual(state.accept(payload('Stop')),{status:'completed',notify:true});
+  // Any key before Enter may have chosen "No", which sends no hook.
+  state.accept(payload('UserPromptSubmit'));
+  state.accept(payload('PreToolUse',{tool,call:digest('2')}));state.accept(payload('PermissionRequest',{tool}));
+  assert.equal(state.observeInput('\x1b[B'),undefined);
+  assert.equal(state.observeInput('\x1b[A'),undefined,'moving back is still a moved selection');
   assert.deepEqual(state.observeInput('\r'),{status:'idle',notify:false});
+  state.accept(payload('UserPromptSubmit'));
+  state.accept(payload('PreToolUse',{tool,call:digest('3')}));state.accept(payload('PermissionRequest',{tool}));
+  assert.deepEqual(state.observeInput('\x1b[B\r'),{status:'idle',notify:false},'arrows batched with Enter');
+  // AskUserQuestion may span several questions: its Enter stays provisional until the answer arrives.
+  state.accept(payload('UserPromptSubmit'));
+  state.accept(payload('PreToolUse',{tool:digest('d'),call:digest('4'),question:true}));state.accept(payload('PermissionRequest',{tool:digest('d')}));
+  assert.deepEqual(state.observeInput('\r'),{status:'idle',notify:false});
+  assert.deepEqual(state.accept(payload('PostToolUse',{tool:digest('e'),call:digest('4')})),{status:'working',notify:false});
+  // An MCP elicitation during an approved tool is still a request.
+  state.accept(payload('PreToolUse',{tool,call:digest('5')}));state.accept(payload('PermissionRequest',{tool}));
+  assert.deepEqual(state.observeInput('\r'),{status:'working',notify:false});
+  assert.deepEqual(state.accept(payload('Notification',{notification:'elicitation_dialog'})),{status:'attention',notify:true});
+});
+
+test('only the meaning of a delivered key reaches the observer, never its text',()=>{
+  const signals:Array<[string,string]>=[['\x03','\x03'],['\x1b','\x1b'],['\x1b[27u','\x1b[27u'],['\r','\r'],['yes\r','x\r'],['\x1b[B\r','x\r'],
+    ['\x1b[B','x'],['3','x'],['\t','x'],['\x1b[<0;10;5M','x'],['\x1b[200~secret\rtext','\x1b[200~x\rx'],['text 123\x1b[201~','x\x1b[201~']];
+  for(const [data,signal] of signals)assert.equal(agentInputSignal(data),signal,JSON.stringify(data));
+  for(const data of ['a','hello world','안녕하세요',' '])assert.equal(agentInputSignal(data),undefined,JSON.stringify(data));
+  // Claude binds J/K to move a selection by default and keys are configurable: text counts while a request is shown.
+  for(const data of ['j','k',' ','n'])assert.equal(agentInputSignal(data,true),'x',JSON.stringify(data));
+  assert.equal(agentInputSignal('',true),undefined);
 });
 
 test('Enter inside a bracketed paste is text, also when the paste spans input chunks',()=>{
@@ -183,7 +224,12 @@ test('delivered cancel lowers work until the same conversation proves it went on
   assert.deepEqual(states,['working','idle','completed','working','idle'],'a real interrupt sends no further hook');
 });
 
-test('only cancel keys and answers reach the agent observer',()=>{
-  for(const data of ['\x03','\x1b','\x1b[27u','\x1b[99;5u','\r','yes\r','\x1b[B\r','\x1b[200~text','text\x1b[201~'])assert.equal(isAgentInputSignal(data),true,JSON.stringify(data));
-  for(const data of ['\x1b[A','a','1','3','\x1b\x1b','\n'])assert.equal(isAgentInputSignal(data),false,JSON.stringify(data));
+test('the engine reports whether a delivered key changed the status',async t=>{
+  const states:string[]=[],engine=new TerminalEngine({cols:60,rows:8,agentToken:token,onResponse(){},onAgentStatus:s=>states.push(s)});
+  t.after(()=>engine.dispose());
+  await engine.write(osc('UserPromptSubmit')+osc('PreToolUse',{tool:digest('c'),call:digest('1')})+osc('PermissionRequest',{tool:digest('c')}));
+  assert.equal(await engine.observeInput('a'),false);
+  assert.equal(await engine.observeInput('3'),false,'a digit may only move the selection');
+  assert.equal(await engine.observeInput('\r'),true);
+  assert.deepEqual(states,['working','attention','idle']);
 });
