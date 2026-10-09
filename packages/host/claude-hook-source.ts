@@ -1,6 +1,7 @@
 /** No network, transcript reads, model calls, or commands from hook input.
  * SessionStart/UserPromptSubmit also carry the exact session UUID and cwd so the
- * host can offer `claude --resume <UUID>` after an app update; nothing else is sent. */
+ * host can offer `claude --resume <UUID>` after an app update. Tool calls send only digests
+ * of their name/input and opaque call id; SessionStart sends its documented source. */
 export const CLAUDE_HOOK_SOURCE = String.raw`// Mongle Terminal managed Claude hook v1
 'use strict';
 const token = process.env.MONGLE_AGENT_TOKEN;
@@ -31,6 +32,9 @@ process.stdin.on('end', () => {
       const canonical = value => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map(key=>[key,canonical(value[key])])) : value;
       event.tool = createHash('sha256').update(JSON.stringify([data.tool_name,canonical(data.tool_input)])).digest('hex');
     }
+    // PreToolUse/PostToolUse share this id even when an answer rewrites the input.
+    if (typeof data.tool_use_id === 'string' && data.tool_use_id.length > 0 && data.tool_use_id.length <= 200) event.call = createHash('sha256').update(data.tool_use_id).digest('hex');
+    if (data.hook_event_name === 'SessionStart' && ['startup','resume','clear','compact','fork'].includes(data.source)) event.source = data.source;
     if (data.hook_event_name === 'Notification') {
       if (!['permission_prompt','idle_prompt','elicitation_dialog'].includes(data.notification_type)) return;
       event.notification = data.notification_type;

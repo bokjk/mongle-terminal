@@ -23,7 +23,7 @@ export class TerminalEngine {
   private historyRestored = false;
   private restoringHistory = false;
   private win32InputMode = false;
-  private observeAgentInput: (data:string)=>void = ()=>{};
+  private observeAgentInput: (data:string)=>boolean = ()=>false;
 
   constructor(options: TerminalEngineOptions) {
     assertGeometry(options.cols, options.rows);
@@ -49,9 +49,10 @@ export class TerminalEngine {
     this.terminal.onData(reply);
     const notify = () => {
       if (this.closing || this.restoringHistory || options.notificationsEnabled?.() === false ||
-          this.notificationCount === Number.MAX_SAFE_INTEGER) return;
+          this.notificationCount === Number.MAX_SAFE_INTEGER) return false;
       this.notificationCount += 1;
       options.onNotification?.(this.notificationCount);
+      return true;
     };
     // Parse signals, not raw chunks: BEL terminating an OSC is not a bell.
     this.terminal.onBell(notify);
@@ -87,13 +88,16 @@ export class TerminalEngine {
       onPrompt: () => options.onShellPrompt?.(),
     });
     this.observeAgentInput = data => {
-      if(this.closing || options.notificationsEnabled?.() === false)return;
-      const update=agent.cancelInput(data);if(update)options.onAgentStatus?.(update.status);
+      if(this.closing || options.notificationsEnabled?.() === false)return false;
+      const update=agent.observeInput(data);if(update)options.onAgentStatus?.(update.status);
+      return update!==undefined;
     };
     this.terminal.parser.registerOscHandler(777, data => {
       if (!this.closing && !this.restoringHistory && options.notificationsEnabled?.() !== false) {
         const update = agent.accept(data);
-        if (update) { options.onAgentStatus?.(update.status); if(update.notify) notify(); }
+        // The host records which notification number belongs to this alert, so a later plain
+        // BEL/OSC notification is never presented as Claude's completion.
+        if (update) { const notified = update.notify && notify(); options.onAgentStatus?.(update.status, notified ? this.notificationCount : undefined); }
       }
       // rxvt-compatible notification. Payload is never retained or executed.
       if (data.startsWith('notify;')) {
@@ -114,7 +118,8 @@ export class TerminalEngine {
     return result;
   }
 
-  observeInput(data:string): Promise<void> {return this.enqueue(()=>this.observeAgentInput(data));}
+  /** A delivered key, observed after all output received before it. True when the agent status changed. */
+  observeInput(data:string): Promise<boolean> {return this.enqueue(()=>this.observeAgentInput(data));}
 
   write(data: string | Uint8Array): Promise<void> {
     if (this.closing) return Promise.reject(new Error('Terminal engine is disposed.'));

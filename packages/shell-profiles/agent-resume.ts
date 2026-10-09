@@ -70,8 +70,10 @@ export function agentResumeCommand(profile: Pick<ShellProfile, 'kind'>, session:
  * mouse reports, device status/attribute replies, or win32-input-mode key-up and
  * lone modifier events. Attaching a desktop view sends these before the user
  * types anything, so they must not cancel a pending resume line.
+ * mouse=false counts a mouse report as a user action, e.g. one that may move a
+ * CLI dialog's selection.
  */
-export function isTerminalReportOnly(data: string): boolean {
+export function isTerminalReportOnly(data: string, mouse = true): boolean {
   if (!data) return true;
   const token = /\x1b\[(?:[IO]|<\d+;\d+;\d+[Mm]|\?[\d;]*c|\d+;\d+R|\?[\d;]*\$y|(\d*);(\d*);(\d*);(\d*);(\d*);(\d*)_)/y;
   let index = 0;
@@ -79,6 +81,7 @@ export function isTerminalReportOnly(data: string): boolean {
     token.lastIndex = index;
     const match = token.exec(data);
     if (!match) return false;
+    if (!mouse && match[0].startsWith('\x1b[<')) return false;
     if (match[0].endsWith('_')) {
       // win32-input-mode: Vk;Sc;Uc;Kd;Cs;Rc. Key-up (Kd=0) or Shift/Ctrl/Alt/Win alone is not typing.
       const virtualKey = Number(match[1] || 0), keyDown = match[4] === '1';

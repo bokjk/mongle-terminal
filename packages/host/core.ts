@@ -7,7 +7,7 @@ import { z } from 'zod';
 import { APP_VERSION, PROTOCOL_VERSION, AppError, appendTab, dimensionSchema, groupRepositoryIds, idSchema, leafIds, removeLeaf, splitLeaf } from '../protocol/index.js';
 import type { ConnectionContext, Group, HostSettings, HostState, LayoutNode, PresentationSnapshot, Send, ShellProfile, SnapshotEvent, TerminalInfo, Repository, Worktree, WorktreeOperation, ProjectInspection } from '../protocol/index.js';
 import { HostStore, type PersistedHost, type PersistedSnapshot } from '../storage/index.js';
-import { validAgentSession, type AgentSessionIdentity } from '../terminal/agent-status.js';
+import { agentInputSignal, validAgentSession, type AgentSessionIdentity } from '../terminal/agent-status.js';
 import { AGENT_PIPE_NAME, agentResumeCommand, isTerminalReportOnly, resolveAgentExecutable } from '../shell-profiles/agent-resume.js';
 import { detectShellProfiles, resolveShellLaunch, safeShellEnvironment } from '../shell-profiles/index.js';
 import { TerminalEngine } from '../terminal/engine.js';
@@ -86,7 +86,7 @@ export class HostCore {
       this.repositories = saved.repositories || [];
       this.worktrees = (saved.worktrees || []).map(item=>item.status==='removing'?{...item,status:'missing',reason:'삭제 결과를 확인하려면 목록을 새로고침해 주세요.'}:item);
       this.worktreeOperations = (saved.worktreeOperations || []).map(item=>item.status==='pending'||item.status==='running'?{...item,status:'attention',message:'호스트가 재시작되었습니다. 목록을 새로고침해 작업 결과를 확인해 주세요.'}:item);
-      this.terminals = saved.terminals.map(({controller, pid, agentStatus, agentProvider, ...info}) => ({...info, status: info.status === 'running' ? 'interrupted' : info.status, resumeOnBoot: info.status === 'running' || info.resumeOnBoot === true || legacyResume.has(info.id), historyAvailable: Boolean(this.settings.recordHistory && this.store.getSnapshot(info.id, info.generation))}));
+      this.terminals = saved.terminals.map(({controller, pid, agentStatus, agentProvider, agentNotificationCount, ...info}) => ({...info, status: info.status === 'running' ? 'interrupted' : info.status, resumeOnBoot: info.status === 'running' || info.resumeOnBoot === true || legacyResume.has(info.id), historyAvailable: Boolean(this.settings.recordHistory && this.store.getSnapshot(info.id, info.generation))}));
       // Only an exact, validated conversation bound to the saved generation of a
       // terminal that will be restored survives; anything else is dropped.
       for (const [id, record] of Object.entries(saved.agentSessions || {})) {
@@ -574,7 +574,12 @@ export class HostCore {
         // Focus/mouse/device reports sent by an attaching view are not typing.
         if(runtime.pendingResume&&!isTerminalReportOnly(p.data))this.abandonResume(runtime);
         try {runtime.pty!.write(data);}catch{throw new AppError('WRITE_FAILED','터미널 입력을 전달하지 못했습니다.');}
-        if(p.data==='\x03'||p.data==='\x1b'||p.data==='\x1b[27u'||p.data==='\x1b[99;5u')void runtime.engine.observeInput(p.data).then(()=>this.scheduleFrame(runtime)).catch(()=>{});
+        // Claude sends no hook after a cancel key or a rejected request, and keys that can move a dialog's
+        // selection decide what its Enter means. Only that meaning, never the typed text nor a focus/device
+        // report, queues behind already received output: the observer decides with the parsed status. A
+        // request is visible only after its hook was parsed, so plain text counts only while one is shown.
+        const agentSignal=isTerminalReportOnly(p.data,false)?undefined:agentInputSignal(p.data,runtime.info.agentStatus==='attention');
+        if(agentSignal!==undefined)void runtime.engine.observeInput(agentSignal).then(changed=>{if(changed)this.scheduleFrame(runtime);}).catch(()=>{});
         lease.inputSeq=p.clientInputSeq;lease.dedupe.set(p.inputId,{seq:p.clientInputSeq,hash});if(lease.dedupe.size>2048)lease.dedupe.delete(lease.dedupe.keys().next().value!);
         return {accepted:true,inputId:p.inputId,clientInputSeq:p.clientInputSeq,duplicate:false};
       }
@@ -674,7 +679,7 @@ export class HostCore {
     const runtime={} as Runtime;
     Object.assign(runtime,{info,seq:0,epoch:0,checkpointAt:0,disposed:false,pendingBytes:0});
     info.notificationCount=0;
-    delete info.agentStatus; delete info.agentProvider;
+    delete info.agentStatus; delete info.agentProvider; delete info.agentNotificationCount;
     // Every non-WSL shell gets a per-shell secret: its prompt marker authenticates
     // "back at the shell" for status and agent resume, independent of Claude setup.
     const agentToken = profile.kind !== 'wsl' ? randomBytes(32).toString('hex') : undefined;
@@ -685,7 +690,7 @@ export class HostCore {
       notificationsEnabled:()=>!runtime.disposed&&!this.closing&&!this.shutdownPrepared&&this.runtimes.get(info.id)===runtime,
       onNotification:count=>{info.notificationCount=count;runtime.notificationChanged=true;},
       agentToken,
-      onAgentStatus:status=>{info.agentStatus=status;info.agentProvider='claude';runtime.notificationChanged=true;},
+      onAgentStatus:(status,count)=>{info.agentStatus=status;info.agentProvider='claude';if(count!==undefined)info.agentNotificationCount=count;runtime.notificationChanged=true;},
       onAgentSession:session=>{if(current())this.recordAgentSession(info,session);},
       // The first prompt after a restore types the resume line and keeps the intent until
       // the CLI reports itself or exits; any other prompt means no agent is running.
@@ -714,7 +719,7 @@ export class HostCore {
     });
     runtime.pty.onExit(({exitCode})=>{
       if(runtime.disposed || this.runtimes.get(info.id)!==runtime)return;
-      info.status='exited';info.exitCode=exitCode;delete info.pid;delete info.agentStatus;delete info.agentProvider;runtime.pty=undefined;this.revoke(runtime);this.cancelResume(runtime);
+      info.status='exited';info.exitCode=exitCode;delete info.pid;delete info.agentStatus;delete info.agentProvider;delete info.agentNotificationCount;runtime.pty=undefined;this.revoke(runtime);this.cancelResume(runtime);
       // A shell that ended by itself has no conversation to reopen. Shutdown keeps the saved one.
       if(!this.closing && !this.shutdownPrepared){info.resumeOnBoot=false;this.agentSessions.delete(info.id);}
       this.persist();this.broadcastState();

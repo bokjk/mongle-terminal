@@ -16,6 +16,9 @@ test('terminal protocol reports are not typing; real keys are', () => {
     '\x1b[16;42;0;1;16;1_', '\x1b[65;30;97;0;0;1_']) assert.equal(isTerminalReportOnly(report), true, JSON.stringify(report));
   for (const typed of ['a', 'ls\r', '\r', '\x03', '\x1b[A', '\x1b[65;30;97;1;0;1_', '\x1b[I' + 'x', '\x1b[13;28;13;1;0;1_'])
     assert.equal(isTerminalReportOnly(typed), false, JSON.stringify(typed));
+  // A dialog's selection may follow the mouse; focus and device replies still are not user actions.
+  assert.equal(isTerminalReportOnly('\x1b[<0;10;5M\x1b[<0;10;5m', false), false);
+  for (const report of ['\x1b[I', '\x1b[O', '\x1b[?1;2c', '\x1b[12;40R', '\x1b[65;30;97;0;0;1_']) assert.equal(isTerminalReportOnly(report, false), true, JSON.stringify(report));
 });
 
 async function fixture(t: test.TestContext) {

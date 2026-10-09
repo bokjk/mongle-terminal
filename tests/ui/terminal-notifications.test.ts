@@ -34,7 +34,7 @@ test('terminal notifications follow actual presentations and remain discoverable
       const h=window.notificationsTest={
         getState:state,
         calls:[], holdAttach:false, pendingAttaches:[], releaseAttach:()=>{h.holdAttach=false;h.pendingAttaches.splice(0).forEach(fn=>fn());}, notify:(id,present=true)=>{const info=terminals.find(t=>t.id===id);info.notificationCount++;update();if(present){counts.set(id,info.notificationCount);if(attached.has(id))publish(frame(id));}},
-        agent:(id,status,present=true)=>{const info=terminals.find(t=>t.id===id);info.agentProvider='claude';info.agentStatus=status;if(['completed','attention','error'].includes(status))h.notify(id,present);else update();},
+        agent:(id,status,present=true)=>{const info=terminals.find(t=>t.id===id);info.agentProvider='claude';info.agentStatus=status;if(['completed','attention','error'].includes(status)){info.agentNotificationCount=info.notificationCount+1;h.notify(id,present);}else update();},
         integration:value=>{claudeIntegration=value;update();},
         present:id=>{counts.set(id,terminals.find(t=>t.id===id).notificationCount);if(attached.has(id))publish(frame(id));},
         visibility:value=>{hidden=value;document.dispatchEvent(new Event('visibilitychange'));},
@@ -104,6 +104,9 @@ test('terminal notifications follow actual presentations and remain discoverable
           await dot(page,'first').waitFor({state:'detached'});
           await page.evaluate(()=>(window as any).notificationsTest.connection('offline'));
           await emit(page,'first');await pause(page);assert.equal(await dot(page,'first').count(),1);
+          const stale=page.locator('[data-sidebar-terminal-id="first"] .terminal-status');
+          assert.equal(await stale.getAttribute('data-stale'),'true');
+          assert.match(await stale.getAttribute('aria-label')||'',/연결이 끊겨 마지막으로 확인한 상태/);
           await page.evaluate(()=>(window as any).notificationsTest.connection('connected'));
           await dot(page,'first').waitFor({state:'detached'});
           await selected(page,'second');
@@ -149,7 +152,9 @@ test('terminal notifications follow actual presentations and remain discoverable
           const row=page.getByRole('dialog').getByRole('button',{name:/second/});
           await row.locator('.terminal-status[data-unread="true"]').waitFor();
           await row.click();await page.locator('#terminal-panel-second').waitFor();
-          await page.locator('.mobile-panel-switcher .terminal-status[data-unread="true"]').waitFor({state:'detached'});
+          // The switcher summarizes the other terminals, so wait for the opened terminal's own read receipt.
+          await page.waitForFunction(()=>JSON.parse(localStorage.getItem('mongle.notifications.read.notification-host')||'{}').second?.count===1);
+          assert.equal(await page.locator('.mobile-panel-switcher .terminal-status').count(),0);
           await emit(page,'third');await page.locator('[aria-label="그룹 메뉴 열기"] .terminal-status[data-unread="true"]').waitFor();
           await page.getByRole('button',{name:'그룹 메뉴 열기'}).click();
           await page.locator('[data-worktree-kind="main"] .terminal-status[data-unread="true"]').waitFor();
@@ -164,7 +169,7 @@ test('terminal notifications follow actual presentations and remain discoverable
           await page.locator('[aria-label="그룹 메뉴 열기"] .terminal-status[data-unread="true"]').waitFor({state:'detached'});
         } finally {await page.close();}
       });
-      await t.test('Claude completion bell waits for the actual frame and disappears after read without changing backend status',async()=>{
+      await t.test('Claude completion dot waits for the actual frame and disappears after read without changing backend status',async()=>{
         const page=await open();
         const badge=(id:string)=>page.locator(`[data-sidebar-terminal-id="${id}"] .terminal-status`);
         const set=(status:string,present=true)=>page.evaluate(({status,present})=>(window as any).notificationsTest.agent('second',status,present),{status,present});
@@ -177,8 +182,9 @@ test('terminal notifications follow actual presentations and remain discoverable
           assert.equal(await page.locator('#terminal-tab-second').getAttribute('aria-description'),'작업 중');
           await set('completed',false);await dot(page,'second').waitFor();
           assert.equal(await badge('second').getAttribute('data-status'),'completed');
-          assert.equal(await badge('second').locator('.lucide-bell').count(),1);
-          assert.equal(await page.locator('#terminal-tab-second .lucide-bell').count(),1);
+          assert.equal(await badge('second').locator('.terminal-status-dot').count(),1);
+          assert.equal(await page.locator('#terminal-tab-second .terminal-status-dot').count(),1);
+          assert.equal(await page.locator('.lucide-bell').count(),0,'no bell remains anywhere');
           await selected(page,'second');await pause(page);
           assert.equal(await badge('second').getAttribute('data-unread'),'true','a status update alone is not a read receipt');
           await page.evaluate(()=>(window as any).notificationsTest.present('second'));
@@ -188,20 +194,26 @@ test('terminal notifications follow actual presentations and remain discoverable
           assert.equal(await page.locator('#terminal-tab-second').getAttribute('aria-description'),null);
           assert.equal(await page.locator('.workspace-switch .terminal-status').count(),0);
           assert.equal(await page.evaluate(()=>(window as any).notificationsTest.getState().terminals.find((t:any)=>t.id==='second').agentStatus),'completed','presentation read does not mutate backend task state');
+          await emit(page,'second',false);await dot(page,'second').waitFor();
+          assert.equal(await badge('second').getAttribute('data-status'),'notification','a later plain notification is not shown as Claude completion');
+          assert.equal(await badge('second').getAttribute('aria-label'),'확인할 알림');
+          await page.evaluate(()=>(window as any).notificationsTest.present('second'));await dot(page,'second').waitFor({state:'detached'});
           await selected(page,'first');await set('attention');await dot(page,'second').waitFor();
           assert.equal(await badge('second').getAttribute('aria-label'),'확인 요청 · 미확인');
           await set('error');assert.equal(await badge('second').getAttribute('data-status'),'error');
           await set('working');assert.equal(await badge('second').getAttribute('data-status'),'working');
-          assert.equal(await badge('second').getAttribute('data-unread'),null,'a new turn hides the previous alert visually');
+          assert.equal(await badge('second').getAttribute('data-unread'),null,'a new turn takes visual precedence');
+          assert.equal(await badge('second').getAttribute('data-also-unread'),'true','older unseen alerts stay discoverable beside the spinner');
+          assert.equal(await badge('second').getAttribute('aria-label'),'작업 중 · 미확인 알림');
           const receipts=await page.evaluate(()=>JSON.parse(localStorage.getItem('mongle.notifications.read.notification-host')||'{}'));
-          assert.equal(receipts.second.count,1,'working must not silently consume the two unseen notifications');
+          assert.equal(receipts.second.count,2,'working must not silently consume the two unseen notifications');
           await emit(page,'first',false);await dot(page,'first').waitFor();
           assert.equal(await badge('first').getAttribute('data-status'),'notification');
           assert.equal(await badge('first').getAttribute('aria-label'),'확인할 알림');
-          assert.equal(await badge('first').locator('.lucide-bell').count(),1);
+          assert.equal(await badge('first').locator('.terminal-status-dot').count(),1);
         } finally {await page.close();}
       });
-      await t.test('worktree and group statuses prioritize attention over work and work over unread completion',async()=>{
+      await t.test('worktree and group statuses prioritize attention over work and keep unread completion beside work',async()=>{
         const page=await open();
         const tree=page.locator('[data-worktree-kind="main"] .terminal-status');
         const group=page.locator('.workspace-switch').filter({hasText:'다른 그룹'}).locator('.terminal-status');
@@ -209,41 +221,42 @@ test('terminal notifications follow actual presentations and remain discoverable
         try {
           await state('completed','working');await tree.waitFor();
           assert.equal(await tree.getAttribute('data-status'),'working');assert.equal(await group.getAttribute('data-status'),'working');
+          assert.equal(await tree.getAttribute('data-also-unread'),'true');assert.equal(await group.getAttribute('data-also-unread'),'true');
+          assert.equal(await tree.getAttribute('aria-label'),'작업 중 1개 · 미확인 1개');
           await state('attention','working');assert.equal(await tree.getAttribute('data-status'),'attention');assert.equal(await group.getAttribute('data-status'),'attention');
           await state('attention','error');assert.equal(await tree.getAttribute('data-status'),'error');assert.equal(await group.getAttribute('data-status'),'error');
           await state('completed','completed');assert.equal(await tree.getAttribute('data-status'),'completed');assert.equal(await group.getAttribute('data-unread'),'true');
-          assert.equal(await tree.locator('.lucide-bell').count(),1);
+          assert.equal(await tree.locator('.terminal-status-dot').count(),1);
           await page.getByRole('button',{name:'기본 작업 열기',exact:true}).click();
           await page.locator('#terminal-tab-third[aria-selected="true"]').waitFor();
           await page.locator('#terminal-tab-third .terminal-status').waitFor({state:'detached'});
-          assert.equal(await tree.getAttribute('data-status'),'completed','the other unread completion keeps its worktree bell');
+          assert.equal(await tree.getAttribute('data-status'),'completed','the other unread completion keeps its worktree dot');
           assert.equal(await group.getAttribute('data-unread'),'true');
           await page.locator('#terminal-tab-fourth').click();
           await tree.waitFor({state:'detached'});await group.waitFor({state:'detached'});
           assert.equal(await page.locator('#terminal-tab-third .terminal-status, #terminal-tab-fourth .terminal-status').count(),0,'neither completed terminal leaves a check behind');
         } finally {await page.close();}
       });
-      await t.test('320px Claude status pulses slowly, respects reduced motion and removes read completion bells',async()=>{
+      await t.test('320px switcher summarizes other terminals, the spinner respects reduced motion and read completion dots disappear',async()=>{
         const page=await open(320);
         try {
           await page.evaluate(()=>(window as any).notificationsTest.agent('second','working'));
           const switcher=page.locator('.mobile-panel-switcher');
           await switcher.locator('[data-status="working"]').waitFor();
-          assert.equal(await switcher.getAttribute('aria-description'),'작업 중');
+          assert.equal(await switcher.getAttribute('aria-description'),'다른 터미널 · 작업 중');
           assert.equal(await switcher.locator('.terminal-status-label').isVisible(),false);
-          const pulse=switcher.locator('.terminal-working-pulse');
-          assert.equal(await pulse.locator('circle').count(),1);
-          const motion=await pulse.evaluate(icon=>{
+          const spinner=switcher.locator('.terminal-status-spinner');
+          assert.equal(await spinner.locator('circle').count(),1);assert.equal(await spinner.locator('path').count(),1);
+          const motion=await spinner.evaluate(icon=>{
             const style=getComputedStyle(icon),animation=icon.getAnimations()[0];
             return {name:style.animationName,duration:style.animationDuration,easing:style.animationTimingFunction,
-              frames:(animation?.effect as KeyframeEffect)?.getKeyframes().map(frame=>({opacity:frame.opacity,transform:frame.transform}))};
+              frames:(animation?.effect as KeyframeEffect)?.getKeyframes().map(frame=>String(frame.transform))};
           });
-          assert.equal(motion.name,'terminal-working-pulse');assert.equal(motion.duration,'2s');assert.equal(motion.easing,'ease-in-out');
-          assert.deepEqual(motion.frames?.map(frame=>Number(frame.opacity)),[.55,1,.55]);
-          assert.ok(motion.frames?.every(frame=>frame.transform===undefined),'pulse does not rotate or move the indicator');
+          assert.equal(motion.name,'terminal-status-spin');assert.equal(motion.duration,'0.9s');assert.equal(motion.easing,'linear');
+          assert.ok(motion.frames?.some(frame=>frame.includes('rotate(360deg)')),JSON.stringify(motion.frames));
           await page.emulateMedia({reducedMotion:'reduce'});
-          assert.equal(await pulse.evaluate(icon=>getComputedStyle(icon).animationName),'none');
-          assert.equal(await pulse.evaluate(icon=>getComputedStyle(icon).opacity),'1');
+          assert.equal(await spinner.evaluate(icon=>getComputedStyle(icon).animationName),'none');
+          assert.ok(await spinner.isVisible(),'the still arc keeps its meaning without motion');
           await page.getByRole('button',{name:'터미널 전환',exact:true}).click();
           const second=page.getByRole('dialog').getByRole('button',{name:/second/});
           assert.equal(await second.locator('.terminal-status-label').innerText(),'작업 중');
@@ -257,11 +270,13 @@ test('terminal notifications follow actual presentations and remain discoverable
           assert.ok(geometry.textRight<=geometry.badgeLeft,JSON.stringify(geometry));assert.ok(geometry.badgeRight<=geometry.rowRight,JSON.stringify(geometry));assert.equal(geometry.overflow,false);
           await second.click();await page.locator('#terminal-panel-second').waitFor();
           await switcher.locator('[data-unread="true"]').waitFor({state:'detached'});
-          assert.equal(await switcher.locator('.terminal-status').getAttribute('data-status'),'attention');
+          assert.equal(await switcher.locator(':scope > .terminal-status').getAttribute('data-status'),'attention','this terminal keeps its own badge beside its title');
+          assert.equal(await switcher.locator('.mobile-panel-others .terminal-status').count(),0,'other terminals are summarized separately');
+          assert.equal(await switcher.getAttribute('aria-description'),'이 터미널 · 확인 요청');
           await page.getByRole('button',{name:'터미널 전환',exact:true}).click();
           await page.evaluate(()=>(window as any).notificationsTest.agent('second','completed'));
           const completed=page.getByRole('dialog').getByRole('button',{name:/second/});
-          await completed.locator('.lucide-bell').waitFor();await pause(page);
+          await completed.locator('.terminal-status-dot').waitFor();await pause(page);
           assert.equal(await completed.locator('[data-unread="true"]').count(),1,'an open modal must not consume completion');
           await completed.click();await switcher.locator('.terminal-status').waitFor({state:'detached'});
           assert.equal(await page.locator('[aria-label="그룹 메뉴 열기"] .terminal-status').count(),0);
