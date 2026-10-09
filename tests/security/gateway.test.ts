@@ -265,7 +265,7 @@ test('WebSocket upgrade rejects foreign Origin and owner RPC never reaches core 
     const socket = f.socket(auth.cookie);
     await socket.open(); socket.send({ type: 'authenticate', ticket: await f.ticket(auth) });
     await socket.message(message => message.type === 'authenticated');
-    for (const method of ['pairing.create', 'pairing.approve', 'devices.list', 'devices.revoke', 'remote.configure', 'host.shutdown']) {
+    for (const method of ['pairing.status', 'devices.list', 'devices.revoke', 'remote.configure', 'remote.status', 'host.shutdown']) {
       socket.send({ type: 'request', id: method, method, params: {} });
       const response = await socket.message(message => message.type === 'response' && message.id === method);
       assert.equal(response.ok, false, `${method} must not be available to remote devices`);
@@ -276,6 +276,95 @@ test('WebSocket upgrade rejects foreign Origin and owner RPC never reaches core 
     assert.equal(ordinary.ok, true);
     assert.equal(f.core.calls[0]?.context.owner, false);
     assertDenied(await f.post('/v1/owner/pairing.approve', {}));
+  } finally { await f.close(); }
+});
+
+async function approver(f: Awaited<ReturnType<typeof fixture>>, auth: { cookie: string; csrf: string }, headers: Record<string, string> = {}) {
+  const issued = await f.post('/v1/ws-ticket', {}, { ...headers, Cookie: auth.cookie, 'X-CSRF-Token': auth.csrf });
+  assert.equal(issued.status, 200, issued.text);
+  const socket = f.socket(auth.cookie, headers);
+  await socket.open(); socket.send({ type: 'authenticate', ticket: issued.body.ticket });
+  await socket.message(message => message.type === 'authenticated');
+  let sequence = 0;
+  return async (method: string, params: unknown = {}) => {
+    const id = `${method}-${++sequence}`;
+    socket.send({ type: 'request', id, method, params });
+    return socket.message(message => message.type === 'response' && message.id === id);
+  };
+}
+
+test('a paired device issues codes and decides requests, while device and remote management stay on the PC', async () => {
+  const f = await fixture();
+  try {
+    const call = await approver(f, await f.paired('My phone'));
+    const code = await call('pairing.create');
+    assert.equal(code.ok, true, JSON.stringify(code));
+    assert.match(code.result.code, /^[A-Z0-9]{10}$/);
+    const requested = await f.post('/v1/pairings/request', { code: code.result.code, name: 'Home PC' });
+    assert.equal(requested.status, 200, requested.text);
+    const pending = { requestId: requested.body.requestId as string, requesterSecret: requested.body.requesterSecret as string };
+    const listed = await call('pairing.list');
+    assert.deepEqual(listed.result.requests.filter((request: any) => request.status === 'pending').map((request: any) => request.name), ['Home PC']);
+    assert.equal((await call('pairing.approve', { requestId: pending.requestId })).ok, true);
+    const claimed = await f.post('/v1/pairings/claim', pending);
+    assert.equal(claimed.status, 200, claimed.text);
+    assert.equal(claimed.body.authenticated, true);
+    const devices = (await f.gateway.ownerRequest('devices.list', {})).devices;
+    assert.equal(devices.find((device: any) => device.name === 'Home PC')?.approvedBy, 'My phone', 'The PC can see which device approved the new one');
+    assert.equal(devices.find((device: any) => device.name === 'My phone')?.approvedBy, undefined, 'A PC approval records no approving device');
+
+    const second = await call('pairing.create');
+    const unknown = await f.post('/v1/pairings/request', { code: second.result.code, name: 'Unknown laptop' });
+    const refused = { requestId: unknown.body.requestId as string, requesterSecret: unknown.body.requesterSecret as string };
+    assert.equal((await call('pairing.reject', { requestId: refused.requestId })).ok, true);
+    assert.equal((await f.post('/v1/pairings/status', refused)).body.status, 'rejected');
+    assertDenied(await f.post('/v1/pairings/claim', refused));
+    assert.equal((await call('pairing.approve', { requestId: refused.requestId })).ok, false, 'A decided request cannot be approved later');
+
+    const pcCode = await f.gateway.ownerRequest('pairing.create', {});
+    const phoneCode = await call('pairing.create');
+    for (const serverTime of [pcCode.serverTime, phoneCode.result.serverTime, (await call('pairing.list')).result.serverTime]) {
+      assert.ok(Math.abs(serverTime - Date.now()) < 5000, 'Replies carry the host time for the countdown');
+    }
+    assert.equal((await f.post('/v1/pairings/request', { code: pcCode.code, name: 'Tablet' })).status, 200, 'A code made on the phone leaves the PC code valid');
+    assert.equal((await f.post('/v1/pairings/request', { code: phoneCode.result.code, name: 'Laptop' })).status, 200);
+
+    for (const method of ['devices.list', 'devices.revoke', 'remote.configure', 'remote.status', 'pairing.status']) {
+      const response = await call(method);
+      assert.equal(response.ok, false, `${method} stays on the PC`);
+      assert.equal(response.error.code, 'FORBIDDEN');
+    }
+    assert.equal(f.core.calls.length, 0, 'Approval requests are answered by the gateway and never reach core');
+    assert.equal((await f.gateway.ownerRequest('devices.list', {})).devices.length, 2);
+  } finally { await f.close(); }
+});
+
+test('a paired device cannot see or decide pairing requests made through another address', async () => {
+  const f = await fixture();
+  try {
+    const remoteOrigin = 'https://mongle.example-tailnet.ts.net';
+    const remoteHeaders = { Origin: remoteOrigin, Host: new URL(remoteOrigin).host };
+    await f.gateway.ownerRequest('remote.configure', { origin: remoteOrigin });
+    const ownerCode = await f.gateway.ownerRequest('pairing.create', {});
+    const phoneRequest = await f.post('/v1/pairings/request', { code: ownerCode.code, name: 'Remote phone' }, remoteHeaders);
+    await f.gateway.ownerRequest('pairing.approve', { requestId: phoneRequest.body.requestId });
+    const phoneClaim = await f.post('/v1/pairings/claim', { requestId: phoneRequest.body.requestId, requesterSecret: phoneRequest.body.requesterSecret }, remoteHeaders);
+    assert.equal(phoneClaim.status, 200, phoneClaim.text);
+    const call = await approver(f, { cookie: (phoneClaim.headers['set-cookie'] as string[])[0].split(';')[0], csrf: phoneClaim.body.csrf }, remoteHeaders);
+
+    const localRequest = await f.pairing('Local browser');
+    const visible = await call('pairing.list');
+    assert.equal(visible.result.requests.some((request: any) => request.name === 'Local browser'), false, 'Requests made on the PC loopback address stay hidden from remote devices');
+    const crossOrigin = await call('pairing.approve', { requestId: localRequest.requestId });
+    assert.equal(crossOrigin.ok, false);
+    assert.equal(crossOrigin.error.code, 'INVALID_PAIRING');
+    assert.equal((await f.post('/v1/pairings/status', localRequest)).body.status, 'pending', 'The PC can still decide the loopback request');
+
+    const code = await call('pairing.create');
+    const office = await f.post('/v1/pairings/request', { code: code.result.code, name: 'Office PC' }, remoteHeaders);
+    assert.equal((await call('pairing.approve', { requestId: office.body.requestId })).ok, true);
+    const officeClaim = await f.post('/v1/pairings/claim', { requestId: office.body.requestId, requesterSecret: office.body.requesterSecret }, remoteHeaders);
+    assert.equal(officeClaim.status, 200, officeClaim.text);
   } finally { await f.close(); }
 });
 
