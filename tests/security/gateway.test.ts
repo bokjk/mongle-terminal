@@ -321,6 +321,14 @@ test('a paired device issues codes and decides requests, while device and remote
     assertDenied(await f.post('/v1/pairings/claim', refused));
     assert.equal((await call('pairing.approve', { requestId: refused.requestId })).ok, false, 'A decided request cannot be approved later');
 
+    const pcCode = await f.gateway.ownerRequest('pairing.create', {});
+    const phoneCode = await call('pairing.create');
+    for (const serverTime of [pcCode.serverTime, phoneCode.result.serverTime, (await call('pairing.list')).result.serverTime]) {
+      assert.ok(Math.abs(serverTime - Date.now()) < 5000, 'Replies carry the host time for the countdown');
+    }
+    assert.equal((await f.post('/v1/pairings/request', { code: pcCode.code, name: 'Tablet' })).status, 200, 'A code made on the phone leaves the PC code valid');
+    assert.equal((await f.post('/v1/pairings/request', { code: phoneCode.result.code, name: 'Laptop' })).status, 200);
+
     for (const method of ['devices.list', 'devices.revoke', 'remote.configure', 'remote.status', 'pairing.status']) {
       const response = await call(method);
       assert.equal(response.ok, false, `${method} stays on the PC`);

@@ -147,9 +147,10 @@ export async function startGateway({core, dataDir, webRoot, port = 0, allowedOri
     if (method === 'pairing.create') {
       emptySchema.parse(params);
       if (!limiter.allow(`approval-code:${session.deviceId}`, 10)) throw new AppError('RATE_LIMITED', '연결 코드를 너무 자주 만들었습니다. 잠시 후 다시 시도해 주세요.');
-      return store.createCode();
+      // One code per device. Replies carry the host time so a device whose clock differs still shows the right time left.
+      return {...store.createCode(`device:${session.deviceId}`), serverTime: store.time()};
     }
-    if (method === 'pairing.list') { emptySchema.parse(params); return {requests: store.listPairings(session.origin)}; }
+    if (method === 'pairing.list') { emptySchema.parse(params); return {requests: store.listPairings(session.origin), serverTime: store.time()}; }
     const {requestId} = requestIdSchema.parse(params);
     store.decidePairing(requestId, method === 'pairing.approve', {name: session.name, origin: session.origin});
     emitPairings();
@@ -333,8 +334,8 @@ export async function startGateway({core, dataDir, webRoot, port = 0, allowedOri
       if (closed) throw new AppError('HOST_STOPPED', '호스트가 종료되었습니다.');
       if (!ownerMethods.has(method)) throw new AppError('NOT_FOUND', '지원하지 않는 관리 요청입니다.');
       switch (method) {
-        case 'pairing.create': emptySchema.parse(params); return store.createCode();
-        case 'pairing.status': case 'pairing.list': emptySchema.parse(params); return {requests: store.listPairings()};
+        case 'pairing.create': emptySchema.parse(params); return {...store.createCode(), serverTime: store.time()};
+        case 'pairing.status': case 'pairing.list': emptySchema.parse(params); return {requests: store.listPairings(), serverTime: store.time()};
         case 'pairing.approve': case 'pairing.reject': {
           const {requestId} = requestIdSchema.parse(params); store.decidePairing(requestId, method === 'pairing.approve'); emitPairings(); return {ok: true};
         }

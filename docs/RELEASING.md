@@ -1,6 +1,6 @@
 # 배포와 자동 업데이트
 
-**0.3.19 배포 준비(2026-10-10):** 연결된 휴대폰·PC에서 새 기기 연결을 승인하는 기능을 묶는다. 보안·설정 화면 시험, 전체 회귀, 아스트라의 격리 실제 앱·브라우저 검증과 기능·검증 기록 커밋의 개발 PR 검사(Windows 검사 591개 중 576 통과·0 실패·15 생략, 실제 NSIS 업그레이드·복원)는 통과했다. 독립 코드 검토, 배포 준비 커밋의 PR 검사, 배포 PR과 최종 태그 검사, 공개 파일 검증은 진행 중이다. 아직 공개하지 않았으며 현재 공개 버전은 0.3.18이다. [검증 기록](validation/public-release-0.3.19.md).
+**0.3.19 배포 준비(2026-10-10):** 연결된 휴대폰·PC에서 새 기기 연결을 승인하는 기능을 묶는다. 보안·설정 화면 시험, 전체 회귀, 아스트라의 격리 실제 앱·브라우저 검증과 기능·검증 기록 커밋의 개발 PR 검사(Windows 검사 591개 중 576 통과·0 실패·15 생략, 실제 NSIS 업그레이드·복원)는 통과했다. 독립 코드 검토(GitHub Codex 자동 검토와 아스트라)의 P2 지적 2건, 다른 기기 코드 무효화와 기기 시계 차이로 인한 코드·요청 숨김을 고쳤다. 수정 커밋의 PR 검사, 배포 PR과 최종 태그 검사, 공개 파일 검증은 진행 중이다. 아직 공개하지 않았으며 현재 공개 버전은 0.3.18이다. [검증 기록](validation/public-release-0.3.19.md).
 
 **0.3.18 공개 배포 완료(2026-10-09):** [공개 릴리스](https://github.com/bokjk/mongle-terminal-releases/releases/tag/v0.3.18). [개발 PR](https://github.com/bokjk/mongle-terminal/actions/runs/37927666529) 571 통과·0 실패·15 생략, [배포 PR](https://github.com/bokjk/mongle-terminal/actions/runs/37929284456) 571 통과·0 실패·15 생략, [최종 태그](https://github.com/bokjk/mongle-terminal/actions/runs/37930788731) 572 통과·0 실패·14 생략. 네이티브 2/2, [실제 NSIS 업데이트·자동 재실행·복원](https://github.com/bokjk/mongle-terminal/actions/runs/37930788731), 최종 설치 payload 일치, 공개 첨부 5개 익명 전체 다운로드·해시, 실제 Electron updater의 0.3.17→0.3.18 다운로드와 동일 버전 최신 상태 확인을 통과했다. 이전 공개 릴리스는 보존했다. [최종 증거](validation/public-release-0.3.18.md#final).
 

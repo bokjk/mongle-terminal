@@ -5,6 +5,7 @@ import { AppError } from '../protocol/index.ts';
 const PAIRING_MS = 3 * 60_000;
 const SESSION_MS = 30 * 24 * 60 * 60_000;
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const PC_ISSUER = 'pc';
 export const secret = () => randomBytes(32).toString('base64url');
 const digest = (value: string) => createHash('sha256').update(value).digest('hex');
 export function safeEqual(a: string, b: string) {
@@ -33,14 +34,14 @@ export class AuthStore {
       PRAGMA synchronous=FULL;
       PRAGMA busy_timeout=5000;
       CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS codes (hash TEXT PRIMARY KEY, expires_at INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, consumed INTEGER NOT NULL DEFAULT 0);
+      CREATE TABLE IF NOT EXISTS codes (hash TEXT PRIMARY KEY, expires_at INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, consumed INTEGER NOT NULL DEFAULT 0, issuer TEXT);
       CREATE TABLE IF NOT EXISTS pairings (id TEXT PRIMARY KEY, secret_hash TEXT NOT NULL, name TEXT NOT NULL, origin TEXT NOT NULL, status TEXT NOT NULL, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, approved_by TEXT);
       CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE, csrf TEXT NOT NULL, name TEXT NOT NULL, origin TEXT NOT NULL, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, revoked INTEGER NOT NULL DEFAULT 0, approved_by TEXT);
     `);
-    // Databases from earlier versions lack the approver column. Older hosts ignore it after a downgrade.
-    for (const table of ['pairings', 'sessions']) {
+    // Databases from earlier versions lack the approver and code issuer columns. Older hosts ignore them after a downgrade.
+    for (const [table, column] of [['pairings', 'approved_by'], ['sessions', 'approved_by'], ['codes', 'issuer']]) {
       const columns = this.db.prepare(`PRAGMA table_info(${table})`).all() as unknown as {name: string}[];
-      if (!columns.some(column => column.name === 'approved_by')) this.db.exec(`ALTER TABLE ${table} ADD COLUMN approved_by TEXT`);
+      if (!columns.some(item => item.name === column)) this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} TEXT`);
     }
   }
   private transaction<T>(run: () => T): T {
@@ -62,14 +63,21 @@ export class AuthStore {
       return previous;
     });
   }
-  createCode() {
+  /** The host clock used for code and request expiry, so a client can correct for its own clock. */
+  time() { return this.now(); }
+  /**
+   * The PC and each paired device keep one code of their own. A new code replaces only the issuer's previous code,
+   * so a code still shown on another screen stays valid. Failed guesses count against every live code.
+   */
+  createCode(issuer = PC_ISSUER) {
     const code = Array.from({length: 10}, () => CODE_ALPHABET[randomInt(CODE_ALPHABET.length)]).join('');
-    const expiresAt = this.now() + PAIRING_MS;
+    const now = this.now(), expiresAt = now + PAIRING_MS;
     this.transaction(() => {
-      this.db.prepare('DELETE FROM codes').run();
-      this.db.prepare('DELETE FROM pairings WHERE expires_at < ?').run(this.now() - SESSION_MS);
-      this.db.prepare('DELETE FROM sessions WHERE expires_at < ?').run(this.now() - SESSION_MS);
-      this.db.prepare('INSERT INTO codes(hash,expires_at) VALUES (?,?)').run(digest(code), expiresAt);
+      // Codes saved by earlier versions have no issuer and were made on the PC.
+      this.db.prepare('DELETE FROM codes WHERE COALESCE(issuer,?)=? OR consumed=1 OR expires_at<=?').run(PC_ISSUER, issuer, now);
+      this.db.prepare('DELETE FROM pairings WHERE expires_at < ?').run(now - SESSION_MS);
+      this.db.prepare('DELETE FROM sessions WHERE expires_at < ?').run(now - SESSION_MS);
+      this.db.prepare('INSERT INTO codes(hash,expires_at,issuer) VALUES (?,?,?)').run(digest(code), expiresAt, issuer);
     });
     return {code, expiresAt};
   }

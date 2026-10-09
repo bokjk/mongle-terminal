@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
@@ -96,6 +96,25 @@ test('guessing attempts are retained after rejected requests and a replacement c
   } finally { f.close(); }
 });
 
+test('each issuer keeps its own pairing code while failed guesses still lock every live code', () => {
+  const f = fixture();
+  try {
+    const pc = f.store.createCode();
+    const phone = f.store.createCode('device:phone');
+    const laptop = f.store.createCode('device:laptop');
+    const replacement = f.store.createCode('device:phone');
+    const fromPc = f.store.requestPairing(pc.code, 'Office PC', origin);
+    assert.equal(f.store.pairingStatus(fromPc.requestId, fromPc.requesterSecret, origin).status, 'pending', 'Codes made on paired devices leave the PC code valid');
+    assert.throws(() => f.store.requestPairing(phone.code, 'Tablet', origin), /연결 코드가 잘못되었거나 만료되었습니다/, "A new code replaces only the same issuer's previous code");
+    for (let index = 1; index < 5; index++) assert.throws(() => f.store.requestPairing(`WRONGCODE${index}`, 'Intruder', origin));
+    f.reopen();
+    assert.throws(() => f.store.requestPairing(laptop.code, 'Laptop', origin), 'Five failed guesses lock the codes of every issuer');
+    assert.throws(() => f.store.requestPairing(replacement.code, 'Phone', origin));
+    const request = f.store.requestPairing(f.store.createCode('device:phone').code, 'Phone', origin);
+    assert.equal(f.store.pairingStatus(request.requestId, request.requesterSecret, origin).status, 'pending');
+  } finally { f.close(); }
+});
+
 test('changing or disabling the remote origin revokes old sessions and pending approvals durably', () => {
   const f = fixture();
   try {
@@ -144,7 +163,7 @@ test('a paired device decides only requests made through its own address and is 
   } finally { f.close(); }
 });
 
-test('an authentication store from an earlier version keeps its devices and gains the approver column', () => {
+test('an authentication store from an earlier version keeps its devices and gains the approver and code issuer columns', () => {
   const root = mkdtempSync(join(tmpdir(), 'mongle-auth-'));
   const path = join(root, 'auth.sqlite');
   try {
@@ -152,12 +171,17 @@ test('an authentication store from an earlier version keeps its devices and gain
     legacy.exec(`
       CREATE TABLE pairings (id TEXT PRIMARY KEY, secret_hash TEXT NOT NULL, name TEXT NOT NULL, origin TEXT NOT NULL, status TEXT NOT NULL, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL);
       CREATE TABLE sessions (id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE, csrf TEXT NOT NULL, name TEXT NOT NULL, origin TEXT NOT NULL, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, revoked INTEGER NOT NULL DEFAULT 0);
+      CREATE TABLE codes (hash TEXT PRIMARY KEY, expires_at INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, consumed INTEGER NOT NULL DEFAULT 0);
     `);
     legacy.prepare('INSERT INTO sessions(id,token_hash,csrf,name,origin,created_at,expires_at) VALUES(?,?,?,?,?,?,?)').run(randomUUID(), 'a'.repeat(64), 'csrf', 'Old phone', origin, Date.now(), Date.now() + 60_000);
+    legacy.prepare('INSERT INTO codes(hash,expires_at) VALUES(?,?)').run(createHash('sha256').update('LEGACY2345').digest('hex'), Date.now() + 60_000);
     legacy.close();
     const store = new AuthStore(path);
     try {
       assert.deepEqual(store.listDevices().map(device => [device.name, device.approvedBy, device.revoked]), [['Old phone', undefined, false]]);
+      store.createCode('device:old-phone');
+      const tablet = store.requestPairing('LEGACY2345', 'Tablet', origin);
+      assert.equal(store.pairingStatus(tablet.requestId, tablet.requesterSecret, origin).status, 'pending', 'A code left by the earlier PC host survives a code made on a paired device');
       const request = store.requestPairing(store.createCode().code, 'New PC', origin);
       store.decidePairing(request.requestId, true, { name: 'Old phone', origin });
       store.claimPairing(request.requestId, request.requesterSecret, origin);

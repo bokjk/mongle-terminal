@@ -14,15 +14,15 @@ test('a paired phone creates codes and approves or rejects requests without PC-o
     import {createRoot} from 'react-dom/client';
     import {Settings} from './apps/web/src/Settings';
     const base={hostId:'host',bootId:'boot',name:'회사 PC',version:'0.3.18',protocolVersion:1,groups:[],terminals:[],profiles:[],settings:{name:'회사 PC',recordHistory:true,scrollback:5000}};
-    window.calls=[];window.errors=[];window.codeLifetime=180000;
+    window.calls=[];window.errors=[];window.codeLifetime=180000;window.skew=0;
     window.requests=[
       {requestId:'11111111-1111-4111-8111-111111111111',name:'집 PC',status:'pending',createdAt:Date.now(),expiresAt:Date.now()+150000},
       {requestId:'22222222-2222-4222-8222-222222222222',name:'모르는 기기',status:'pending',createdAt:Date.now(),expiresAt:Date.now()+150000},
     ];
     const client={request:async(method,params)=>{
       window.calls.push({method,params});
-      if(method==='pairing.list')return {requests:window.requests};
-      if(method==='pairing.create')return {code:'ABCD234567',expiresAt:Date.now()+window.codeLifetime};
+      if(method==='pairing.list')return {requests:window.requests,serverTime:Date.now()+window.skew};
+      if(method==='pairing.create')return {code:'ABCD234567',expiresAt:Date.now()+window.skew+window.codeLifetime,serverTime:Date.now()+window.skew};
       if(method==='pairing.approve'||method==='pairing.reject'){window.requests=window.requests.filter(item=>item.requestId!==params.requestId);return {ok:true};}
       if(method==='remote.status')return {enabled:true,origin:'https://office.example-tailnet.ts.net'};
       if(method==='devices.list')return {devices:[{deviceId:'33333333-3333-4333-8333-333333333333',name:'집 PC',createdAt:Date.now(),revoked:false,approvedBy:'내 휴대폰'}]};
@@ -83,6 +83,14 @@ test('a paired phone creates codes and approves or rejects requests without PC-o
     await page.getByRole('button', { name: '새 코드 만들기', exact: true }).click();
     await expect(page.getByText('코드가 만료되었습니다. 새 코드를 만들어 주세요.', { exact: true })).toBeVisible();
     assert.equal(await page.getByText('ABCD234567', { exact: true }).count(), 0, 'An expired code is no longer shown');
+
+    // The host clock runs four minutes behind this phone. A fresh code and request still show their time left.
+    await page.evaluate("window.skew=-240000; window.codeLifetime=180000; window.requests=[{requestId:'44444444-4444-4444-8444-444444444444',name:'시계가 다른 기기',status:'pending',createdAt:Date.now()+window.skew,expiresAt:Date.now()+window.skew+150000}]");
+    await page.getByRole('button', { name: '새 코드 만들기', exact: true }).click();
+    await page.getByText('ABCD234567', { exact: true }).waitFor();
+    await expect(page.getByText(/^(3:00|2:[0-5]\d) 남음 · 한 번만 쓸 수 있습니다\.$/)).toBeVisible();
+    await page.getByRole('button', { name: '시계가 다른 기기 연결 승인', exact: true }).waitFor();
+    await expect(page.getByText(/^연결 요청 · 2:[0-3]\d 남음$/)).toBeVisible();
 
     await page.evaluate('window.calls=[]; window.render(false,[],"dark")');
     await expect(page.getByRole('heading', { name: '원격 연결 관리', exact: true })).toBeVisible();

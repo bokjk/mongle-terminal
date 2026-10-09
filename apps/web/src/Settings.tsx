@@ -12,7 +12,7 @@ type RemoteStatus = { origin?: string | null; enabled: boolean; loopbackUrl?: st
 type Diagnosis = { installed: boolean; connected: boolean; dnsName?: string; origin?: string; serveEnabled?: boolean; message?: string };
 type PairingRequest = { requestId: string; name: string; status: string; createdAt: string | number; expiresAt: string | number };
 type Device = { deviceId: string; name: string; origin?: string; createdAt: string | number; expiresAt?: string | number; revoked: boolean; approvedBy?: string };
-type PairingCode = { code: string; expiresAt: string | number };
+type PairingCode = { code: string; expiresAt: string | number; serverTime?: number };
 type SettingsBackup = { version: 1; name: string; recordHistory: boolean; groups: { name: string; cwd: string; profileId: string }[] };
 const SETTINGS_FILE_LIMIT = 96 * 1024;
 
@@ -65,6 +65,13 @@ function remainingLabel(value: string | number, now: number) {
   const seconds = Math.max(0, Math.ceil((end - now) / 1000));
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')} 남음`;
 }
+/** Expiry times use the host clock. Keep the host-minus-device offset so a phone whose clock runs fast does not hide a valid code or request. */
+function hostClockOffset(serverTime: unknown, sentAt: number, receivedAt: number, previous: number) {
+  if (typeof serverTime !== 'number' || !Number.isFinite(serverTime)) return previous;
+  const offset = serverTime - (sentAt + receivedAt) / 2;
+  // Ignore network jitter so the countdown does not skip seconds.
+  return Math.abs(offset - previous) > 1000 ? offset : previous;
+}
 
 export function Settings({ client, state, owner, theme, fontSize, scrollSpeed, onScrollSpeed, refreshBlocked = false, initialTab = 'appearance', onTheme, onFontSize, onClose, onError }: SettingsProps) {
   const [tab, setTab] = useState<Tab>(initialTab);
@@ -80,6 +87,7 @@ export function Settings({ client, state, owner, theme, fontSize, scrollSpeed, o
   const [pairing, setPairing] = useState<PairingCode | null>(null);
   const [requests, setRequests] = useState<PairingRequest[]>([]);
   const [now, setNow] = useState(() => Date.now());
+  const [clockOffset, setClockOffset] = useState(0);
   const [devices, setDevices] = useState<Device[]>([]);
   const [revokeId, setRevokeId] = useState<string | null>(null);
   const [shutdownConfirm, setShutdownConfirm] = useState(false);
@@ -95,8 +103,9 @@ export function Settings({ client, state, owner, theme, fontSize, scrollSpeed, o
   const id = useId();
   // Older hosts reject remote approval, so a paired device shows the controls only when the host advertises them.
   const remoteApproval = owner || state.capabilities?.includes('pairing.remote-approve') === true;
-  const pending = requests.filter(request => request.status === 'pending' && !hasExpired(request.expiresAt, now));
-  const codeLive = pairing !== null && !hasExpired(pairing.expiresAt, now);
+  const hostNow = now + clockOffset;
+  const pending = requests.filter(request => request.status === 'pending' && !hasExpired(request.expiresAt, hostNow));
+  const codeLive = pairing !== null && !hasExpired(pairing.expiresAt, hostNow);
   const ticking = tab === 'remote' && (codeLive || pending.length > 0);
 
   useEffect(() => {
@@ -129,7 +138,13 @@ export function Settings({ client, state, owner, theme, fontSize, scrollSpeed, o
     const poll = async () => {
       if (polling || !active) return;
       polling = true;
-      try { const result = await client.request<{ requests: PairingRequest[] }>('pairing.list'); if (active) setRequests(result.requests); failing = false; }
+      try {
+        const sentAt = Date.now();
+        const result = await client.request<{ requests: PairingRequest[]; serverTime?: number }>('pairing.list');
+        const receivedAt = Date.now();
+        if (active) { setRequests(result.requests); setClockOffset(previous => hostClockOffset(result.serverTime, sentAt, receivedAt, previous)); }
+        failing = false;
+      }
       // A phone on a weak connection would otherwise report the same failure every three seconds.
       catch (failure) { if (!failing) report(failure); failing = true; }
       finally { polling = false; }
@@ -193,10 +208,10 @@ export function Settings({ client, state, owner, theme, fontSize, scrollSpeed, o
   // Shared by the PC and by paired devices. Like an app's connection request screen, it names the requester and states what approval grants.
   const pairingSection = <div className="settings-section"><h3 className="settings-title">새 기기 연결</h3>
     <p className="settings-description">{owner ? '코드는 접속할 기기에만 알려 주세요. 코드를 입력한 기기는 이 화면이나 이미 연결된 기기에서 승인해야 연결됩니다.' : `이 기기에서 ${state.name}의 연결 코드를 만들고, 코드를 입력한 기기를 승인할 수 있습니다. 코드는 접속할 기기에만 알려 주세요.`}</p>
-    <button type="button" className="button subtle" disabled={!!busy || (owner && !remote?.enabled)} onClick={() => void run('pair', async () => { const value = await client.request<PairingCode>('pairing.create', {}); if (mounted.current) { setPairing(value); setNow(Date.now()); } })}>{pairing ? '새 코드 만들기' : '연결 코드 만들기'}</button>
-    {pairing && (codeLive ? <><div className="form-row"><code className="code-box" style={{ fontSize: 24, letterSpacing: '0.18em' }}>{pairing.code}</code><button type="button" className="icon-button" aria-label="연결 코드 복사" disabled={!!busy} onClick={() => void run('copy-code', () => copy(pairing.code))}><Copy size={16} /></button></div><p className="hint">{remainingLabel(pairing.expiresAt, now)} · 한 번만 쓸 수 있습니다.</p></> : <p className="hint">코드가 만료되었습니다. 새 코드를 만들어 주세요.</p>)}
+    <button type="button" className="button subtle" disabled={!!busy || (owner && !remote?.enabled)} onClick={() => void run('pair', async () => { const sentAt = Date.now(); const value = await client.request<PairingCode>('pairing.create', {}); const receivedAt = Date.now(); if (mounted.current) { setPairing(value); setClockOffset(previous => hostClockOffset(value.serverTime, sentAt, receivedAt, previous)); setNow(receivedAt); } })}>{pairing ? '새 코드 만들기' : '연결 코드 만들기'}</button>
+    {pairing && (codeLive ? <><div className="form-row"><code className="code-box" style={{ fontSize: 24, letterSpacing: '0.18em' }}>{pairing.code}</code><button type="button" className="icon-button" aria-label="연결 코드 복사" disabled={!!busy} onClick={() => void run('copy-code', () => copy(pairing.code))}><Copy size={16} /></button></div><p className="hint">{remainingLabel(pairing.expiresAt, hostNow)} · 한 번만 쓸 수 있습니다.</p></> : <p className="hint">코드가 만료되었습니다. 새 코드를 만들어 주세요.</p>)}
     <div className="pairing-requests"><p className="hint">승인한 기기는 {state.name}의 터미널에서 명령을 실행할 수 있습니다. 직접 요청한 기기인지 이름을 확인한 뒤 승인하세요.</p>
-    {pending.length === 0 ? <p className="hint">승인 대기 중인 기기가 없습니다.</p> : pending.map(request => <div className="device-row" key={request.requestId}><div className="device-info"><strong>{request.name}</strong><p className="hint">연결 요청 · {remainingLabel(request.expiresAt, now)}</p></div><div className="form-row pairing-actions"><button type="button" className="button primary" aria-label={`${request.name} 연결 승인`} disabled={!!busy} onClick={() => void run(`approve-${request.requestId}`, async () => { await client.request('pairing.approve', { requestId: request.requestId }); if (mounted.current) { setRequests(items => items.filter(item => item.requestId !== request.requestId)); setNotice(`${request.name}의 연결을 승인했습니다.`); } if (owner) await refreshDevices(); })}>승인</button><button type="button" className="button subtle" aria-label={`${request.name} 연결 거절`} disabled={!!busy} onClick={() => void run(`reject-${request.requestId}`, async () => { await client.request('pairing.reject', { requestId: request.requestId }); if (mounted.current) { setRequests(items => items.filter(item => item.requestId !== request.requestId)); setNotice(`${request.name}의 연결 요청을 거절했습니다.`); } })}>거절</button></div></div>)}</div>
+    {pending.length === 0 ? <p className="hint">승인 대기 중인 기기가 없습니다.</p> : pending.map(request => <div className="device-row" key={request.requestId}><div className="device-info"><strong>{request.name}</strong><p className="hint">연결 요청 · {remainingLabel(request.expiresAt, hostNow)}</p></div><div className="form-row pairing-actions"><button type="button" className="button primary" aria-label={`${request.name} 연결 승인`} disabled={!!busy} onClick={() => void run(`approve-${request.requestId}`, async () => { await client.request('pairing.approve', { requestId: request.requestId }); if (mounted.current) { setRequests(items => items.filter(item => item.requestId !== request.requestId)); setNotice(`${request.name}의 연결을 승인했습니다.`); } if (owner) await refreshDevices(); })}>승인</button><button type="button" className="button subtle" aria-label={`${request.name} 연결 거절`} disabled={!!busy} onClick={() => void run(`reject-${request.requestId}`, async () => { await client.request('pairing.reject', { requestId: request.requestId }); if (mounted.current) { setRequests(items => items.filter(item => item.requestId !== request.requestId)); setNotice(`${request.name}의 연결 요청을 거절했습니다.`); } })}>거절</button></div></div>)}</div>
   </div>;
 
   return <div className="modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}>
