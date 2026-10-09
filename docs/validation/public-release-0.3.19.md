@@ -14,7 +14,7 @@
 
 [구현과 검증 기록](remote-device-approval.md)을 따른다. 타입·빌드, 보안 시험 24/24, 설정 화면 시험 3/3, 로컬 전체 회귀 591개 중 574 통과·1 실패·16 생략을 확인했다. 로컬 실패 1개는 이 PC의 PowerShell 실행 정책이 배포 스크립트 시험을 막은 환경 문제이며 원격 Windows 검사에서는 실패가 없었다. 아스트라의 격리 실제 앱·브라우저 검증에서 PC→휴대폰→새 기기 승인, 거절 후 미연결, 승인 출처 표시, 남은 시간 감소, 390px 버튼 배치를 확인했다. 기능 커밋 `9fa4d2f`의 [개발 PR #63 Windows 검사](https://github.com/bokjk/mongle-terminal/actions/runs/37949120307)와 [실제 NSIS 업그레이드·복원 검사](https://github.com/bokjk/mongle-terminal/actions/runs/37949120074), 검증 기록 커밋 `f740162`의 [Windows 검사](https://github.com/bokjk/mongle-terminal/actions/runs/37966972468)(591개 중 576 통과·0 실패·15 생략, 네이티브 2/2)와 [실제 NSIS 업그레이드·복원 검사](https://github.com/bokjk/mongle-terminal/actions/runs/37966972413)도 통과했다. 실제 Tailscale HTTPS·실물 휴대폰·두 PC 간 등록과 앱 전체의 정식 메뉴 종료는 확인하지 않았다.
 
-독립 코드 검토(GitHub Codex 자동 검토와 아스트라)의 P2 지적 2건, 다른 기기 코드 무효화와 기기 시계 차이로 인한 코드·요청 숨김을 고쳤다. 보안 25/25, 설정 화면 3/3, 타입 검사를 다시 통과했고 새 시험이 수정 전 코드에서 실패함을 확인했다. [검토와 수정](remote-device-approval.md#독립-코드-검토와-수정-2026-10-10).
+독립 코드 검토(GitHub Codex 자동 검토와 아스트라)의 P2 지적 2건, 다른 기기 코드 무효화와 기기 시계 차이로 인한 코드·요청 숨김을 고쳤다. 재검토의 P3 1건(네트워크 지연이 고르지 않을 때 유효한 요청을 몇 초 일찍 숨김)도 고쳤다. 보안 25/25, 설정 화면 3/3, 시계 보정 단위 시험 1/1, 타입 검사를 다시 통과했고 새 시험이 수정 전 코드에서 실패함을 확인했다. [검토와 수정](remote-device-approval.md#독립-코드-검토와-수정-2026-10-10).
 
 ## 배포 전 검사
 

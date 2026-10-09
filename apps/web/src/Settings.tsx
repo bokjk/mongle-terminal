@@ -4,6 +4,7 @@ import type { AppClient } from '../../../packages/client/index';
 import type { HostState } from '../../../packages/protocol/index';
 import { UpdateSettings } from './UpdateSettings';
 import { RemoteAccessQr } from './RemoteAccessQr';
+import { hostClockOffset } from './host-clock';
 import { TOUCH_SCROLL_SPEEDS, touchScrollSpeed } from '../../../packages/terminal/touch-scrollback';
 
 type Tab = 'appearance' | 'host' | 'remote' | 'updates' | 'help';
@@ -64,13 +65,6 @@ function remainingLabel(value: string | number, now: number) {
   if (Number.isNaN(end)) return `만료 ${dateLabel(value)}`;
   const seconds = Math.max(0, Math.ceil((end - now) / 1000));
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')} 남음`;
-}
-/** Expiry times use the host clock. Keep the host-minus-device offset so a phone whose clock runs fast does not hide a valid code or request. */
-function hostClockOffset(serverTime: unknown, sentAt: number, receivedAt: number, previous: number) {
-  if (typeof serverTime !== 'number' || !Number.isFinite(serverTime)) return previous;
-  const offset = serverTime - (sentAt + receivedAt) / 2;
-  // Ignore network jitter so the countdown does not skip seconds.
-  return Math.abs(offset - previous) > 1000 ? offset : previous;
 }
 
 export function Settings({ client, state, owner, theme, fontSize, scrollSpeed, onScrollSpeed, refreshBlocked = false, initialTab = 'appearance', onTheme, onFontSize, onClose, onError }: SettingsProps) {
