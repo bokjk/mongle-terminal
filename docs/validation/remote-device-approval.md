@@ -29,9 +29,27 @@
 - 화면: `tests/ui/remote-approval.test.ts`(신규), `tests/ui/settings.test.ts`, `tests/ui/remote-qr.test.ts` 3/3 통과. Chrome에서 실제 CSS로 390px 다크·320px 라이트 화면의 가로 넘침이 없음을 확인했다. 연결된 기기가 PC 전용 조회를 하지 않는지, 남은 시간 표시와 만료, 이전 호스트에서 숨김(3.3초 동안 조회 0회), PC의 승인 기기 표시도 확인했다. 스크린샷 3장(`test-results/remote-approval/`, 커밋하지 않음)을 직접 열어 버튼 배치와 문구를 확인했다.
 - 전체 회귀: 격리한 `MONGLE_DATA_DIR`로 591개 중 574 통과·1 실패·16 생략(선택 실행 E2E). 실패한 `release publisher checks all deliverables and rejects tampering before contacting GitHub`는 이 PC의 Windows PowerShell 실행 정책이 `scripts/publish-release.ps1` 실행을 막은 환경 문제(`UnauthorizedAccess`)로, 단독 재실행에서도 같은 오류였다. 이번 변경과 무관하며 시스템 실행 정책은 바꾸지 않았다. 전체 실행이 덮어쓴 저장소의 `artifacts/ui` 스크린샷 4개는 원래 파일로 되돌렸다.
 
+## 실제 앱 조작 (2026-10-10, 부분 검증)
+
+아스트라(`gpt-6-astra`)가 실제 개발 Electron 앱을 TEMP 아래 별도 `MONGLE_DATA_DIR`로 실행해 조작했다. PC의 **설정 → 원격 연결 → 접속 주소 직접 설정**에서 가짜 시험 주소를 저장하고 **연결 코드 만들기** 버튼 활성화, 코드 생성, 남은 시간의 `2:48 → 2:15` 감소를 확인했다. 초기 `3:00` 순간은 확인하지 않았다. **원격 접속 켜기**는 누르지 않았으며 실제 Tailscale Serve를 변경하지 않았다.
+
+Aside CLI/REPL의 공개 안내와 Aside 자체 에이전트 조사에서 독립 쿠키 컨텍스트 생성 경로를 확보하지 못했다. REPL의 `page.context()`도 지원되지 않았다. 사용자 브라우저 쿠키를 삭제하거나 인증을 우회하지 않고 브라우저 인증 시험을 중단했다. 따라서 PC에서 휴대폰 역할 브라우저를 처음 승인하는 단계부터 미수행이며, 휴대폰의 새 기기 승인·거절, 실제 새 기기의 터미널 연결, PC 목록의 승인 기기 표시, 390px에서의 버튼 배치·가로 넘침은 이번 실앱 시험으로 확인하지 않았다. 위 자동 검사 결과와 구분한다.
+
+시험 호스트는 설정 화면의 정상 종료 절차로 종료했고 시험용 Node·OwnerPipe가 사라진 것을 확인했다. 개발 Electron 프로세스는 남아 일반 종료 요청도 실패했으므로, 호스트 종료 후 식별한 시험 PID만 강제로 정리했다. 마지막 확인에서 시험 프로세스 잔존은 0개였고 기존 사용자 주요 프로세스 7개는 모두 유지됐다. 따라서 앱 전체의 정상 종료를 통과 처리하지 않는다. 이번 승인 기능 변경이 원인인 결함으로 확정한 사항은 없다.
+
+스크린샷 3장과 `observations.json`, `cleanup-result.json` 등 시험 기록은 커밋하지 않는 `test-results/remote-approval-live/`에 둔다. 스크린샷의 연결 코드·PC 이름은 가리고 사용자 경로는 잘라냈다. 이 부분 검증만으로 기능의 실제 기기 간 승인 흐름을 통과 처리하지 않는다.
+
+## 원격 CI 확인 (2026-10-10)
+
+구현 커밋 `9fa4d2f`의 GitHub Actions 실행과 job 단계 상태를 확인했다. 아래 성공은 CI 환경의 결과이며 이 PC에서의 수동 화면 조작이나 공개 배포 완료를 뜻하지 않는다.
+
+- [Contribution checks](https://github.com/bokjk/mongle-terminal/actions/runs/37949120307): Windows 타입 검사·빌드·네이티브 검증·전체 회귀·배포 문서 검사가 모두 성공했다. 로컬 전체 회귀의 PowerShell 실행 정책 실패와 구분한다.
+- [Installed upgrade validation](https://github.com/bokjk/mongle-terminal/actions/runs/37949120074): 후보 설치본 빌드와 **Real NSIS upgrade and restore**의 실제 설치·교체·복원 단계가 성공했다. 범위 판정에 따른 생략이 아니다.
+- [PR description checks](https://github.com/bokjk/mongle-terminal/actions/runs/37949120047): 성공했다.
+
 ## 확인하지 않은 범위
 
-- 실제 몽글터미널 Electron 앱의 조작 검증. 저장소 규칙에 따라 컴퓨터 유즈 조작은 아스트라 모델이 맡으며 이번 작업에서는 수행하지 않았다.
+- 실제 브라우저 기기 간 승인·거절 전체 흐름. PC Electron 설정·코드 생성만 부분 확인했으며, Aside의 독립 쿠키 세션을 확보한 뒤 재검증해야 한다.
 - 실제 Tailscale HTTPS, 실물 휴대폰, 두 PC 사이의 컴퓨터 추가와 휴대폰 승인 전체 흐름. 게이트웨이 시험은 Serve가 전달하는 Host·Origin 헤더를 모사했다.
-- 패키지·NSIS 설치본과 원격 CI.
+- 이 PC에서의 패키지·NSIS 설치본 수동 조작. 원격 CI의 설치·복원 검사는 위에서 별도로 확인했다.
 - 승인한 기기를 해제해도 그 기기가 승인한 기기는 해제하지 않는다. 설계상 결정이며 이유는 [보안 설계](../03-security-and-remote.md#승인된-기기의-대리-승인--2026-10-09-추가)에 기록했다.

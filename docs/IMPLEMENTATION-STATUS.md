@@ -1,6 +1,6 @@
 # 구현·검증 상태
 
-**원격 기기 승인(2026-10-09~10, 미배포):** 이미 승인된 휴대폰·PC가 같은 원격 주소로 들어온 연결 요청의 코드 생성·조회·승인·거절을 할 수 있게 했다. 원격 접속 설정과 기기 목록·해제는 PC 전용으로 유지하고, 다른 기기가 승인한 기기는 PC 목록에 표시한다. 이전 버전 호스트에서는 기능을 숨긴다. 타입·빌드·문서 검사, 보안 24/24(신규 4), 설정 화면 3/3(신규 1, 390·320px 확인), 전체 회귀 591개 중 574 통과·1 실패·16 생략을 확인했다. 실패 1개는 이 PC의 PowerShell 실행 정책이 배포 스크립트 시험을 막은 환경 문제다. 실제 앱 조작(아스트라), 실제 Tailscale·실물 휴대폰·두 PC 간 등록, 패키지는 검증하지 않았다. [구현과 검증](validation/remote-device-approval.md).
+**원격 기기 승인(2026-10-09~10, 미배포):** 이미 승인된 휴대폰·PC가 같은 원격 주소로 들어온 연결 요청의 코드 생성·조회·승인·거절을 할 수 있게 했다. 원격 접속 설정과 기기 목록·해제는 PC 전용으로 유지하고, 다른 기기가 승인한 기기는 PC 목록에 표시한다. 이전 버전 호스트에서는 기능을 숨긴다. 타입·빌드·문서 검사, 보안 24/24(신규 4), 설정 화면 3/3(신규 1, 390·320px 확인), 전체 회귀 591개 중 574 통과·1 실패·16 생략을 확인했다. 실패 1개는 이 PC의 PowerShell 실행 정책이 배포 스크립트 시험을 막은 환경 문제다. 아스트라가 TEMP 격리 Electron에서 가짜 주소 저장·연결 코드 생성·남은 시간 표시를 확인했다. Aside의 독립 쿠키 세션을 확보하지 못해 브라우저 승인·거절 전체 흐름은 미검증이다. 구현 커밋의 원격 Windows CI와 실제 NSIS 업그레이드·복원 단계는 성공을 확인했다. 실제 Tailscale·실물 휴대폰·두 PC 간 등록과 이 PC의 설치본 수동 조작은 미검증이다. [구현과 검증](validation/remote-device-approval.md).
 
 **0.3.18 공개 배포 완료(2026-10-09):** [공개 릴리스](https://github.com/bokjk/mongle-terminal-releases/releases/tag/v0.3.18). [개발 PR](https://github.com/bokjk/mongle-terminal/actions/runs/37927666529) 571 통과·0 실패·15 생략, [배포 PR](https://github.com/bokjk/mongle-terminal/actions/runs/37929284456) 571 통과·0 실패·15 생략, [최종 태그](https://github.com/bokjk/mongle-terminal/actions/runs/37930788731) 572 통과·0 실패·14 생략. 네이티브 2/2, [실제 NSIS 업데이트·자동 재실행·복원](https://github.com/bokjk/mongle-terminal/actions/runs/37930788731), 최종 설치 payload 일치, 공개 첨부 5개 익명 전체 다운로드·해시, 실제 Electron updater의 0.3.17→0.3.18 다운로드와 동일 버전 최신 상태 확인을 통과했다. 이전 공개 릴리스는 보존했다. [최종 증거](validation/public-release-0.3.18.md#final).
 
@@ -193,7 +193,7 @@ Windows 11 x64에서 실제 PowerShell/ConPTY, Electron 앱과 Chrome 브라우�
 | 독립 실행부·로컬 인증 | 통과 | [플랫폼](validation/platform.md), [로컬 IPC](validation/local-ipc.md). 부모 실행기 종료 및 kill-on-close Job 후 Node 유지, helper 예외에도 중복 호스트 차단 |
 | 실사용 로컬 인증 오류 | **후속 재현 원인 확인·정상 인증 복구** | 도구의 MSIX 설정 폴더와 실제 앱의 인증 키 분리를 확인했고, 실제 프로필 맥락에서 인증 성공. 과거 모든 발생의 원인까지 단정하지 않음. [복구와 조사 기록](validation/local-connection-recovery.md), [확인된 원인](validation/msix-profile-recovery.md) |
 | 기기 승인·원격 인증 | 통과 | [보안](validation/security.md). 승인 필수, 단일 사용 티켓, Origin/CSRF, 영속 폐기, 권한·크기·속도 제한. Electron HTTPS 전송 시험 포함 |
-| 원격 기기 승인 | **구현·자동 검사 통과(미배포)** | 승인된 기기의 코드 생성·승인·거절, 같은 주소 요청만 처리, 승인 기기 표시, 이전 호스트에서 숨김. 보안 24/24·화면 3/3·전체 회귀 574 통과(환경 실패 1). 실제 앱·Tailscale·실물 휴대폰 미검증. [검증](validation/remote-device-approval.md) |
+| 원격 기기 승인 | **구현·자동 검사 통과(미배포)** | 승인된 기기의 코드 생성·승인·거절, 같은 주소 요청만 처리, 승인 기기 표시, 이전 호스트에서 숨김. 보안 24/24·화면 3/3·전체 회귀 574 통과(환경 실패 1). 격리 Electron의 주소 저장·코드 생성 부분 확인. Aside 쿠키 격리 제약으로 실제 브라우저 승인·거절 미검증. 원격 Windows CI·NSIS 설치·복원 성공. 실제 Tailscale·실물 휴대폰 미검증. [검증](validation/remote-device-approval.md) |
 | 터미널 화면·입력 | 통과 | [터미널 P0](validation/terminal-p0.md). 분할 UTF-8/ANSI·대체 화면·응답 중복·입력 모드, 화면 크기 예산, 느린 연결, 불확실 입력 미재전송 |
 | 독립 코드 검토 | 기존 지적 수정 확인 | 첫 시작·재접속, generation 검증, 전송 대기열, 원격 비활성화, native 잠금, 입력 불확실 상태 유지의 수정 확인 |
 | Tailscale 실제 HTTPS | **HTTPS·WSS 검사 및 사용자 휴대폰 접속 확인** | 사용자 Serve 승인 후 인증·WSS 상태 조회 시험 통과. 이어 상시 호스트와 private Serve를 실행했고 사용자가 휴대폰 접속을 확인했다. 발견된 키보드 닫힘 문제는 수정 배포 후 Android 삼성 인터넷에서 정상 동작 확인. [현재 원격 환경](validation/remote-environment.md) |
