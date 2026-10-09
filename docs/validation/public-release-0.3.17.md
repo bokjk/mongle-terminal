@@ -1,6 +1,6 @@
 # 0.3.17 공개 배포 검증
 
-**배포 준비 중(2026-10-08).** 공개 완료·사용자 설치본 적용을 뜻하지 않는다. 현재 공개 버전은 0.3.16이다.
+**공개 완료.** [최종 결과](#final)를 따른다. 아래 준비 기록은 당시 이력이다.
 
 ## 변경 범위
 
@@ -46,3 +46,49 @@ Electron 44.4.5의 [창 생성 코드](https://github.com/electron/electron/blob
 ### 여섯 번째 검사의 hosted 트레이 노출
 
 [여섯 번째 설치 검사](https://github.com/bokjk/mongle-terminal/actions/runs/37663993603)에서도 설치·재실행·작업 공간 복원·대화 ID 저장 뒤 정상 종료 자동화가 실패했다. hosted Windows의 `Shell_TrayWnd`는 UI Automation에 아이콘 버튼을 노출하지 않았다. Electron 44.4.5의 [트레이 콜백](https://github.com/electron/electron/blob/v44.4.5/shell/browser/ui/win/notify_icon_host.cc#L231), [아이콘 ID 초기값](https://github.com/electron/electron/blob/v44.4.5/shell/browser/ui/win/notify_icon_host.h#L46), [메뉴 열기 구현](https://github.com/electron/electron/blob/v44.4.5/shell/browser/ui/win/notify_icon.cc#L65)을 확인했다. 대상 앱의 트레이 이벤트로 실제 메뉴를 열고 실제 종료 항목과 확인창을 조작하는 검사 경로를 보완한다. 이 경로는 Explorer 아이콘의 물리적 우클릭 검증과 구분한다.
+
+<a id="final"></a>
+
+## 최종 공개 결과
+
+**0.3.17 공개 배포 완료(2026-10-08):** [공개 릴리스](https://github.com/bokjk/mongle-terminal-releases/releases/tag/v0.3.17). [개발 PR](https://github.com/bokjk/mongle-terminal/actions/runs/37665849941) 560 통과·0 실패·15 생략, [배포 PR](https://github.com/bokjk/mongle-terminal/actions/runs/37668564841) 560 통과·0 실패·15 생략, [최종 태그](https://github.com/bokjk/mongle-terminal/actions/runs/37670435649) 561 통과·0 실패·14 생략. 네이티브 2/2, [실제 NSIS 업데이트·자동 재실행·복원](https://github.com/bokjk/mongle-terminal/actions/runs/37670435649), 최종 설치 payload 일치, 공개 첨부 5개 익명 전체 다운로드·해시, 실제 Electron updater의 0.3.16→0.3.17 다운로드와 동일 버전 최신 상태 확인을 통과했다. 이전 공개 릴리스는 보존했다.
+
+- 게시 시각(UTC): 2026-10-07T19:18:23Z
+- 소스 태그: [v0.3.17](https://github.com/bokjk/mongle-terminal/tree/v0.3.17)
+- main SHA: `805d34f20390c3bd7492ea1507eebc87e1d48e5a`
+- PR: [개발 #57](https://github.com/bokjk/mongle-terminal/pull/57), [배포 #58](https://github.com/bokjk/mongle-terminal/pull/58)
+- 공개 안내: [배포 README #10](https://github.com/bokjk/mongle-terminal-releases/pull/10)
+
+최신 head·base의 필수 검사와 독립 검토 후 CONTRIBUTING에 따른 소유자 PR 병합 경로를 사용했다. 검증된 최종 태그 산출물의 동일 바이트를 공개했다.
+
+### 실제 설치 검사 범위
+
+0.3.16에서 후보로 legacy silent 업데이트 인수를 전달해도 실제 진행 막대가 표시됐고 설치본이 자동으로 다시 열렸다. 이어 같은 후보를 재설치해 새 표시형 업데이트 인수와 Claude 2개·Codex 2개 시험 대화의 정확한 ID 복원을 검증했다. 설치 파일·app.asar·전체 hostbundle이 후보와 일치했고 시험 프로세스는 정상 종료했다. 설치 검사의 CLI는 인증이나 모델을 사용하지 않는 시험 대역이며, 실제 Claude·Codex 검증은 [개발 앱 기록](agent-session-restore.md)을 따른다. 실제 사용자 설치본·인증·작업은 변경하지 않았다.
+
+hosted Windows의 두 정상 종료는 검증된 Electron 트레이 콜백으로 실제 메뉴를 열고 종료 항목과 확인창을 조작했다. Explorer 알림 영역 아이콘을 물리적으로 우클릭한 검증은 아니다.
+
+### 공개 파일
+
+| 파일 | 바이트 | SHA-256 |
+|---|---:|---|
+| MongleTerminal-Setup-0.3.17-x64.exe | 161291455 | `4edc2225d52b5e9b0f8d842ba90eadd2a35dd81d97b2caa3b743ded893e17137` |
+| MongleTerminal-Setup-0.3.17-x64.exe.blockmap | 167975 | `913a931985e4f38896fa66fe2e7e29df165186418ef396ea5ea9fc1ab480daeb` |
+| MongleTerminal-0.3.17-x64.zip | 209332466 | `8979e23708ec905afc29a9f14335fb74970a24f6d91f5d8cf229dc789cae6d5a` |
+| latest.yml | 368 | `964ec791a596beb0c541f0c3d38b890fc012d98c1347bb6c4b0deafaca567f19` |
+| SHA256SUMS.txt | 386 | `d00c5522ee8453cae84943106d34e4dbe077ce88faca284791c7cc13ab1fff64` |
+
+### 검증 영수증
+
+개인 경로를 포함할 수 있는 원본은 커밋하지 않고 SHA-256을 기록한다.
+
+| 검사 | JSON SHA-256 |
+|---|---|
+| ci-verification | `9c51fa80e9161fa7bb5b6c2f7f46020095a8189de7f1de5d66acfd5ff30a78b9` |
+| artifact-verification | `7004559addaec9e8970307e1f5581f80edd8b831940e490f9b406714aa826926` |
+| draft-verification | `98e9ba63aee59d31fc53af0379d8efdfee2ef3700978560d7f3269ba5354fac8` |
+| public-downloads | `f7f8eae9eeeb05f4466a36e946cc9d4c921c90bdcad7e57407c1203510f07ecb` |
+| public-updater | `b210cbf9dc0e657bf4e050ef500e346656a68d96727a52645aa6f929a5c0a27f` |
+| installed-payload-match | `53ddfed79546fbc3cea64943927501efc1c63098ac5cea62f2668433cfe92b27` |
+| previous-public-preservation | `ab90c897ea30610360e30b0798e2be74858edd1f07a2c2d196324adb6fb97107` |
+
+공개 업데이트 다운로드 검사는 현재 제품 updater에 격리 버전 어댑터를 사용했으며 설치를 실행하지 않았다. 실제 설치 교체는 위 일회성 Windows 검사와 구분한다. OS 재부팅·모든 CLI 버전·WSL·실물 모바일의 전체 조합은 검증하지 않았다.

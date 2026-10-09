@@ -4,6 +4,8 @@ import type { HostState } from '../../../packages/protocol/index';
 type Receipt = { generation: string; count: number };
 type Receipts = Record<string, Receipt>;
 export type PresentedNotification = { hostId: string; bootId: string; terminalId: string; generation: string; count: number };
+/** Present only for terminals with notifications this device has not seen. */
+export type TerminalNotice = { unread: true; /** Claude's latest alert itself is among the unseen notifications. */ agentUnread: boolean };
 const key = (hostId: string) => `mongle.notifications.read.${hostId}`;
 const scope = (value: PresentedNotification) => `${value.hostId}:${value.bootId}:${value.terminalId}:${value.generation}`;
 const validCount = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) >= 0;
@@ -79,11 +81,15 @@ export function useTerminalNotifications(state: HostState | undefined, activeId:
     }, 750);
     return () => clearTimeout(timer);
   }, [state?.hostId, state?.bootId, activeScope, count, canView, saved, viewRevision]);
-  const unread = new Set<string>();
+  const notices = new Map<string, TerminalNotice>();
   if (state) for (const info of state.terminals) {
     const receipt = saved?.hostId === state.hostId ? saved.receipts[info.id] : undefined;
-    if (validCount(info.notificationCount) && info.notificationCount > 0
-      && (receipt?.generation !== info.generation || receipt.count < info.notificationCount)) unread.add(info.id);
+    const count = validCount(info.notificationCount) ? info.notificationCount : 0;
+    const read = receipt?.generation === info.generation ? receipt.count : 0;
+    if (count <= read) continue;
+    // Hosts before agentNotificationCount presented every unread notification with the Claude status.
+    const agent = info.agentNotificationCount;
+    notices.set(info.id, {unread:true, agentUnread:agent === undefined || (validCount(agent) && agent > read && agent <= count)});
   }
-  return {unread, onPresented};
+  return {notices, onPresented};
 }
