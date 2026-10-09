@@ -484,6 +484,8 @@ button.pane-title { background: transparent; border: 0; text-align: left; paddin
 .switch-device.active::after, button[role='switch'][aria-checked='true']::after { transform: translateX(14px); background: var(--accent-text); }
 .device-row { display: flex; align-items: center; gap: 13px; padding: 14px 0; border-bottom: 1px solid var(--border-subtle); }
 .device-row:last-child { border-bottom: 0; }
+.pairing-requests { margin-top: 18px; }
+.pairing-actions { flex-shrink: 0; gap: 8px; }
 .device-row > svg { color: var(--text-muted); }
 .device-info { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; }
 .device-info strong { color: var(--text); font-size: 12px; font-weight: 500; }
@@ -683,6 +685,11 @@ button.pane-title { background: transparent; border: 0; text-align: left; paddin
   .device-row { flex-wrap: wrap; }
   .device-row .button { min-height: 44px; }
   .device-info { flex-basis: calc(100% - 50px); }
+  /* Approving on a phone: two equal buttons side by side, primary on the right as in mobile connection prompts. */
+  .form-row.pairing-actions { flex-direction: row; width: 100%; gap: 8px; }
+  .pairing-actions .button { flex: 1; }
+  .pairing-actions .button.primary { order: 2; }
+  .pairing-actions .button.subtle { border-color: var(--border); }
   .toast { bottom: calc(67px + env(safe-area-inset-bottom)); left: 50%; padding: 12px 14px; font-size: 12px; }
   .menu-item { min-height: 44px; }
   .pairing-page { align-items: flex-start; padding-top: max(40px, env(safe-area-inset-top)); }
