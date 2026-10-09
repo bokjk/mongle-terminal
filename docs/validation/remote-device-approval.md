@@ -1,0 +1,37 @@
+# 원격 기기 승인
+
+2026-10-09~10, Windows x64, 미배포. 이미 승인된 기기가 같은 원격 주소로 들어온 새 기기의 연결을 대신 승인할 수 있게 했다.
+
+## 배경
+
+컴퓨터 선택 메뉴에 멀리 있는 PC를 등록하려면 접속받을 PC의 화면에서 연결 코드를 만들고 승인해야 했다. 원격 기기의 `pairing.*` 요청은 게이트웨이에서 모두 `FORBIDDEN`이었고 코드는 3분 안에 써야 해서, 서로 떨어진 두 PC는 원격 데스크톱 없이 등록할 수 없었다. 30일이 지나 만료된 기기를 다시 승인할 때도 같은 제약이 있었다. 사용자는 Tailscale 자동 찾기나 사용 중 자동 연장보다 "승인된 휴대폰으로 대신 승인하기"를 먼저 선택했다.
+
+## 변경
+
+- 게이트웨이: 승인된 원격 WebSocket 세션의 `pairing.create`·`pairing.list`·`pairing.approve`·`pairing.reject`를 게이트웨이에서 직접 처리하고 core로 전달하지 않는다. 세션 origin과 같은 요청만 조회·결정한다. 승인 관련 요청은 기기당 분당 60회, 코드 생성은 분당 10회로 제한한다. `remote.*`·`devices.*`·`pairing.status`·`host.*`는 계속 PC 전용이다.
+- 인증 저장소: `pairings`·`sessions`에 `approved_by` 열을 두고 이전 DB에는 시작할 때 추가한다. 원격 승인이면 승인한 기기 이름을 기록하고 claim 때 세션으로 옮겨 `devices.list`의 `approvedBy`로 제공한다.
+- 호스트 상태: `pairing.remote-approve` capability를 알린다. 이를 알리지 않는 이전 호스트에 데스크톱 앱이 원격으로 연결하면 예전 안내만 표시하고 승인 목록을 조회하지 않는다.
+- 설정 화면: 연결된 기기의 원격 연결 탭에 **새 기기 연결**(코드 만들기·복사, 남은 시간, 승인 대기 목록, 승인·거절)과 **이 기기의 연결**을 표시한다. 새 기기 연결 섹션은 PC 화면과 공유하며 승인하면 명령 실행 권한이 생긴다고 안내한다. 코드와 요청의 남은 시간을 1초마다 갱신하고 만료된 코드는 감춘다. 700px 이하에서는 거절·승인 버튼을 같은 폭으로 나란히 두고 승인을 오른쪽에 둔다. PC의 연결한 기기 목록에는 "○○에서 승인"을 표시한다. 승인 목록 조회가 연속으로 실패하면 한 번만 알린다.
+- 연결 화면: "설정 → 원격 접속" 안내를 실제 탭 이름인 "설정 → 원격 연결"로 고치고, 이미 연결된 기기에서도 코드를 만들고 승인할 수 있다고 안내한다.
+
+## 디자인 참고 (Mobbin)
+
+2026-10-09에 Aside 브라우저로 Mobbin에서 로그인 없이 볼 수 있는 탐색 페이지를 확인했다.
+
+- Connecting & Linking 흐름의 Trust Wallet "Adding a DApp connection": 설정 → 연결 관리 → 요청 확인 화면 → 연결 목록 순서다. 요청 확인 화면은 요청자 이름·도메인과 허용되는 권한을 보여 주고 왼쪽에 Cancel, 오른쪽에 강조한 Connect 버튼을 둔다. 적용: 승인 목록에 요청 기기 이름과 승인 시 생기는 명령 실행 권한을 안내하고, 휴대폰에서는 거절·승인 두 버튼을 나란히 두며 승인을 오른쪽에 강조했다.
+- Logging In 흐름의 Plata Card "Logging in": 인증 코드 화면에 "Resend in 4 sec"처럼 남은 시간을 보여 준다. 적용: 3분짜리 연결 코드와 승인 요청에 만료 시각 대신 남은 시간을 표시했다.
+- 로그인이 필요한 Signal·WhatsApp 등의 기기 연결 화면은 확인하지 못했다.
+
+## 검증
+
+- `npm.cmd run typecheck` 통과. `npm.cmd run build` 통과(기존 대형 청크 경고만 있음). `node --import tsx scripts/release-check.ts` 통과(`v0.3.18`). `git diff --check` 공백 오류 없음.
+- 보안: `node --import tsx --test --test-concurrency=1 tests/security/gateway.test.ts tests/security/auth-store.test.ts` 24/24 통과. 신규 4개는 승인된 기기가 실제 HTTP·WebSocket 경로로 코드를 만들고 요청을 조회·승인·거절한 뒤 새 기기가 claim하는 흐름, 거절된 요청의 재승인 차단, `devices.*`·`remote.*`·`pairing.status` 차단과 core 미전달, 다른 origin 요청의 조회·결정 차단, 승인 기기 기록의 재시작 유지, 이전 버전 DB의 열 추가와 기존 기기 유지를 확인한다.
+- 화면: `tests/ui/remote-approval.test.ts`(신규), `tests/ui/settings.test.ts`, `tests/ui/remote-qr.test.ts` 3/3 통과. Chrome에서 실제 CSS로 390px 다크·320px 라이트 화면의 가로 넘침이 없음을 확인했다. 연결된 기기가 PC 전용 조회를 하지 않는지, 남은 시간 표시와 만료, 이전 호스트에서 숨김(3.3초 동안 조회 0회), PC의 승인 기기 표시도 확인했다. 스크린샷 3장(`test-results/remote-approval/`, 커밋하지 않음)을 직접 열어 버튼 배치와 문구를 확인했다.
+- 전체 회귀: 격리한 `MONGLE_DATA_DIR`로 591개 중 574 통과·1 실패·16 생략(선택 실행 E2E). 실패한 `release publisher checks all deliverables and rejects tampering before contacting GitHub`는 이 PC의 Windows PowerShell 실행 정책이 `scripts/publish-release.ps1` 실행을 막은 환경 문제(`UnauthorizedAccess`)로, 단독 재실행에서도 같은 오류였다. 이번 변경과 무관하며 시스템 실행 정책은 바꾸지 않았다. 전체 실행이 덮어쓴 저장소의 `artifacts/ui` 스크린샷 4개는 원래 파일로 되돌렸다.
+
+## 확인하지 않은 범위
+
+- 실제 몽글터미널 Electron 앱의 조작 검증. 저장소 규칙에 따라 컴퓨터 유즈 조작은 아스트라 모델이 맡으며 이번 작업에서는 수행하지 않았다.
+- 실제 Tailscale HTTPS, 실물 휴대폰, 두 PC 사이의 컴퓨터 추가와 휴대폰 승인 전체 흐름. 게이트웨이 시험은 Serve가 전달하는 Host·Origin 헤더를 모사했다.
+- 패키지·NSIS 설치본과 원격 CI.
+- 승인한 기기를 해제해도 그 기기가 승인한 기기는 해제하지 않는다. 설계상 결정이며 이유는 [보안 설계](../03-security-and-remote.md#승인된-기기의-대리-승인--2026-10-09-추가)에 기록했다.

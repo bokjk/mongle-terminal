@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { AuthStore } from '../../packages/auth/store.ts';
 
@@ -111,4 +113,59 @@ test('changing or disabling the remote origin revokes old sessions and pending a
     f.reopen();
     assert.equal(f.store.getOrigin(), undefined);
   } finally { f.close(); }
+});
+
+test('a paired device decides only requests made through its own address and is recorded as the approver', () => {
+  const f = fixture();
+  try {
+    const phone = f.pair();
+    const loopback = 'http://127.0.0.1:43123';
+    const local = f.store.requestPairing(f.store.createCode().code, 'Local browser', loopback);
+    const pendingNames = (items: { name: string; status: string }[]) => items.filter(item => item.status === 'pending').map(item => item.name);
+    assert.deepEqual(pendingNames(f.store.listPairings(origin)), []);
+    assert.deepEqual(pendingNames(f.store.listPairings(loopback)), ['Local browser']);
+    assert.deepEqual(pendingNames(f.store.listPairings()), ['Local browser'], 'The PC still sees every request');
+    const approver = { name: phone.session.name, origin };
+    assert.throws(() => f.store.decidePairing(local.requestId, true, approver), /승인할 수 있는 연결 요청이 없습니다/);
+    assert.equal(f.store.pairingStatus(local.requestId, local.requesterSecret, loopback).status, 'pending');
+
+    const remote = f.store.requestPairing(f.store.createCode().code, 'Home PC', origin);
+    f.store.decidePairing(remote.requestId, true, approver);
+    const home = f.store.claimPairing(remote.requestId, remote.requesterSecret, origin);
+    f.reopen();
+    const devices = f.store.listDevices();
+    assert.equal(devices.find(device => device.deviceId === home.session.deviceId)?.approvedBy, 'Phone');
+    assert.equal(devices.find(device => device.deviceId === phone.session.deviceId)?.approvedBy, undefined);
+
+    const unknown = f.store.requestPairing(f.store.createCode().code, 'Unknown', origin);
+    f.store.decidePairing(unknown.requestId, false, approver);
+    assert.equal(f.store.pairingStatus(unknown.requestId, unknown.requesterSecret, origin).status, 'rejected');
+    assert.throws(() => f.store.claimPairing(unknown.requestId, unknown.requesterSecret, origin));
+  } finally { f.close(); }
+});
+
+test('an authentication store from an earlier version keeps its devices and gains the approver column', () => {
+  const root = mkdtempSync(join(tmpdir(), 'mongle-auth-'));
+  const path = join(root, 'auth.sqlite');
+  try {
+    const legacy = new DatabaseSync(path);
+    legacy.exec(`
+      CREATE TABLE pairings (id TEXT PRIMARY KEY, secret_hash TEXT NOT NULL, name TEXT NOT NULL, origin TEXT NOT NULL, status TEXT NOT NULL, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL);
+      CREATE TABLE sessions (id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE, csrf TEXT NOT NULL, name TEXT NOT NULL, origin TEXT NOT NULL, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, revoked INTEGER NOT NULL DEFAULT 0);
+    `);
+    legacy.prepare('INSERT INTO sessions(id,token_hash,csrf,name,origin,created_at,expires_at) VALUES(?,?,?,?,?,?,?)').run(randomUUID(), 'a'.repeat(64), 'csrf', 'Old phone', origin, Date.now(), Date.now() + 60_000);
+    legacy.close();
+    const store = new AuthStore(path);
+    try {
+      assert.deepEqual(store.listDevices().map(device => [device.name, device.approvedBy, device.revoked]), [['Old phone', undefined, false]]);
+      const request = store.requestPairing(store.createCode().code, 'New PC', origin);
+      store.decidePairing(request.requestId, true, { name: 'Old phone', origin });
+      store.claimPairing(request.requestId, request.requesterSecret, origin);
+      assert.equal(store.listDevices().find(device => device.name === 'New PC')?.approvedBy, 'Old phone');
+    } finally { store.close(); }
+  } finally {
+    assert.equal(dirname(resolve(root)), resolve(tmpdir()));
+    assert.ok(basename(root).startsWith('mongle-auth-'));
+    rmSync(root, { recursive: true, force: true });
+  }
 });

@@ -4,7 +4,7 @@
 
 ## 구현
 
-- `packages/host/gateway.ts`: `127.0.0.1` 전용 HTTP/static/WS 게이트웨이. 정확한 Host·Origin 검사, POST JSON·CSRF, 원격 HTTPS 쿠키, 첫 프레임의 단일 사용 WS ticket, 요청/연결/출력 큐 상한을 적용했다. owner 메서드는 HTTP 및 원격 WS에서 호출할 수 없다.
+- `packages/host/gateway.ts`: `127.0.0.1` 전용 HTTP/static/WS 게이트웨이. 정확한 Host·Origin 검사, POST JSON·CSRF, 원격 HTTPS 쿠키, 첫 프레임의 단일 사용 WS ticket, 요청/연결/출력 큐 상한을 적용했다. owner 메서드는 HTTP 및 원격 WS에서 호출할 수 없다. 2026-10-09부터 승인된 원격 WS 세션은 자기 origin의 요청에 한해 `pairing.create/list/approve/reject`만 게이트웨이에서 처리한다([원격 기기 승인](remote-device-approval.md)).
 - `packages/auth/store.ts`: 별도 `auth.sqlite`의 WAL + `synchronous=FULL` 트랜잭션. 성공 응답 전에 페어링 코드 소비, 승인, claim, 기기 폐기를 commit한다. 세션 token·requester secret·페어링 code 원문을 저장하거나 로그에 출력하지 않는다.
 - 페어링 코드는 혼동 문자를 제외한 10자리 난수, 3분 수명·1회 사용이다. 코드는 pending 요청만 만들고, 로컬 owner 승인과 원래 요청자의 256bit secret이 모두 있어야 세션을 발급한다. 틀린 코드 추측 5회는 DB에 누적한다.
 - 세션은 30일 절대 만료, WS ticket은 30초 단일 사용이다. 원격 세션은 정확한 origin에 묶이며 원격 주소 변경/비활성화 시 기존 주소의 세션·승인 대기 요청을 영속 폐기한다. 기기 폐기와 로그아웃은 연결 및 core 제어권을 즉시 해제한다. core는 작업 큐 실행 시점에도 연결을 다시 검사한다.
@@ -33,8 +33,11 @@ API와 정적 응답은 `no-store` 및 기본 CSP를 제공한다. 터미널 화
 | 주소 변경 | HTTPS Secure 쿠키 및 origin 귀속, 이전 주소 비활성화 시 기존 세션/승인 폐기 |
 | 정적 제공 | webRoot 밖 접근·encoded traversal 차단, API no-store |
 | 한도/비정상 입력 | 16KiB 초과 HTTP 413, 128KiB 초과 WS 차단·core 1회 해제, 비정상 JSON/바이너리/owner 위조 필드 차단, 요청 홍수 및 11번째 분당 페어링 생성 제한 |
+| 원격 기기 승인 (2026-10-09) | 승인된 기기의 코드 생성·조회·승인·거절, 다른 origin 요청 조회·결정 차단, 승인 기기 기록·이전 DB 열 추가, `devices.*`·`remote.*`·`pairing.status` 계속 차단, core 미전달 |
 
 검증 파일: `tests/security/auth-store.test.ts`, `tests/security/gateway.test.ts`. 관련 파일의 strict TypeScript 검사도 통과했다.
+
+2026-10-09 원격 기기 승인 추가 후 `node --import tsx --test --test-concurrency=1 tests/security/gateway.test.ts tests/security/auth-store.test.ts` 24/24 통과(신규 4개 포함).
 
 ## 남은 실기 검증 및 경계
 

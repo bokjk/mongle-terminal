@@ -15,11 +15,13 @@ export interface AuthSession {
   deviceId: string; name: string; createdAt: number; expiresAt: number; origin: string; csrf: string;
 }
 interface PairingRow {
-  id: string; secret_hash: string; name: string; origin: string; status: string; created_at: number; expires_at: number;
+  id: string; secret_hash: string; name: string; origin: string; status: string; created_at: number; expires_at: number; approved_by: string | null;
 }
 interface SessionRow {
-  id: string; name: string; token_hash: string; csrf: string; origin: string; created_at: number; expires_at: number; revoked: number;
+  id: string; name: string; token_hash: string; csrf: string; origin: string; created_at: number; expires_at: number; revoked: number; approved_by: string | null;
 }
+/** A paired device that approves another request through its own remote address. */
+export interface PairingApprover { name: string; origin: string }
 
 /** Authentication writes are synchronous FULL-durability transactions, independent of layout writes. */
 export class AuthStore {
@@ -32,9 +34,14 @@ export class AuthStore {
       PRAGMA busy_timeout=5000;
       CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS codes (hash TEXT PRIMARY KEY, expires_at INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, consumed INTEGER NOT NULL DEFAULT 0);
-      CREATE TABLE IF NOT EXISTS pairings (id TEXT PRIMARY KEY, secret_hash TEXT NOT NULL, name TEXT NOT NULL, origin TEXT NOT NULL, status TEXT NOT NULL, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL);
-      CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE, csrf TEXT NOT NULL, name TEXT NOT NULL, origin TEXT NOT NULL, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, revoked INTEGER NOT NULL DEFAULT 0);
+      CREATE TABLE IF NOT EXISTS pairings (id TEXT PRIMARY KEY, secret_hash TEXT NOT NULL, name TEXT NOT NULL, origin TEXT NOT NULL, status TEXT NOT NULL, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, approved_by TEXT);
+      CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE, csrf TEXT NOT NULL, name TEXT NOT NULL, origin TEXT NOT NULL, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, revoked INTEGER NOT NULL DEFAULT 0, approved_by TEXT);
     `);
+    // Databases from earlier versions lack the approver column. Older hosts ignore it after a downgrade.
+    for (const table of ['pairings', 'sessions']) {
+      const columns = this.db.prepare(`PRAGMA table_info(${table})`).all() as unknown as {name: string}[];
+      if (!columns.some(column => column.name === 'approved_by')) this.db.exec(`ALTER TABLE ${table} ADD COLUMN approved_by TEXT`);
+    }
   }
   private transaction<T>(run: () => T): T {
     this.db.exec('BEGIN IMMEDIATE');
@@ -96,25 +103,32 @@ export class AuthStore {
     const row = this.pairing(requestId, requesterSecret, origin);
     return {status: row.expires_at <= this.now() ? 'expired' : row.status, expiresAt: row.expires_at};
   }
-  listPairings() {
-    const rows = this.db.prepare('SELECT id,name,status,created_at,expires_at FROM pairings WHERE expires_at>? ORDER BY created_at DESC LIMIT 100').all(this.now() - PAIRING_MS) as unknown as PairingRow[];
+  /** The PC sees every request. A paired device passes its own origin and sees only requests made through that address. */
+  listPairings(origin?: string) {
+    const rows = (origin === undefined
+      ? this.db.prepare('SELECT id,name,status,created_at,expires_at FROM pairings WHERE expires_at>? ORDER BY created_at DESC LIMIT 100').all(this.now() - PAIRING_MS)
+      : this.db.prepare('SELECT id,name,status,created_at,expires_at FROM pairings WHERE expires_at>? AND origin=? ORDER BY created_at DESC LIMIT 100').all(this.now() - PAIRING_MS, origin)) as unknown as PairingRow[];
     return rows.map(row => ({requestId: row.id, name: row.name, status: row.expires_at <= this.now() ? 'expired' : row.status, createdAt: row.created_at, expiresAt: row.expires_at}));
   }
-  decidePairing(requestId: string, approved: boolean) {
+  /** Without an approver the PC decides. A paired device may decide only a request made through its own origin and is recorded as the approver. */
+  decidePairing(requestId: string, approved: boolean, approver?: PairingApprover) {
     this.transaction(() => {
-      const result = this.db.prepare("UPDATE pairings SET status=? WHERE id=? AND status='pending' AND expires_at>?").run(approved ? 'approved' : 'rejected', requestId, this.now());
+      const status = approved ? 'approved' : 'rejected';
+      const result = approver
+        ? this.db.prepare("UPDATE pairings SET status=?, approved_by=? WHERE id=? AND status='pending' AND expires_at>? AND origin=?").run(status, approved ? approver.name : null, requestId, this.now(), approver.origin)
+        : this.db.prepare("UPDATE pairings SET status=? WHERE id=? AND status='pending' AND expires_at>?").run(status, requestId, this.now());
       if (!result.changes) throw new AppError('INVALID_PAIRING', '승인할 수 있는 연결 요청이 없습니다.');
     });
   }
   claimPairing(requestId: string, requesterSecret: string, origin: string): {token: string; session: AuthSession} {
     return this.transaction(() => {
       const row = this.pairing(requestId, requesterSecret, origin);
-      if (row.status !== 'approved' || row.expires_at <= this.now()) throw new AppError('PAIRING_NOT_APPROVED', 'PC에서 연결을 승인한 뒤 다시 시도해 주세요.');
+      if (row.status !== 'approved' || row.expires_at <= this.now()) throw new AppError('PAIRING_NOT_APPROVED', '연결이 승인된 뒤 다시 시도해 주세요.');
       const count = this.db.prepare('SELECT count(*) AS n FROM sessions WHERE revoked=0 AND expires_at>?').get(this.now()) as {n:number};
       if (count.n >= 100) throw new AppError('DEVICE_LIMIT', '연결 기기 수가 많습니다. 사용하지 않는 기기를 해제해 주세요.');
       const token = secret(), deviceId = randomUUID(), csrf = secret(), createdAt = this.now(), expiresAt = createdAt + SESSION_MS;
-      this.db.prepare('INSERT INTO sessions(id,token_hash,csrf,name,origin,created_at,expires_at) VALUES(?,?,?,?,?,?,?)')
-        .run(deviceId, digest(token), csrf, row.name, origin, createdAt, expiresAt);
+      this.db.prepare('INSERT INTO sessions(id,token_hash,csrf,name,origin,created_at,expires_at,approved_by) VALUES(?,?,?,?,?,?,?,?)')
+        .run(deviceId, digest(token), csrf, row.name, origin, createdAt, expiresAt, row.approved_by ?? null);
       this.db.prepare("UPDATE pairings SET status='claimed' WHERE id=?").run(requestId);
       return {token, session: {deviceId, name: row.name, createdAt, expiresAt, origin, csrf}};
     });
@@ -128,8 +142,8 @@ export class AuthStore {
     return !!this.db.prepare('SELECT id FROM sessions WHERE id=? AND origin=? AND revoked=0 AND expires_at>?').get(deviceId, origin, this.now());
   }
   listDevices() {
-    const rows = this.db.prepare('SELECT id,name,origin,created_at,expires_at,revoked FROM sessions ORDER BY CASE WHEN revoked=0 AND expires_at>? THEN 0 ELSE 1 END, created_at DESC LIMIT 200').all(this.now()) as unknown as SessionRow[];
-    return rows.map(row => ({deviceId: row.id, name: row.name, origin: row.origin, createdAt: row.created_at, expiresAt: row.expires_at, revoked: !!row.revoked || row.expires_at <= this.now()}));
+    const rows = this.db.prepare('SELECT id,name,origin,created_at,expires_at,revoked,approved_by FROM sessions ORDER BY CASE WHEN revoked=0 AND expires_at>? THEN 0 ELSE 1 END, created_at DESC LIMIT 200').all(this.now()) as unknown as SessionRow[];
+    return rows.map(row => ({deviceId: row.id, name: row.name, origin: row.origin, createdAt: row.created_at, expiresAt: row.expires_at, revoked: !!row.revoked || row.expires_at <= this.now(), ...(row.approved_by ? {approvedBy: row.approved_by} : {})}));
   }
   revoke(deviceId: string) {
     this.transaction(() => {

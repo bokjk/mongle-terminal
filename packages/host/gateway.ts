@@ -17,6 +17,9 @@ interface GatewayOptions { core: GatewayCore; dataDir: string; webRoot: string; 
 type Ticket = { deviceId: string; origin: string; expiresAt: number };
 type Peer = { ws: WebSocket; ctx: ConnectionContext; session: AuthSession; connected: boolean; expireTimer?: NodeJS.Timeout; };
 const ownerMethods = new Set(['pairing.create', 'pairing.status', 'pairing.list', 'pairing.approve', 'pairing.reject', 'devices.list', 'devices.revoke', 'remote.configure', 'remote.status']);
+// A paired device can already run shell commands, so it may also let another device in through
+// its own address. Remote access settings and device revocation stay on the PC.
+const deviceApprovalMethods = new Set(['pairing.create', 'pairing.list', 'pairing.approve', 'pairing.reject']);
 const requestIdSchema = z.object({requestId: z.string().uuid()}).strict();
 const pairSecretSchema = requestIdSchema.extend({requesterSecret: z.string().regex(/^[A-Za-z0-9_-]{43}$/)}).strict();
 const deviceSchema = z.object({deviceId: z.string().uuid()}).strict();
@@ -139,6 +142,19 @@ export async function startGateway({core, dataDir, webRoot, port = 0, allowedOri
     if (typeof csrf !== 'string' || !safeEqual(csrf, session.csrf)) throw new AppError('CSRF_FAILED', '요청을 확인할 수 없습니다. 새로 연결해 주세요.');
   };
   const sessionResult = (session: AuthSession) => ({authenticated: true, csrf: session.csrf, deviceName: session.name, hostId: core.getState().hostId});
+  const approveFromDevice = (method: string, params: unknown, session: AuthSession) => {
+    if (!limiter.allow(`approval:${session.deviceId}`, 60)) throw new AppError('RATE_LIMITED', '요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.');
+    if (method === 'pairing.create') {
+      emptySchema.parse(params);
+      if (!limiter.allow(`approval-code:${session.deviceId}`, 10)) throw new AppError('RATE_LIMITED', '연결 코드를 너무 자주 만들었습니다. 잠시 후 다시 시도해 주세요.');
+      return store.createCode();
+    }
+    if (method === 'pairing.list') { emptySchema.parse(params); return {requests: store.listPairings(session.origin)}; }
+    const {requestId} = requestIdSchema.parse(params);
+    store.decidePairing(requestId, method === 'pairing.approve', {name: session.name, origin: session.origin});
+    emitPairings();
+    return {ok: true};
+  };
   const api = async (req: IncomingMessage, res: ServerResponse) => {
     const origin = requestOrigin(req, req.method !== 'GET' && req.method !== 'HEAD');
     const wsOrigin = origin.replace(/^http/, 'ws');
@@ -291,8 +307,12 @@ export async function startGateway({core, dataDir, webRoot, port = 0, allowedOri
           if (!parsed.success) { drop(peer, 4002, 'Invalid request'); return; }
           const {id, method, params} = parsed.data;
           try {
-            if (ownerMethods.has(method) || /^(pairing|pairings|devices|remote|owner|host)\./.test(method)) throw new AppError('FORBIDDEN', '이 작업은 실행 PC에서만 할 수 있습니다.');
-            const result = await core.handle(method, params, ctx);
+            let result: unknown;
+            if (deviceApprovalMethods.has(method)) result = approveFromDevice(method, params, session);
+            else {
+              if (ownerMethods.has(method) || /^(pairing|pairings|devices|remote|owner|host)\./.test(method)) throw new AppError('FORBIDDEN', '이 작업은 실행 PC에서만 할 수 있습니다.');
+              result = await core.handle(method, params, ctx);
+            }
             send({type:'response', id, ok:true, result});
           } catch (error) { send({type:'response', id, ok:false, error:errorResult(error)}); }
         } catch { drop(peer, 1011, 'Request failed'); }
