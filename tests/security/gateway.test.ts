@@ -80,7 +80,7 @@ class SocketProbe {
   destroy() { this.socket.terminate(); }
 }
 
-async function fixture() {
+async function fixture(options: { computers?: (refresh: boolean) => Promise<unknown> } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'mongle-security-'));
   const dataDir = join(root, 'state');
   const webRoot = join(root, 'web');
@@ -88,7 +88,7 @@ async function fixture() {
   await writeFile(join(webRoot, 'index.html'), '<!doctype html><title>Mongle security fixture</title>');
   await writeFile(join(root, 'private-secret.txt'), 'MONGLE_OUTSIDE_WEBROOT_SECRET');
   const core = mockCore();
-  let gateway: Gateway = await startGateway({ core: core as any, dataDir, webRoot, port: 0 });
+  let gateway: Gateway = await startGateway({ core: core as any, dataDir, webRoot, port: 0, computers: options.computers });
   const sockets: SocketProbe[] = [];
   const origin = () => `http://127.0.0.1:${gateway.port}`;
   async function request(method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<JsonResponse> {
@@ -144,7 +144,7 @@ async function fixture() {
     async restart() {
       const port = gateway.port;
       await gateway.close();
-      gateway = await startGateway({ core: core as any, dataDir, webRoot, port });
+      gateway = await startGateway({ core: core as any, dataDir, webRoot, port, computers: options.computers });
     },
     async close() {
       for (const socket of sockets) socket.destroy();
@@ -337,6 +337,46 @@ test('a paired device issues codes and decides requests, while device and remote
     assert.equal(f.core.calls.length, 0, 'Approval requests are answered by the gateway and never reach core');
     assert.equal((await f.gateway.ownerRequest('devices.list', {})).devices.length, 2);
   } finally { await f.close(); }
+});
+
+test('a paired device lists other Mongle PCs while its other requests keep flowing', async () => {
+  const refreshes: boolean[] = [];
+  let release: (() => void) | undefined;
+  const found = {computers: [{name: 'office-pc', origin: 'https://office-pc.tail1234.ts.net'}], available: true, checkedAt: 1};
+  const f = await fixture({computers: refresh => {
+    refreshes.push(refresh);
+    // The first scan waits on the network like a real one; later calls answer from the cache.
+    return refreshes.length === 1 ? new Promise(resolve => { release = () => resolve(found); }) : Promise.resolve(found);
+  }});
+  try {
+    const call = await approver(f, await f.paired('My phone'));
+    const listing = call('computers.list', {refresh: true});
+    const deadline = Date.now() + 2000;
+    while (!release) { assert.ok(Date.now() < deadline, 'Discovery was not started'); await new Promise(resolve => setTimeout(resolve, 10)); }
+    const other = await call('pairing.list');
+    assert.equal(other.ok, true, 'Requests on the same connection are answered while a scan is waiting');
+    release();
+    const listed = await listing;
+    assert.equal(listed.ok, true, JSON.stringify(listed));
+    assert.deepEqual(listed.result, found);
+    assert.deepEqual(refreshes, [true]);
+    assert.equal(f.core.calls.length, 0, 'The gateway answers discovery; it never reaches core');
+    const invalid = await call('computers.list', {refresh: 'yes', target: 'https://attacker.example'});
+    assert.equal(invalid.ok, false);
+    assert.equal(invalid.error.code, 'INVALID_REQUEST', 'A device cannot choose what the host contacts');
+    for (let index = 1; index < 30; index++) assert.equal((await call('computers.list')).ok, true);
+    const limited = await call('computers.list');
+    assert.equal(limited.ok, false);
+    assert.equal(limited.error.code, 'RATE_LIMITED', 'Each device may list computers 30 times a minute');
+  } finally { await f.close(); }
+  const plain = await fixture();
+  try {
+    const call = await approver(plain, await plain.paired('My phone'));
+    const reply = await call('computers.list');
+    assert.equal(reply.ok, true);
+    assert.equal(reply.result.available, false, 'A gateway without discovery reports that it cannot search');
+    assert.deepEqual(reply.result.computers, []);
+  } finally { await plain.close(); }
 });
 
 test('a paired device cannot see or decide pairing requests made through another address', async () => {

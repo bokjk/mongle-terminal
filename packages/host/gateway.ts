@@ -13,7 +13,11 @@ interface GatewayCore {
   disconnect(id: string): void;
   handle(method: string, params: unknown, ctx: ConnectionContext): Promise<any>;
 }
-interface GatewayOptions { core: GatewayCore; dataDir: string; webRoot: string; port?: number; allowedOrigin?: string; }
+interface GatewayOptions {
+  core: GatewayCore; dataDir: string; webRoot: string; port?: number; allowedOrigin?: string;
+  /** Lists other Mongle PCs in this tailnet for paired devices (computers.ts). */
+  computers?: (refresh: boolean) => Promise<unknown>;
+}
 type Ticket = { deviceId: string; origin: string; expiresAt: number };
 type Peer = { ws: WebSocket; ctx: ConnectionContext; session: AuthSession; connected: boolean; expireTimer?: NodeJS.Timeout; };
 const ownerMethods = new Set(['pairing.create', 'pairing.status', 'pairing.list', 'pairing.approve', 'pairing.reject', 'devices.list', 'devices.revoke', 'remote.configure', 'remote.status']);
@@ -24,6 +28,7 @@ const requestIdSchema = z.object({requestId: z.string().uuid()}).strict();
 const pairSecretSchema = requestIdSchema.extend({requesterSecret: z.string().regex(/^[A-Za-z0-9_-]{43}$/)}).strict();
 const deviceSchema = z.object({deviceId: z.string().uuid()}).strict();
 const emptySchema = z.object({}).strict();
+const computersSchema = z.object({refresh: z.boolean().optional()}).strict();
 
 export function normalizeRemoteOrigin(value: string): string {
   let url: URL;
@@ -90,7 +95,7 @@ function readJson(req: IncomingMessage): Promise<unknown> {
   });
 }
 
-export async function startGateway({core, dataDir, webRoot, port = 0, allowedOrigin}: GatewayOptions) {
+export async function startGateway({core, dataDir, webRoot, port = 0, allowedOrigin, computers}: GatewayOptions) {
   await mkdir(dataDir, {recursive: true});
   const store = new AuthStore(resolve(dataDir, 'auth.sqlite'));
   try { if (allowedOrigin) store.setOrigin(normalizeRemoteOrigin(allowedOrigin)); }
@@ -309,6 +314,14 @@ export async function startGateway({core, dataDir, webRoot, port = 0, allowedOri
           const {id, method, params} = parsed.data;
           try {
             let result: unknown;
+            if (method === 'computers.list') {
+              const {refresh = false} = computersSchema.parse(params ?? {});
+              if (!limiter.allow(`computers:${session.deviceId}`, 30)) throw new AppError('RATE_LIMITED', '컴퓨터 목록을 너무 자주 확인했습니다. 잠시 후 다시 시도해 주세요.');
+              // A scan waits on the network for seconds. Answer later so terminal input on this socket keeps flowing.
+              const listed = computers ? Promise.resolve().then(() => computers(refresh)) : Promise.resolve({computers: [], available: false, message: '이 컴퓨터에서는 다른 컴퓨터를 찾을 수 없습니다.', checkedAt: Date.now()});
+              void listed.then(value => send({type:'response', id, ok:true, result:value}), error => send({type:'response', id, ok:false, error:errorResult(error)}));
+              return;
+            }
             if (deviceApprovalMethods.has(method)) result = approveFromDevice(method, params, session);
             else {
               if (ownerMethods.has(method) || /^(pairing|pairings|devices|remote|owner|host)\./.test(method)) throw new AppError('FORBIDDEN', '이 작업은 실행 PC에서만 할 수 있습니다.');
