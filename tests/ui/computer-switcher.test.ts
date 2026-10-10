@@ -180,6 +180,17 @@ test('a phone switches to another computer from the menu, adds addresses and exp
     await page.screenshot({path: `${screenshots}/phone-light-320.png`});
     await dialog.getByRole('button', {name: 'lab-pc 열기'}).click();
     assert.deepEqual(await page.evaluate('window.navigations'), ['https://lab-pc.tail1234.ts.net/'], 'A saved address survives reloads and opens even before this PC connects');
+
+    // Deleting the last row while the add form is open keeps focus inside the dialog.
+    await page.evaluate(key => localStorage.setItem(key, JSON.stringify([{name: '단독 PC', origin: 'https://solo-pc.tail1234.ts.net'}])), SAVED_COMPUTERS_KEY);
+    await page.reload();
+    await page.evaluate('window.render(false)');
+    await trigger.click();
+    await dialog.getByRole('button', {name: '주소로 추가'}).click();
+    await dialog.getByRole('button', {name: '단독 PC 주소 삭제'}).click();
+    await expect(dialog.getByLabel('이름(선택)')).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(dialog).toHaveCount(0, {timeout: 1000});
     assert.deepEqual(pageErrors, []);
   } finally {
     await browser.close();

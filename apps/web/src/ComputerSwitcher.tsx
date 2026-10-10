@@ -53,7 +53,9 @@ export function ComputerSwitcher({client, name, connected, navigate = url => win
   useEffect(() => {
     if (!focusNext) return;
     const row = Array.from(body.current?.querySelectorAll<HTMLElement>('[data-origin]') ?? []).find(element => element.dataset.origin === focusNext);
-    (row ?? addButton.current)?.focus();
+    // With the add form open there is no add button; fall back to the form, then to any control in the dialog.
+    const fallback = body.current?.querySelector<HTMLElement>('.computer-add input') ?? body.current?.querySelector<HTMLElement>('input:not([disabled]), button:not([disabled])');
+    (row ?? addButton.current ?? fallback)?.focus();
     setFocusNext(undefined);
   }, [focusNext]);
   function close() { sequence.current++; setOpen(false); setAdding(false); setFormError(''); setLeaving(''); }
