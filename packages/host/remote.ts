@@ -8,6 +8,19 @@ type ManagedEndpoint = { origin:string; dnsName:string; httpsPort:number; proxy:
 const validPort = (port:unknown):port is number => Number.isInteger(port) && Number(port)>0 && Number(port)<65536;
 const validDns = (name:unknown):name is string => typeof name==='string' && /^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+ts\.net$/i.test(name);
 const originFor = (dnsName:string, port:number) => `https://${dnsName}${port===443?'':`:${port}`}`;
+async function tailscaleExecutable() { const executable=path.join(process.env.ProgramFiles ?? 'C:\\Program Files','Tailscale','tailscale.exe'); try {await access(executable);return executable;}catch{throw new AppError('TAILSCALE_MISSING','Tailscale을 설치한 뒤 네트워크에 연결해 주세요.');} }
+/** Run the installed Tailscale CLI and turn its failures into messages a user can act on. */
+export async function runTailscale(args:string[]) {
+  try {const {stdout}=await exec(await tailscaleExecutable(),args,{windowsHide:true,timeout:20_000,maxBuffer:2*1024*1024});return stdout;}
+  catch(error) {
+    if(error instanceof AppError)throw error;
+    const detail=error as {stdout?:string;stderr?:string};
+    const output=`${detail.stdout??''}\n${detail.stderr??''}`;
+    if(/login\.tailscale\.com\/f\/serve|serve is not enabled|enable.*https|https.*not enabled/i.test(output))throw new AppError('TAILSCALE_SETUP_REQUIRED','Tailscale 네트워크의 HTTPS·Serve 사용 승인이 필요합니다. Tailscale 관리 화면에서 활성화한 뒤 다시 시도해 주세요.');
+    if(/access is denied|permission denied/i.test(output))throw new AppError('TAILSCALE_PERMISSION','현재 Windows 사용자로 Tailscale에 접근할 수 없습니다. Tailscale 앱의 연결 및 사용자 권한을 확인해 주세요.');
+    throw new AppError('TAILSCALE_COMMAND','Tailscale에서 작업을 완료하지 못했습니다. Tailscale 연결과 HTTPS 사용 설정을 확인해 주세요.');
+  }
+}
 export class RemoteSetup {
   private pending:Promise<unknown> = Promise.resolve();
   constructor(private dataDir:string, private port:number, private configure:(origin:string|null)=>Promise<unknown>) {}
@@ -18,18 +31,7 @@ export class RemoteSetup {
     this.pending=pending.catch(()=>{});
     return pending;
   }
-  private async executable() { const executable=path.join(process.env.ProgramFiles ?? 'C:\\Program Files','Tailscale','tailscale.exe'); try {await access(executable);return executable;}catch{throw new AppError('TAILSCALE_MISSING','Tailscale을 설치한 뒤 네트워크에 연결해 주세요.');} }
-  private async run(args:string[]) {
-    try {const {stdout}=await exec(await this.executable(),args,{windowsHide:true,timeout:20_000,maxBuffer:2*1024*1024});return stdout;}
-    catch(error) {
-      if(error instanceof AppError)throw error;
-      const detail=error as {stdout?:string;stderr?:string};
-      const output=`${detail.stdout??''}\n${detail.stderr??''}`;
-      if(/login\.tailscale\.com\/f\/serve|serve is not enabled|enable.*https|https.*not enabled/i.test(output))throw new AppError('TAILSCALE_SETUP_REQUIRED','Tailscale 네트워크의 HTTPS·Serve 사용 승인이 필요합니다. Tailscale 관리 화면에서 활성화한 뒤 다시 시도해 주세요.');
-      if(/access is denied|permission denied/i.test(output))throw new AppError('TAILSCALE_PERMISSION','현재 Windows 사용자로 Tailscale에 접근할 수 없습니다. Tailscale 앱의 연결 및 사용자 권한을 확인해 주세요.');
-      throw new AppError('TAILSCALE_COMMAND','Tailscale에서 작업을 완료하지 못했습니다. Tailscale 연결과 HTTPS 사용 설정을 확인해 주세요.');
-    }
-  }
+  private run(args:string[]) { return runTailscale(args); }
   private async managed():Promise<ManagedEndpoint|null> {
     let source:string;
     try { source=await readFile(this.file,'utf8'); }
