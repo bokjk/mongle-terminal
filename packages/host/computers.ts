@@ -123,7 +123,8 @@ export class ComputerDiscovery {
         }
       }
     };
-    await Promise.all(Array.from({length: Math.min(this.options.concurrency ?? 8, queue.length)}, worker));
+    // Reading status (5 s in main.ts) plus at most two rounds of 16 PCs (2 × 2.5 s) answers within the browser's 15 s request limit.
+    await Promise.all(Array.from({length: Math.min(this.options.concurrency ?? 16, queue.length)}, worker));
     const self = this.options.selfHostId?.()?.toLowerCase(), seen = new Set<string>();
     const computers = found
       .filter(item => item.hostId !== self && !seen.has(item.hostId) && Boolean(seen.add(item.hostId)))

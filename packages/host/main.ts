@@ -93,7 +93,7 @@ try {
   let port=values.port?Number(values.port):0;
   if(!values.port) {try {const stored=JSON.parse(await readFile(path.join(dataDir,'gateway-port.json'),'utf8'));if(Number.isInteger(stored.port)&&stored.port>1024&&stored.port<65536)port=stored.port;}catch{}}
   // Paired devices may list other Mongle PCs in this tailnet. This only reads Tailscale status and their public health records.
-  const discovery = new ComputerDiscovery({status:async()=>JSON.parse(await runTailscale(['status','--json'])),selfHostId:()=>core?.getState().hostId});
+  const discovery = new ComputerDiscovery({status:async()=>JSON.parse(await runTailscale(['status','--json'],5_000)),selfHostId:()=>core?.getState().hostId});
   gateway = await startGateway({core,dataDir,webRoot,port,computers:refresh=>discovery.list(refresh)});
   await writeFile(path.join(dataDir,'gateway-port.json'),JSON.stringify({port:gateway.port}));
   remote = new RemoteSetup(dataDir,gateway.port,origin=>gateway!.ownerRequest('remote.configure',{origin}));

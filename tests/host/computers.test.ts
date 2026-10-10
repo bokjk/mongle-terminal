@@ -62,6 +62,16 @@ test('discovery keeps the first Mongle port, hides this host, shares a scan and 
   assert.equal(scans, 3);
 });
 
+test('a large tailnet is scanned 16 PCs at a time so the reply arrives within the browser request limit', async () => {
+  let active = 0, peak = 0;
+  const discovery = new ComputerDiscovery({
+    status: async () => status(Array.from({length: 40}, (_, index) => peer(`pc-${String(index).padStart(2, '0')}`))),
+    probe: async () => { active++; peak = Math.max(peak, active); await new Promise(resolve => setTimeout(resolve, 5)); active--; return undefined; },
+  });
+  assert.deepEqual((await discovery.list()).computers, []);
+  assert.equal(peak, 16 * MONGLE_SERVE_PORTS.length, 'At most two rounds of probes for the 32 PCs that are contacted');
+});
+
 test('a missing, stopped or failing Tailscale is reported without contacting any PC', async () => {
   const probe = async () => { throw new Error('No PC may be contacted'); };
   const missing = await new ComputerDiscovery({status: async () => { throw new AppError('TAILSCALE_MISSING', 'Tailscale을 설치한 뒤 네트워크에 연결해 주세요.'); }, probe}).list();

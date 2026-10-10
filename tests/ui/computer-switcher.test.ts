@@ -54,7 +54,7 @@ test('a phone switches to another computer from the menu, adds addresses and exp
     const client={request:(method,params)=>{
       window.calls.push({method,params});
       if(method!=='computers.list')return Promise.reject(Error('Unexpected RPC: '+method));
-      return new Promise((resolve,reject)=>setTimeout(()=>window.fail?reject(Error(window.fail)):resolve(window.reply),window.delay));
+      return new Promise((resolve,reject)=>setTimeout(()=>{if(!window.fail)return resolve(window.reply);const error=Error(window.fail);if(window.failCode)error.code=window.failCode;reject(error);},window.delay));
     }};
     const root=createRoot(document.getElementById('root'));
     window.render=(connected=true,theme='dark')=>{document.documentElement.dataset.theme=theme;root.render(<aside className="sidebar open" style={{width:240}}><ComputerSwitcher client={client} name="집 PC" connected={connected} navigate={url=>window.navigations.push(url)}/></aside>);};
@@ -121,11 +121,15 @@ test('a phone switches to another computer from the menu, adds addresses and exp
     await dialog.getByLabel('몽글 접속 주소').fill('office-pc.tail1234.ts.net:8443');
     await dialog.getByRole('button', {name: '추가', exact: true}).click();
     await expect(dialog.getByRole('button', {name: '회사 PC 열기'})).toContainText('직접 추가 · office-pc.tail1234.ts.net:8443');
+    await expect(dialog.getByRole('button', {name: '회사 PC 열기'})).toBeFocused();
     assert.equal(await dialog.getByRole('button', {name: 'office-pc 열기'}).count(), 0, 'The saved name replaces the found name for the same address');
     await dialog.getByRole('button', {name: '주소로 추가'}).click();
     await dialog.getByLabel('몽글 접속 주소').fill('https://lab-pc.tail1234.ts.net/');
     await dialog.getByRole('button', {name: '추가', exact: true}).click();
-    await expect(dialog.getByRole('button', {name: 'lab-pc 열기'})).toBeVisible();
+    await expect(dialog.getByRole('button', {name: 'lab-pc 열기'})).toBeFocused();
+    await dialog.getByRole('button', {name: '주소로 추가'}).click();
+    await dialog.getByRole('button', {name: '취소'}).click();
+    await expect(dialog.getByRole('button', {name: '주소로 추가'})).toBeFocused();
     for (const remove of await dialog.getByRole('button', {name: /주소 삭제$/}).all()) {
       const box = (await remove.boundingBox())!;
       assert.ok(box.width >= 44 && box.height >= 44, 'Delete buttons are easy to tap');
@@ -133,7 +137,12 @@ test('a phone switches to another computer from the menu, adds addresses and exp
     await fits(390);
     await page.screenshot({path: `${screenshots}/phone-saved-390.png`});
     await dialog.getByRole('button', {name: '회사 PC 주소 삭제'}).click();
-    await expect(dialog.getByRole('button', {name: 'office-pc 열기'})).toBeVisible();
+    await expect(dialog.getByRole('button', {name: 'office-pc 열기'})).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(dialog).toHaveCount(0, {timeout: 1000});
+    await expect(trigger).toBeFocused();
+    await trigger.click();
+    await expect(status).toHaveText('다른 몽글 PC 2대를 찾았습니다.');
     assert.deepEqual(JSON.parse(await page.evaluate(`localStorage.getItem('${SAVED_COMPUTERS_KEY}')`) as string), [{name: 'lab-pc', origin: 'https://lab-pc.tail1234.ts.net'}]);
 
     await dialog.getByRole('button', {name: '다시 찾기'}).click();
@@ -149,6 +158,16 @@ test('a phone switches to another computer from the menu, adds addresses and exp
     await page.evaluate("window.fail='요청을 완료하지 못했습니다.'");
     await dialog.getByRole('button', {name: '다시 찾기'}).click();
     await expect(status).toHaveText('요청을 완료하지 못했습니다.');
+    await page.evaluate("window.failCode='TIMEOUT'; window.fail='응답을 기다리는 시간이 초과되었습니다. 입력은 자동으로 다시 보내지 않습니다.'");
+    await dialog.getByRole('button', {name: '다시 찾기'}).click();
+    await expect(status).toHaveText('다른 PC를 찾는 데 시간이 오래 걸렸습니다. 잠시 뒤 다시 찾기를 눌러 주세요.');
+    await dialog.getByRole('button', {name: '주소로 추가'}).click();
+    await dialog.getByLabel('몽글 접속 주소').fill('temp-pc.tail1234.ts.net');
+    await dialog.getByRole('button', {name: '추가', exact: true}).click();
+    await dialog.getByRole('button', {name: 'temp-pc 주소 삭제'}).click();
+    await expect(dialog.getByRole('button', {name: 'lab-pc 열기'})).toBeFocused();
+    await page.keyboard.press('Tab');
+    assert.equal(await page.evaluate(() => Boolean(document.activeElement?.closest('[role=dialog]'))), true, 'Tab stays inside the dialog after a row is removed');
 
     await page.reload();
     await page.evaluate("window.calls=[]; window.render(false, 'light')");

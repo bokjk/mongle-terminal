@@ -38,7 +38,7 @@ API와 정적 응답은 `no-store` 및 기본 CSP를 제공한다. 터미널 화
 
 검증 파일: `tests/security/auth-store.test.ts`, `tests/security/gateway.test.ts`. 관련 파일의 strict TypeScript 검사도 통과했다.
 
-2026-10-09 원격 기기 승인 추가 후 `node --import tsx --test --test-concurrency=1 tests/security/gateway.test.ts tests/security/auth-store.test.ts` 24/24 통과(신규 4개 포함). 2026-10-10 독립 코드 검토 지적을 고친 뒤 25/25 통과(발급자별 코드 시험 1개 추가, 이전 DB 시험에 코드 발급자 열 추가 확인, 게이트웨이 시험에 PC 코드 유지와 응답 시각 확인). 2026-10-10 다른 몽글 PC 찾기 추가 후 26/26 통과(신규 1개). 찾기 규칙은 `tests/host/computers.test.ts` 4/4로 따로 확인했다(같은 사용자의 온라인 Windows 기기만 대상, 포트 순서·자기 자신 제외·캐시, Tailscale 오류 메시지, 몽글 health 형식·Host 헤더·자격 증명 없음·시간 제한).
+2026-10-09 원격 기기 승인 추가 후 `node --import tsx --test --test-concurrency=1 tests/security/gateway.test.ts tests/security/auth-store.test.ts` 24/24 통과(신규 4개 포함). 2026-10-10 독립 코드 검토 지적을 고친 뒤 25/25 통과(발급자별 코드 시험 1개 추가, 이전 DB 시험에 코드 발급자 열 추가 확인, 게이트웨이 시험에 PC 코드 유지와 응답 시각 확인). 2026-10-10 다른 몽글 PC 찾기 추가 후 26/26 통과(신규 1개). 찾기 규칙은 `tests/host/computers.test.ts` 5/5로 따로 확인했다(16대씩 동시 확인, 같은 사용자의 온라인 Windows 기기만 대상, 포트 순서·자기 자신 제외·캐시, Tailscale 오류 메시지, 몽글 health 형식·Host 헤더·자격 증명 없음·시간 제한).
 
 ## 남은 실기 검증 및 경계
 

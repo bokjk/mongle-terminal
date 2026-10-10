@@ -10,8 +10,8 @@ const validDns = (name:unknown):name is string => typeof name==='string' && /^(?
 const originFor = (dnsName:string, port:number) => `https://${dnsName}${port===443?'':`:${port}`}`;
 async function tailscaleExecutable() { const executable=path.join(process.env.ProgramFiles ?? 'C:\\Program Files','Tailscale','tailscale.exe'); try {await access(executable);return executable;}catch{throw new AppError('TAILSCALE_MISSING','Tailscale을 설치한 뒤 네트워크에 연결해 주세요.');} }
 /** Run the installed Tailscale CLI and turn its failures into messages a user can act on. */
-export async function runTailscale(args:string[]) {
-  try {const {stdout}=await exec(await tailscaleExecutable(),args,{windowsHide:true,timeout:20_000,maxBuffer:2*1024*1024});return stdout;}
+export async function runTailscale(args:string[], timeout=20_000) {
+  try {const {stdout}=await exec(await tailscaleExecutable(),args,{windowsHide:true,timeout,maxBuffer:2*1024*1024});return stdout;}
   catch(error) {
     if(error instanceof AppError)throw error;
     const detail=error as {stdout?:string;stderr?:string};
