@@ -425,6 +425,21 @@ button.pane-title { background: transparent; border: 0; text-align: left; paddin
 .panel-list .device-row { width: 100%; flex-wrap: nowrap; background: transparent; text-align: left; border: 0; border-bottom: 1px solid var(--border-subtle); }
 .panel-list .device-row > svg { flex-shrink: 0; }
 .panel-list .device-info { flex-basis: 0; overflow-wrap: anywhere; }
+.computer-switcher { padding-top: 8px; }
+.panel-list .computer-current > svg { flex-shrink: 0; color: var(--accent-strong); }
+.computer-row { display: flex; align-items: center; gap: 4px; border-bottom: 1px solid var(--border-subtle); }
+.panel-list .computer-row > .device-row { flex: 1; width: auto; min-width: 0; border-bottom: 0; color: var(--text); cursor: pointer; }
+.panel-list .computer-row > .device-row[aria-disabled='true'] { cursor: default; opacity: .55; }
+.computer-row > .device-row > svg:last-child { flex-shrink: 0; color: var(--text-muted); }
+.computer-row > .icon-button { width: 44px; height: 44px; min-height: 44px; }
+.computer-status { display: flex; align-items: flex-start; gap: 7px; margin: 14px 0 4px; }
+.computer-status > svg { flex-shrink: 0; margin-top: 4px; }
+.computer-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.computer-add { margin-top: 12px; padding-top: 16px; border-top: 1px solid var(--border-subtle); }
+.computer-add .hint { margin: -8px 0 12px; }
+.computer-add-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+.computer-note { margin-top: 16px; }
+@media (max-width: 700px) { .computer-actions .button { min-height: 44px; } .computer-add-actions .button { flex: 1; } }
 .modal > form { display: flex; flex-direction: column; min-height: 0; }
 .modal-body.settings-layout { padding: 0; }
 .settings-content > .hint { margin-top: 20px; }

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { FolderOpen, GitBranch, SquareTerminal, RefreshCw, LoaderCircle } from 'lucide-react';
 import { groupRepositoryIds, leafIds } from '../../../packages/protocol/index';
 import type { Group, HostState, ProjectInspection, Repository, TerminalInfo, Worktree, WorktreeOperation } from '../../../packages/protocol/index';
-import { Modal } from './App';
+import { Modal } from './Modal';
 import { terminalLabel, worktreeName } from './worktree-labels';
 import { WorktreeActions } from './WorktreeActions';
 import { aggregateTerminalStatus, NO_NOTICES, terminalStatus, terminalStatusDescription, TerminalStatusBadge, type TerminalNotices } from './TerminalStatus';
