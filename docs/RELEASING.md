@@ -1,6 +1,6 @@
 # 배포와 자동 업데이트
 
-**0.3.20 배포 준비(2026-10-10):** 휴대폰 브라우저에서 같은 Tailscale의 다른 몽글 PC로 바로 전환하는 기능을 묶는다. 찾기 규칙·보안·화면 시험, 전체 회귀, 마지막 기능 커밋의 개발 PR 검사(Windows 검사 601개 중 586 통과·0 실패·15 생략, 실제 NSIS 업그레이드·복원)는 통과했다. 아스트라의 독립 검토 지적 3건을 고쳤고 마지막 재검토에서는 남은 지적이 없었다. 배포 준비 커밋의 PR 검사, 배포 PR과 최종 태그 검사, 공개 파일 검증은 진행 중이다. 아직 공개하지 않았으며 현재 공개 버전은 0.3.19이다. [검증 기록](validation/public-release-0.3.20.md).
+**0.3.20 공개 배포 완료(2026-10-11):** [공개 릴리스](https://github.com/bokjk/mongle-terminal-releases/releases/tag/v0.3.20). [개발 PR](https://github.com/bokjk/mongle-terminal/actions/runs/38058353171) 586 통과·0 실패·15 생략, [배포 PR](https://github.com/bokjk/mongle-terminal/actions/runs/38059276715) 586 통과·0 실패·15 생략, [최종 태그](https://github.com/bokjk/mongle-terminal/actions/runs/38060102492) 587 통과·0 실패·14 생략. 네이티브 2/2, [실제 NSIS 업데이트·자동 재실행·복원](https://github.com/bokjk/mongle-terminal/actions/runs/38060102492), 최종 설치 payload 일치, 공개 첨부 5개 익명 전체 다운로드·해시, 실제 Electron updater의 0.3.19→0.3.20 다운로드와 동일 버전 최신 상태 확인을 통과했다. 이전 공개 릴리스는 보존했다. [최종 증거](validation/public-release-0.3.20.md#final).
 
 **0.3.19 공개 배포 완료(2026-10-10):** [공개 릴리스](https://github.com/bokjk/mongle-terminal-releases/releases/tag/v0.3.19). [개발 PR](https://github.com/bokjk/mongle-terminal/actions/runs/37972987987) 578 통과·0 실패·15 생략, [배포 PR](https://github.com/bokjk/mongle-terminal/actions/runs/37975660051) 578 통과·0 실패·15 생략, [최종 태그](https://github.com/bokjk/mongle-terminal/actions/runs/37977246026) 579 통과·0 실패·14 생략. 네이티브 2/2, [실제 NSIS 업데이트·자동 재실행·복원](https://github.com/bokjk/mongle-terminal/actions/runs/37977246026), 최종 설치 payload 일치, 공개 첨부 5개 익명 전체 다운로드·해시, 실제 Electron updater의 0.3.18→0.3.19 다운로드와 동일 버전 최신 상태 확인을 통과했다. 이전 공개 릴리스는 보존했다. [최종 증거](validation/public-release-0.3.19.md#final).
 
@@ -60,7 +60,7 @@ Codex 연동은 새 데스크톱 실행부가 `--codex-integration`으로 준비
 
 0.3.10 이전 공개 배포는 **0.3.8**이었다. 설치본의 익명 전체 다운로드·해시 검증 결과는 [0.3.8 검증](validation/public-release-0.3.8.md)에 기록한다. 소스는 2026-10-07 공개로 전환했으며 [배포 전용 공개 저장소](https://github.com/bokjk/mongle-terminal-releases/releases/latest)에 설치 파일과 업데이트 메타데이터를 게시한다. 코드 서명과 프로젝트의 오픈소스 라이선스는 추가하지 않는다. 이전 배포는 [0.3.7 검증](validation/public-release-0.3.7.md), 공개 주소 전환은 [0.3.1 검증](validation/public-release-0.3.1.md)을 확인한다.
 
-0.3.11 파일 편집 변경: 데스크톱에 저장하지 않은 편집 파일 또는 진행 중인 저장 요청이 있으면 앱 종료·완전 종료·업데이트 설치를 먼저 차단한다. 사용자가 편집기에서 저장하거나 탭을 닫아 변경을 버린 뒤 다시 진행해야 한다. 설치 전에는 이 차단 동작과 기존 종료·복원 절차를 함께 검증한다. 이 변경은 최종 태그 산출물을 검증한 뒤 0.3.11에 공개했다. 현재 공개 업데이트 채널은 위의 0.3.19이다.
+0.3.11 파일 편집 변경: 데스크톱에 저장하지 않은 편집 파일 또는 진행 중인 저장 요청이 있으면 앱 종료·완전 종료·업데이트 설치를 먼저 차단한다. 사용자가 편집기에서 저장하거나 탭을 닫아 변경을 버린 뒤 다시 진행해야 한다. 설치 전에는 이 차단 동작과 기존 종료·복원 절차를 함께 검증한다. 이 변경은 최종 태그 산출물을 검증한 뒤 0.3.11에 공개했다. 현재 공개 업데이트 채널은 위의 0.3.20이다.
 
 최종 태그 작업도 같은 NSIS 설치·교체·복원 검사를 수행하며, 설치된 app.asar와 전체 hostbundle의 상대 경로·SHA-256이 패키지 원본과 모두 일치해야 artifact를 보존한다. 최신 7-Zip의 ARM64 필터와 NSIS 압축 해제기의 호환성 문제로 일부 파일이 빠지는 것을 재현했으므로, 패키징에서 호환되는 BCJ 필터를 명시한다. 파일 검사의 예외를 추가하지 않는다.
 
