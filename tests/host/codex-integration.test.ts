@@ -52,8 +52,8 @@ test('installer keeps user hooks (even ones naming our script), writes an unquot
     assert.ok(!managed[0].command.includes('"'), 'Windows hook runner gets an unquoted command');
     assert.ok(managed[0].command.endsWith(` ${script} ${CODEX_HOOK_MARKER}`));
   }
-  assert.deepEqual(Object.keys(current.hooks).sort(), ['SessionEnd', 'SessionStart', 'Stop'], 'a CLI before 0.162.1 gets no turn events');
-  assert.match(result.message, /0\.162\.1/);
+  assert.deepEqual(Object.keys(current.hooks).sort(), ['SessionEnd', 'SessionStart', 'Stop'], 'a CLI before 0.162.0 gets no turn events');
+  assert.match(result.message, /0\.162\.0/);
   assert.equal(await readFile(path.join(home, 'config.toml'), 'utf8'), 'notify = ["user-notify"]\n', 'config.toml (notify, trust) untouched');
   assert.equal(await readFile(script, 'utf8'), CODEX_HOOK_SOURCE);
   const files = await readdir(home);
@@ -63,13 +63,13 @@ test('installer keeps user hooks (even ones naming our script), writes an unquot
   assert.deepEqual(JSON.parse(await readFile(file, 'utf8')), current, 'command text is stable so Codex trust is kept');
 });
 
-test('Codex 0.162.1 also reports its turns: one marked entry per event, session trust kept, removed again for an older CLI', async t => {
+test('Codex 0.162.0 and later also report their turns: one marked entry per event, session trust kept, removed again for an older CLI', async t => {
   const home = await directory(t), file = path.join(home, 'hooks.json'), script = path.join(home, 'mongle-terminal-codex-hook.cjs');
   const userStop = {hooks:[{type:'command', command:'user-stop'}]}, userPost = {matcher:'Bash', hooks:[{type:'command', command:'user-post'}]};
   await writeFile(file, JSON.stringify({hooks:{Stop:[userStop], PostToolUse:[userPost]}}));
   assert.equal((await installCodexIntegration({codexHome:home, version:'0.161.0'})).status, 'installed');
   const sessionOnly = JSON.parse(await readFile(file, 'utf8'));
-  const result = await installCodexIntegration({codexHome:home, version:'0.162.1'});
+  const result = await installCodexIntegration({codexHome:home, version:'0.162.0'});
   assert.equal(result.status, 'installed');
   assert.match(result.message, /작업 상태/);
   const current = JSON.parse(await readFile(file, 'utf8'));

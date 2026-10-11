@@ -15,8 +15,11 @@ const SCRIPT = 'mongle-terminal-codex-hook.cjs';
 const HEADER = '// Mongle Terminal managed Codex hook v1\n';
 /** Minimum CLI version; normal hook trust and exact-session resume verified in docs/validation/agent-session-restore.md. */
 export const MIN_CODEX_VERSION = '0.160.0';
-/** Minimum CLI whose hook schema has every event of a turn, Interrupt included; checked in docs/validation/codex-status.md. */
-export const MIN_CODEX_STATUS_VERSION = '0.162.1';
+/**
+ * Minimum CLI whose hook schema has every event of a turn, Interrupt included. Checked on 0.162.0-alpha.17.2 (the
+ * Codex app's bundled CLI, which the host finds first) and 0.162.1; see docs/validation/codex-status.md.
+ */
+export const MIN_CODEX_STATUS_VERSION = '0.162.0';
 const plain = (value: unknown): value is Record<string, any> => Boolean(value && typeof value === 'object' && !Array.isArray(value));
 const unavailable = (message: string): CodexIntegration => ({status:'unavailable', message});
 

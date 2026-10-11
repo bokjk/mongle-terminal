@@ -68,7 +68,7 @@ WSL·SSH 내부의 Claude, `claude -p` 같은 비대화형 실행, 다른 CLI �
 
 ## Codex 작업 상태 — 미배포
 
-**미배포 기능:** PowerShell 터미널에서 `codex`로 시작한 대화(`codex resume`·`codex fork` 포함)도 Claude와 같은 표시를 씁니다. Codex CLI **0.162.1 이상**이 필요합니다.
+**미배포 기능:** PowerShell 터미널에서 `codex`로 시작한 대화(`codex resume`·`codex fork` 포함)도 Claude와 같은 표시를 씁니다. Codex CLI **0.162.0 이상**이 필요합니다.
 
 | 표시 | Codex에서의 의미 |
 | --- | --- |
