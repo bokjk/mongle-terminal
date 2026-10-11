@@ -9,8 +9,8 @@ export interface UpdateState {
   currentVersion: string;
   availableVersion?: string;
   progress?: number;
-  /** Installation step while status is installing. Steps report real lifecycle events, never a percentage. */
-  phase?: 'confirming' | 'saving' | 'launching';
+  /** Installation step while status is installing. Steps report real lifecycle events, never a percentage. 'checking' looks for a newer release first. */
+  phase?: 'checking' | 'confirming' | 'saving' | 'launching';
   message?: string;
 }
 export interface DesktopBridge extends Transport {

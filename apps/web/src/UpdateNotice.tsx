@@ -46,6 +46,7 @@ export function UpdateNotice({ compact = false, onExpand, onOpenSettings }: { co
       <strong>{label}</strong>
     </div>
     {status === 'downloading' && <progress aria-label="업데이트 다운로드 진행률" max={100} value={value}/>}
+    {status === 'downloading' && state.message && <p className="update-notice-text" role="status">{state.message}</p>}
     {status === 'installing' && <ol className="update-steps" aria-label="업데이트 설치 단계">
       {INSTALL_STEPS.map((step, index) => {
         const current = INSTALL_STEPS.findIndex(item => item.phase === state.phase);

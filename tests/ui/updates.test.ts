@@ -68,6 +68,15 @@ test('update settings preserve newer events, gate repeated actions, show native 
     await page.waitForFunction(`!document.querySelector('button').disabled`);
     assert.equal(await install.isEnabled(), true, 'Cancelling native confirmation keeps update installable');
 
+    // Installing first asks for a newer release; the steps start with that check.
+    await page.evaluate(`window.emit({status:'installing',phase:'checking',currentVersion:'0.1.0',availableVersion:'0.2.0',progress:100,message:'설치하기 전에 더 새로운 버전이 나왔는지 확인하고 있습니다.'});`);
+    const steps = page.getByRole('list', { name: '업데이트 설치 단계' });
+    await steps.waitFor();
+    assert.deepEqual(await steps.getByRole('listitem').allTextContents(), ['최신 버전 확인', '설치 확인', '작업 저장·종료', '설치 프로그램 실행']);
+    assert.equal(await steps.locator('[aria-current="step"]').textContent(), '최신 버전 확인');
+    await page.evaluate(`window.emit({status:'downloading',currentVersion:'0.1.0',availableVersion:'0.3.0',progress:10,message:'더 새로운 0.3.0 버전을 받고 있습니다. 다운로드가 끝나면 이 버전으로 설치를 이어 갑니다.'});`);
+    await page.getByRole('status').filter({ hasText: '더 새로운 0.3.0 버전을 받고 있습니다.' }).waitFor();
+
     await page.evaluate(`window.emit({status:'idle',currentVersion:'0.1.0'});`);
     const check = page.getByRole('button', { name: '업데이트 확인', exact: true });
     await check.click();
