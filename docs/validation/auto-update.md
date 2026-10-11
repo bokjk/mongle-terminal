@@ -88,7 +88,7 @@ Mobbin의 [Progress Indicator](https://mobbin.com/explore/web/ui-elements/progre
 
 ## 늦게 설치해도 최신 버전으로
 
-기준: 2026-10-12, 소스 0.3.20 기반 미배포 변경(브랜치 `feat/phone-notifications`). 사용자 제보: 업데이트를 늦게 하면 한 번에 최신 버전으로 올라가지 않고 여러 번 업데이트해야 했다.
+기준: 2026-10-12, Windows x64, 0.3.21 배포 준비(브랜치 `feat/phone-notifications`). 배포 검사는 [0.3.21 배포 검증](public-release-0.3.21.md)에 기록한다. 사용자 제보: 업데이트를 늦게 하면 한 번에 최신 버전으로 올라가지 않고 여러 번 업데이트해야 했다.
 
 ### 원인
 
