@@ -18,6 +18,7 @@ const bridge: DesktopBridge = {
   close: () => undefined,
   listHosts: () => ipcRenderer.invoke('mongle:hosts'),
   addHost: (host) => ipcRenderer.invoke('mongle:add-host', host),
+  findComputers: (refresh) => ipcRenderer.invoke('mongle:find-computers', refresh),
   removeHost: (id) => ipcRenderer.invoke('mongle:remove-host', id),
   selectHost: (id) => ipcRenderer.invoke('mongle:select-host', id),
   selectDirectory: (currentPath) => ipcRenderer.invoke('mongle:select-directory', currentPath),

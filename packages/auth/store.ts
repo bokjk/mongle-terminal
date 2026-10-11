@@ -23,6 +23,9 @@ interface SessionRow {
 }
 /** A paired device that approves another request through its own remote address. */
 export interface PairingApprover { name: string; origin: string }
+/** A browser's Web Push subscription for one paired device (validated by packages/host/web-push.ts). */
+export interface StoredPushSubscription { endpoint: string; p256dh: string; auth: string }
+export interface StoredVapidKeys { publicKey: string; privateKey: string }
 
 /** Authentication writes are synchronous FULL-durability transactions, independent of layout writes. */
 export class AuthStore {
@@ -37,6 +40,7 @@ export class AuthStore {
       CREATE TABLE IF NOT EXISTS codes (hash TEXT PRIMARY KEY, expires_at INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, consumed INTEGER NOT NULL DEFAULT 0, issuer TEXT);
       CREATE TABLE IF NOT EXISTS pairings (id TEXT PRIMARY KEY, secret_hash TEXT NOT NULL, name TEXT NOT NULL, origin TEXT NOT NULL, status TEXT NOT NULL, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, approved_by TEXT);
       CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE, csrf TEXT NOT NULL, name TEXT NOT NULL, origin TEXT NOT NULL, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, revoked INTEGER NOT NULL DEFAULT 0, approved_by TEXT);
+      CREATE TABLE IF NOT EXISTS push_subscriptions (device_id TEXT PRIMARY KEY, endpoint TEXT NOT NULL, p256dh TEXT NOT NULL, auth TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
     `);
     // Databases from earlier versions lack the approver and code issuer columns. Older hosts ignore them after a downgrade.
     for (const [table, column] of [['pairings', 'approved_by'], ['sessions', 'approved_by'], ['codes', 'issuer']]) {
@@ -58,6 +62,7 @@ export class AuthStore {
       this.db.prepare("INSERT INTO settings(key,value) VALUES('remote_origin',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(origin || '');
       if (previous && previous !== origin) {
         this.db.prepare('UPDATE sessions SET revoked=1 WHERE origin=?').run(previous);
+        this.db.prepare('DELETE FROM push_subscriptions WHERE device_id IN (SELECT id FROM sessions WHERE origin=?)').run(previous);
         this.db.prepare("UPDATE pairings SET status='rejected' WHERE origin=? AND status IN ('pending','approved')").run(previous);
       }
       return previous;
@@ -77,6 +82,7 @@ export class AuthStore {
       this.db.prepare('DELETE FROM codes WHERE COALESCE(issuer,?)=? OR consumed=1 OR expires_at<=?').run(PC_ISSUER, issuer, now);
       this.db.prepare('DELETE FROM pairings WHERE expires_at < ?').run(now - SESSION_MS);
       this.db.prepare('DELETE FROM sessions WHERE expires_at < ?').run(now - SESSION_MS);
+      this.db.prepare('DELETE FROM push_subscriptions WHERE device_id NOT IN (SELECT id FROM sessions WHERE revoked=0)').run();
       this.db.prepare('INSERT INTO codes(hash,expires_at,issuer) VALUES (?,?,?)').run(digest(code), expiresAt, issuer);
     });
     return {code, expiresAt};
@@ -150,14 +156,52 @@ export class AuthStore {
     return !!this.db.prepare('SELECT id FROM sessions WHERE id=? AND origin=? AND revoked=0 AND expires_at>?').get(deviceId, origin, this.now());
   }
   listDevices() {
-    const rows = this.db.prepare('SELECT id,name,origin,created_at,expires_at,revoked,approved_by FROM sessions ORDER BY CASE WHEN revoked=0 AND expires_at>? THEN 0 ELSE 1 END, created_at DESC LIMIT 200').all(this.now()) as unknown as SessionRow[];
-    return rows.map(row => ({deviceId: row.id, name: row.name, origin: row.origin, createdAt: row.created_at, expiresAt: row.expires_at, revoked: !!row.revoked || row.expires_at <= this.now(), ...(row.approved_by ? {approvedBy: row.approved_by} : {})}));
+    const rows = this.db.prepare('SELECT id,name,origin,created_at,expires_at,revoked,approved_by,EXISTS(SELECT 1 FROM push_subscriptions p WHERE p.device_id=sessions.id) AS notifications FROM sessions ORDER BY CASE WHEN revoked=0 AND expires_at>? THEN 0 ELSE 1 END, created_at DESC LIMIT 200').all(this.now()) as unknown as Array<SessionRow & {notifications: number}>;
+    return rows.map(row => {
+      const revoked = !!row.revoked || row.expires_at <= this.now();
+      return {deviceId: row.id, name: row.name, origin: row.origin, createdAt: row.created_at, expiresAt: row.expires_at, revoked, ...(row.approved_by ? {approvedBy: row.approved_by} : {}), ...(row.notifications && !revoked ? {notifications: true} : {})};
+    });
   }
   revoke(deviceId: string) {
     this.transaction(() => {
       if (!this.db.prepare('UPDATE sessions SET revoked=1 WHERE id=?').run(deviceId).changes)
         throw new AppError('DEVICE_NOT_FOUND', '연결 기기를 찾을 수 없습니다.');
+      this.db.prepare('DELETE FROM push_subscriptions WHERE device_id=?').run(deviceId);
     });
+  }
+  /** This host's Web Push key pair, created once and kept with the other authentication data. */
+  pushKeys(create: () => StoredVapidKeys, valid: (value: unknown) => boolean): StoredVapidKeys {
+    return this.transaction(() => {
+      const row = this.db.prepare("SELECT value FROM settings WHERE key='push_vapid'").get() as {value: string} | undefined;
+      if (row) {
+        try { const stored = JSON.parse(row.value); if (valid(stored)) return {publicKey: stored.publicKey, privateKey: stored.privateKey}; }
+        catch { /* replaced below; old subscriptions then stop working and are asked again */ }
+      }
+      const keys = create();
+      this.db.prepare("INSERT INTO settings(key,value) VALUES('push_vapid',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(JSON.stringify(keys));
+      return keys;
+    });
+  }
+  /** Saves the browser subscription of a device that is still allowed in. */
+  setPushSubscription(deviceId: string, subscription: StoredPushSubscription) {
+    this.transaction(() => {
+      if (!this.db.prepare('SELECT id FROM sessions WHERE id=? AND revoked=0 AND expires_at>?').get(deviceId, this.now()))
+        throw new AppError('UNAUTHENTICATED', '이 기기를 PC에서 연결 승인해 주세요.');
+      const now = this.now();
+      this.db.prepare('INSERT INTO push_subscriptions(device_id,endpoint,p256dh,auth,created_at,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(device_id) DO UPDATE SET endpoint=excluded.endpoint,p256dh=excluded.p256dh,auth=excluded.auth,updated_at=excluded.updated_at')
+        .run(deviceId, subscription.endpoint, subscription.p256dh, subscription.auth, now, now);
+    });
+  }
+  removePushSubscription(deviceId: string) { this.db.prepare('DELETE FROM push_subscriptions WHERE device_id=?').run(deviceId); }
+  pushSubscription(deviceId: string): StoredPushSubscription | undefined {
+    const row = this.db.prepare('SELECT endpoint,p256dh,auth FROM push_subscriptions WHERE device_id=?').get(deviceId) as StoredPushSubscription | undefined;
+    return row ? {endpoint: row.endpoint, p256dh: row.p256dh, auth: row.auth} : undefined;
+  }
+  /** Subscriptions of devices still allowed in; with `origin`, only devices paired through that address. */
+  pushTargets(origin?: string): Array<{deviceId: string; subscription: StoredPushSubscription}> {
+    const sql = 'SELECT p.device_id AS deviceId, p.endpoint, p.p256dh, p.auth FROM push_subscriptions p JOIN sessions s ON s.id=p.device_id WHERE s.revoked=0 AND s.expires_at>?' + (origin === undefined ? '' : ' AND s.origin=?') + ' ORDER BY p.created_at LIMIT 100';
+    const rows = (origin === undefined ? this.db.prepare(sql).all(this.now()) : this.db.prepare(sql).all(this.now(), origin)) as unknown as Array<StoredPushSubscription & {deviceId: string}>;
+    return rows.map(row => ({deviceId: row.deviceId, subscription: {endpoint: row.endpoint, p256dh: row.p256dh, auth: row.auth}}));
   }
   close() { this.db.close(); }
 }

@@ -1,12 +1,14 @@
 import net from 'node:net';
 import { randomBytes } from 'node:crypto';
-import { SESSION_UUID, validCwd, type AgentSessionIdentity } from '../terminal/agent-status.js';
+import { SESSION_UUID, validCodexEvent, validCwd, type AgentSessionIdentity, type CodexAgentEvent } from '../terminal/agent-status.js';
 
 export interface AgentPipeTarget {
   /** HostCore.reportAgentSession with a non-null identity. */
   start(token: string, session: AgentSessionIdentity): boolean;
   /** Clears only when the stored record is exactly this identity. Never a generic clear. */
   end(token: string, session: AgentSessionIdentity): boolean;
+  /** HostCore.reportAgentStatus: an event of the shell's live Codex conversation. */
+  status?(token: string, event: CodexAgentEvent): boolean;
 }
 
 const MAX_MESSAGE = 4096, MAX_TRACKED = 256;
@@ -14,9 +16,10 @@ const MAX_MESSAGE = 4096, MAX_TRACKED = 256;
 /**
  * Host-local named pipe for the managed Codex hook: one JSON line per
  * connection, capped in size and time. A start counts only when HostCore
- * accepts its per-shell token. SessionEnd is forwarded only when it names the
- * same wrapped run and conversation this pipe last accepted for that shell, so
- * a late end of an older run cannot erase a newer record.
+ * accepts its per-shell token. SessionEnd and the events of a turn are
+ * forwarded only when they name the same wrapped run and conversation this pipe
+ * last accepted for that shell, so a late end or report of an older run cannot
+ * erase a newer record or change its status.
  */
 export async function startAgentPipe(target: AgentPipeTarget, options: {name?: string} = {}) {
   const name = options.name ?? `\\\\.\\pipe\\mongle-agent-${randomBytes(16).toString('hex')}`;
@@ -38,12 +41,19 @@ export async function startAgentPipe(target: AgentPipeTarget, options: {name?: s
       current.delete(value.token);
       current.set(value.token, {run:value.run, sessionId});
       while (current.size > MAX_TRACKED) current.delete(current.keys().next().value!);
-    } else if (value.event === 'SessionEnd') {
-      const last = current.get(value.token);
-      if (!last || last.run !== value.run || last.sessionId !== sessionId) return;
+      target.status?.(value.token, validCodexEvent({event:'SessionStart', source:value.source})!);
+      return;
+    }
+    const last = current.get(value.token);
+    if (!last || last.run !== value.run || last.sessionId !== sessionId) return;
+    if (value.event === 'SessionEnd') {
       current.delete(value.token);
       target.end(value.token, {provider:'codex', sessionId});
+      target.status?.(value.token, {event:'SessionEnd'});
+      return;
     }
+    const event = validCodexEvent(value);
+    if (event && event.event !== 'SessionStart' && event.event !== 'SessionEnd') target.status?.(value.token, event);
   };
   const server = net.createServer(socket => {
     if (closed) { socket.destroy(); return; }

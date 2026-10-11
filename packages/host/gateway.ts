@@ -5,7 +5,10 @@ import { randomUUID } from 'node:crypto';
 import { WebSocketServer, WebSocket } from 'ws';
 import { z } from 'zod';
 import { AuthStore, secret, safeEqual, type AuthSession } from '../auth/store.ts';
-import { AppError, errorResult, requestSchema, PROTOCOL_VERSION, type ConnectionContext, type Send, type HostEvent } from '../protocol/index.ts';
+import { AppError, errorResult, requestSchema, PROTOCOL_VERSION, type ConnectionContext, type Send, type HostEvent, type HostState } from '../protocol/index.ts';
+import { PushNotifier } from './push-notifier.ts';
+import { generateVapidKeys, sendPush, validPushSubscription, validVapidKeys, type VapidKeys } from './web-push.ts';
+import { readPcPresence, type PcPresence } from './presence.ts';
 
 interface GatewayCore {
   getState(): { hostId: string; [key: string]: any };
@@ -17,18 +20,28 @@ interface GatewayOptions {
   core: GatewayCore; dataDir: string; webRoot: string; port?: number; allowedOrigin?: string;
   /** Lists other Mongle PCs in this tailnet for paired devices (computers.ts). */
   computers?: (refresh: boolean) => Promise<unknown>;
+  /** Whether someone is at this PC (presence.ts). Tests replace the Windows query. */
+  presence?: () => Promise<PcPresence>;
+  /** Web Push transport. Tests replace the network. */
+  pushFetch?: typeof fetch;
 }
 type Ticket = { deviceId: string; origin: string; expiresAt: number };
-type Peer = { ws: WebSocket; ctx: ConnectionContext; session: AuthSession; connected: boolean; expireTimer?: NodeJS.Timeout; };
-const ownerMethods = new Set(['pairing.create', 'pairing.status', 'pairing.list', 'pairing.approve', 'pairing.reject', 'devices.list', 'devices.revoke', 'remote.configure', 'remote.status']);
+/** active: the device reports that this view of the PC is on screen (presence.update). */
+type Peer = { ws: WebSocket; ctx: ConnectionContext; session: AuthSession; connected: boolean; expireTimer?: NodeJS.Timeout; active?: boolean };
+const ownerMethods = new Set(['pairing.create', 'pairing.status', 'pairing.list', 'pairing.approve', 'pairing.reject', 'devices.list', 'devices.revoke', 'remote.configure', 'remote.status', 'computers.list']);
 // A paired device can already run shell commands, so it may also let another device in through
 // its own address. Remote access settings and device revocation stay on the PC.
 const deviceApprovalMethods = new Set(['pairing.create', 'pairing.list', 'pairing.approve', 'pairing.reject']);
+// Each device manages only its own phone notifications and reports whether it shows this PC.
+const deviceNotificationMethods = new Set(['push.status', 'push.subscribe', 'push.unsubscribe', 'push.test', 'presence.update']);
+/** A device that stopped showing this PC still counts as looking at it for this long. */
+const VIEW_GRACE_MS = 5 * 60_000;
 const requestIdSchema = z.object({requestId: z.string().uuid()}).strict();
 const pairSecretSchema = requestIdSchema.extend({requesterSecret: z.string().regex(/^[A-Za-z0-9_-]{43}$/)}).strict();
 const deviceSchema = z.object({deviceId: z.string().uuid()}).strict();
 const emptySchema = z.object({}).strict();
 const computersSchema = z.object({refresh: z.boolean().optional()}).strict();
+const presenceSchema = z.object({active: z.boolean()}).strict();
 
 export function normalizeRemoteOrigin(value: string): string {
   let url: URL;
@@ -95,7 +108,7 @@ function readJson(req: IncomingMessage): Promise<unknown> {
   });
 }
 
-export async function startGateway({core, dataDir, webRoot, port = 0, allowedOrigin, computers}: GatewayOptions) {
+export async function startGateway({core, dataDir, webRoot, port = 0, allowedOrigin, computers, presence, pushFetch}: GatewayOptions) {
   await mkdir(dataDir, {recursive: true});
   const store = new AuthStore(resolve(dataDir, 'auth.sqlite'));
   try { if (allowedOrigin) store.setOrigin(normalizeRemoteOrigin(allowedOrigin)); }
@@ -107,11 +120,42 @@ export async function startGateway({core, dataDir, webRoot, port = 0, allowedOri
   const peers = new Set<Peer>();
   const ownerListeners = new Set<(event: HostEvent) => void>();
   const wss = new WebSocketServer({noServer: true, maxPayload: 131_072, perMessageDeflate: false, clientTracking: true});
+  // When each device last stopped showing this PC, for the grace period after a view closes.
+  const viewedAt = new Map<string, number>();
+  let vapid: VapidKeys | undefined;
+  const pushKeys = () => vapid ??= store.pushKeys(generateVapidKeys, validVapidKeys);
+  const viewingUntil = () => {
+    for (const peer of peers) if (peer.connected && peer.active) return Infinity;
+    const now = Date.now();
+    let until = 0;
+    for (const [deviceId, at] of viewedAt) {
+      if (at + VIEW_GRACE_MS <= now) viewedAt.delete(deviceId);
+      else until = Math.max(until, at + VIEW_GRACE_MS);
+    }
+    return until;
+  };
+  const notifier = new PushNotifier({
+    targets: origin => { try { return store.pushTargets(origin); } catch { return []; } },
+    send: (target, message) => sendPush(target.subscription, message, pushKeys(), {fetch: pushFetch}),
+    forget: deviceId => { try { store.removePushSubscription(deviceId); } catch { /* removed with the device or on the next try */ } },
+    presence: presence ?? (() => readPcPresence()),
+    viewingUntil,
+    hostName: () => String(core.getState().name || '몽글터미널'),
+  });
+  const setActive = (peer: Peer, active: boolean) => {
+    if (!!peer.active === active) return;
+    if (peer.active) viewedAt.set(peer.session.deviceId, Date.now());
+    peer.active = active;
+    notifier.presenceChanged();
+  };
   const emitPairings = () => {
-    const event: HostEvent = {type: 'pairings', requests: store.listPairings()};
+    const requests = store.listPairings();
+    const event: HostEvent = {type: 'pairings', requests};
     for (const listener of ownerListeners) { try { listener(event); } catch { /* subscriber failure cannot roll back auth */ } }
+    notifier.pairingsPending(requests.filter(request => request.status === 'pending').map(request => request.requestId));
   };
   const drop = (peer: Peer, code = 4001, reason = 'Authentication required') => {
+    if (peer.active) setActive(peer, false);
     if (peer.connected) { peer.connected = false; core.disconnect(peer.ctx.id); }
     clearTimeout(peer.expireTimer);
     peers.delete(peer);
@@ -161,6 +205,19 @@ export async function startGateway({core, dataDir, webRoot, port = 0, allowedOri
     emitPairings();
     return {ok: true};
   };
+  const deviceNotifications = async (method: string, params: unknown, session: AuthSession, peer: Peer): Promise<unknown> => {
+    if (method === 'presence.update') { setActive(peer, presenceSchema.parse(params).active); return {ok: true}; }
+    if (!limiter.allow(`push:${session.deviceId}`, 30)) throw new AppError('RATE_LIMITED', '알림 설정 요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.');
+    if (method === 'push.subscribe') { store.setPushSubscription(session.deviceId, validPushSubscription(params)); return {ok: true}; }
+    emptySchema.parse(params ?? {});
+    if (method === 'push.status') {
+      const current = store.pushSubscription(session.deviceId);
+      return {publicKey: pushKeys().publicKey, subscribed: !!current, ...(current ? {endpoint: current.endpoint} : {})};
+    }
+    if (method === 'push.unsubscribe') { store.removePushSubscription(session.deviceId); return {ok: true}; }
+    if (!limiter.allow(`push-test:${session.deviceId}`, 5)) throw new AppError('RATE_LIMITED', '시험 알림은 1분에 다섯 번까지 보낼 수 있습니다.');
+    return notifier.sendTest(session.deviceId);
+  };
   const api = async (req: IncomingMessage, res: ServerResponse) => {
     const origin = requestOrigin(req, req.method !== 'GET' && req.method !== 'HEAD');
     const wsOrigin = origin.replace(/^http/, 'ws');
@@ -194,6 +251,7 @@ export async function startGateway({core, dataDir, webRoot, port = 0, allowedOri
         if (!limiter.allow(`pairing-create:${ip}`, 10)) throw new AppError('RATE_LIMITED', '연결 요청이 너무 많습니다.');
         const {code, name} = z.object({code: z.string().trim().toUpperCase().regex(/^[A-Z0-9]{10}$/), name: z.string().trim().min(1).max(80).refine(value => !/[\x00-\x1f\x7f]/.test(value))}).strict().parse(body);
         const result = store.requestPairing(code, name, origin);
+        notifier.pairingRequested({requestId: result.requestId, name, origin, expiresAt: result.expiresAt});
         emitPairings();
         return json(res, 200, result);
       }
@@ -322,7 +380,8 @@ export async function startGateway({core, dataDir, webRoot, port = 0, allowedOri
               void listed.then(value => send({type:'response', id, ok:true, result:value}), error => send({type:'response', id, ok:false, error:errorResult(error)}));
               return;
             }
-            if (deviceApprovalMethods.has(method)) result = approveFromDevice(method, params, session);
+            if (deviceNotificationMethods.has(method)) result = await deviceNotifications(method, params, session, peer);
+            else if (deviceApprovalMethods.has(method)) result = approveFromDevice(method, params, session);
             else {
               if (ownerMethods.has(method) || /^(pairing|pairings|devices|remote|owner|host)\./.test(method)) throw new AppError('FORBIDDEN', '이 작업은 실행 PC에서만 할 수 있습니다.');
               result = await core.handle(method, params, ctx);
@@ -343,6 +402,8 @@ export async function startGateway({core, dataDir, webRoot, port = 0, allowedOri
   return {
     port: actualPort,
     onOwnerEvents(listener: (event: HostEvent) => void) { ownerListeners.add(listener); return () => { ownerListeners.delete(listener); }; },
+    /** Every state broadcast: a terminal waiting for an answer may need a phone notification. */
+    observeState(state: HostState) { notifier.observeState(state); },
     async ownerRequest(method: string, params: unknown = {}): Promise<any> {
       if (closed) throw new AppError('HOST_STOPPED', '호스트가 종료되었습니다.');
       if (!ownerMethods.has(method)) throw new AppError('NOT_FOUND', '지원하지 않는 관리 요청입니다.');
@@ -369,11 +430,17 @@ export async function startGateway({core, dataDir, webRoot, port = 0, allowedOri
           return remoteStatus();
         }
         case 'remote.status': emptySchema.parse(params); return remoteStatus();
+        case 'computers.list': {
+          // The PC app asks its own host. As for devices, the caller may only ask for a fresh scan, never choose whom the host contacts.
+          const {refresh = false} = computersSchema.parse(params ?? {});
+          return computers ? computers(refresh) : {computers: [], available: false, message: '이 컴퓨터에서는 다른 컴퓨터를 찾을 수 없습니다.', checkedAt: Date.now()};
+        }
       }
     },
     async close() {
       if (closed) return;
       closed = true;
+      notifier.close();
       for (const peer of peers) { drop(peer, 1001, 'Host closing'); peer.ws.terminate(); }
       tickets.clear(); ownerListeners.clear();
       await new Promise<void>(resolveClose => wss.close(() => resolveClose()));

@@ -63,10 +63,28 @@ Tailscale 네트워크 접근만으로 모든 터미널을 자동 제어하게 �
 
 - 범위: 인증된 WebSocket 세션(원격·loopback 브라우저)에 `computers.list`만 추가한다. 게이트웨이가 처리하고 core로 전달하지 않으며, 인증 전에는 목록을 주지 않는다. 매개변수는 `refresh`만 허용하므로 기기가 접속 대상을 지정할 수 없어, 임의 주소 요청(SSRF)이나 포트 검사에 쓸 수 없다.
 - 찾는 방법: 호스트가 `tailscale status --json`을 읽고, 같은 사용자(UserID)의 온라인 Windows 기기 중 공유·태그 기기를 빼고 최대 32대를 고른다. 각 기기의 Tailscale IPv4로 접속하되 TLS SNI·인증서 검증·Host 헤더는 MagicDNS 이름을 써서, 몽글 원격 설정이 쓰는 443·8443·10000 포트의 `GET /health`만 요청한다. 쿠키·자격 증명은 보내지 않는다. 응답이 몽글 health 형식(`ok`, UUID `hostId`, 정수 `protocolVersion`, 4KiB 이하 JSON)일 때만 인정하며 요청마다 2.5초 제한을 둔다.
+- PC 앱(2026-10-11 추가): 데스크톱 앱의 컴퓨터 추가 창은 연결한 호스트에 같은 `computers.list`를 요청한다. 이 PC의 호스트에는 소유자 채널로, 원격 호스트에는 승인된 세션으로 요청한다. 소유자 채널도 게이트웨이가 처리하고 core로 전달하지 않으며 매개변수는 `refresh`만 받는다. 데스크톱 앱은 응답을 다시 검사해 몽글 `https://*.ts.net` 주소만 남기고, 이미 등록한 PC와 이 PC(`remote-serve.json`에 기록된 주소)를 뺀다. 고른 PC는 기존 컴퓨터 추가와 같이 등록하고, 그 PC의 연결 승인을 따로 거친다.
 - 한도: 기기당 분당 30회로 제한한다. 결과는 60초 동안 재사용하고, 다시 찾기는 5초가 지난 결과만 새로 찾으며, 동시에 들어온 요청은 한 번의 검색을 공유한다. 상태 읽기는 5초로 제한하고 16대씩 동시에 확인해 최악의 경우에도 약 10초 안에 답한다(브라우저 요청 제한 15초). 검색이 끝날 때까지 같은 연결의 터미널 입력 등 다른 요청을 막지 않는다.
 - 노출: 응답에는 다른 PC의 MagicDNS 이름과 원격 주소만 담는다. 승인된 기기는 이미 셸로 `tailscale status`를 볼 수 있으므로 새 정보가 아니다. `hostId`는 자기 자신·중복 제거에만 쓰고 보내지 않는다.
 - 브라우저 저장: 직접 추가한 주소는 그 origin의 localStorage에 이름과 origin만 저장한다(최대 20개). https `*.ts.net` origin만 허용하고, 서버 응답도 같은 규칙으로 걸러 `javascript:` 같은 주소로 이동하지 않는다.
 - 남는 한계: 같은 사용자의 다른 Windows 기기에서 몽글 health 형식을 흉내 내는 서비스가 있으면 목록에 나올 수 있다. 이동한 페이지는 그 PC가 다시 인증하므로 승인 없이 터미널에 접근하지는 못한다. Tailscale 접근 규칙이 PC끼리의 연결을 막으면 찾지 못하며, 이때는 직접 추가한다.
+
+### 휴대폰 알림(Web Push) — 2026-10-12 추가
+
+PC 앞에 없을 때 Claude·Codex의 확인 요청과 새 기기 연결 요청을 휴대폰 알림으로 보낸다. 표준 Web Push(RFC 8030·8291·8292)를 쓰며, 몽글이 운영하는 중계 서버는 없다. 호스트가 휴대폰 브라우저가 알려 준 알림 서비스 주소로 직접 보낸다.
+
+- 범위: 승인된 기기의 WebSocket 세션만 `push.status`·`push.subscribe`·`push.unsubscribe`·`push.test`·`presence.update`를 호출한다. 게이트웨이가 처리하고 core로 전달하지 않으며, 각 기기는 자기 구독과 자기 연결의 표시 상태만 바꾼다. 소유자 채널에는 새 메서드를 더하지 않았고 `devices.list`에 알림 여부만 더했다.
+- 구독 검사(`packages/host/web-push.ts`): endpoint는 https·기본 포트이고 IP 주소·`localhost`·`.local`·`.ts.net`이 아닌 공개 도메인만 받는다. 호스트가 tailnet이나 내부망으로 요청을 보내는 데 쓰이지 않게 하려는 것이다. 키는 P-256 곡선 위의 65바이트 점과 16바이트 auth만 받는다. 보낼 때 리디렉션을 따르지 않고 10초 제한을 둔다.
+- 저장: 구독(endpoint·키)은 `auth.sqlite`의 `push_subscriptions`에 기기 세션별로 둔다. 기기 해제·로그아웃·원격 주소 변경 때 같은 트랜잭션에서 지우고, 알림 서비스가 404·410으로 답하면 지운다. VAPID 키 쌍(P-256)은 호스트마다 처음 쓸 때 만들어 같은 DB의 `settings`에 둔다. 저장소·배포본에는 넣지 않는다. 이전 버전 호스트는 새 표와 값을 무시한다.
+- 암호화: RFC 8291(aes128gcm)로 메시지마다 새 ECDH 키와 salt를 쓴다. RFC 8291 예제 값과 바이트 단위로 같은 결과를 시험으로 고정했다. RFC 8292 VAPID는 알림 서비스 origin을 `aud`로 하는 12시간 만료 ES256 서명이다. 새 의존성 없이 `node:crypto`만 쓴다.
+- 내용: PC·그룹·터미널 이름, 고정 문구, 열 경로(`/?terminal=<id>` 또는 `/?open=pairing`)만 담는다. 터미널 출력, 질문 내용, 명령, 연결 코드, 요청자 secret은 담지 않는다. 연결 요청 알림의 기기 이름은 요청자가 입력한 값이며 PC의 승인 목록에 보이는 것과 같다.
+- 알림 서비스가 아는 것: endpoint(브라우저가 발급), 보낸 시각과 크기, `TTL`·`Urgency` 헤더. FCM이 문서화하지 않은 RFC 8030 `Topic` 헤더는 쓰지 않는다. Chrome 계열은 Google, Safari는 Apple, Firefox는 Mozilla의 서비스를 거친다.
+- 자리 비움: 호스트가 `OwnerPipe.exe presence`로 이 Windows 세션의 잠금 여부(`WTSQuerySessionInformation`의 `WTSSessionInfoEx`)와 마지막 입력 뒤 지난 시간(`GetLastInputInfo`)만 읽는다. 입력 내용·창 제목·사용자 이름은 읽지 않으며 데이터 폴더나 파이프를 쓰지 않는다. 읽지 못하면 요청을 놓치지 않도록 자리를 비운 것으로 본다. 보낼 요청과 구독한 기기가 있을 때만 읽는다.
+- 보는 중: 브라우저는 화면 표시 여부(`document.visibilityState`)를, PC 앱은 다른 PC에 연결해 있을 때 창 표시·최소화·최근 1분 입력 여부를 `presence.update`로 알린다. 표시가 꺼지거나 연결이 끊기면 5분 동안은 본 것으로 친다. 기기가 '보는 중'을 계속 보내도 알림이 오지 않을 뿐 다른 권한은 생기지 않는다.
+- 서비스 워커(`apps/web/public/sw.js`): push와 알림 클릭만 처리하고 fetch 처리기와 Cache API를 쓰지 않아 화면·출력을 저장하지 않는다. 알림을 누르면 같은 origin의 경로만 연다.
+- 한도: 알림 설정 요청은 기기당 분당 30회, 시험 알림은 분당 5회다. 요청 하나는 기기마다 최대 한 번 보내며, 실패하면 30초 간격으로 세 번까지 시도한다.
+- 시험용 고정: 격리 프로필(`MONGLE_DATA_DIR`)에서만 `MONGLE_TEST_PC_PRESENCE=away|here`로 PC 상태를 고정할 수 있다. 설치본 실행에는 이 값이 쓰이지 않는다.
+- 남는 한계: 휴대폰 OS·브라우저가 절전·방해 금지로 알림을 늦추거나 버릴 수 있다. PC가 꺼져 있거나 절전 중이면 보낼 수 없다. 세션이 탈취된 기기는 자기 알림을 켜고 끌 수 있지만, 이미 셸을 쓸 수 있는 권한이라 새 권한은 아니다.
 
 | 경계 | 설계 |
 |---|---|
@@ -107,7 +125,7 @@ Serve가 identity header를 넣더라도 loopback에 접근하는 로컬 프로�
 
 PWA는 홈 화면에서 여는 모바일 웹이다. 설치 방식은 iOS/Android 브라우저에 따라 다르므로 네이티브 앱과 완전히 같은 동작을 약속하지 않는다. 인증된 Serve의 HTTPS 주소를 start_url로 사용한다. [PWA 설치 조건](https://developer.mozilla.org/en-US/docs/Web/Progressive_web_apps/Guides/Making_PWAs_installable)
 
-서비스 워커가 있다면 이름/버전이 정해진 정적 JS·CSS·아이콘만 allowlist로 캐시한다. API, pairing/auth 응답, terminal output/snapshot, 사용자 파일을 runtime cache에 넣지 않는다. HTTP `Cache-Control: no-store`도 설정하지만 Cache API는 이를 자동 준수하지 않으므로 라우팅 단계에서 제외해야 한다. 터미널 이력은 휴대폰 localStorage/IndexedDB에 저장하지 않는다. [Cache API](https://developer.mozilla.org/en-US/docs/Web/API/Cache)
+2026-10-12부터 휴대폰 알림용 서비스 워커(`/sw.js`)를 등록한다. 이 워커는 push·알림 클릭만 처리하고 아무것도 캐시하지 않는다. 앞으로 캐시를 더한다면 이름/버전이 정해진 정적 JS·CSS·아이콘만 allowlist로 캐시한다. API, pairing/auth 응답, terminal output/snapshot, 사용자 파일을 runtime cache에 넣지 않는다. HTTP `Cache-Control: no-store`도 설정하지만 Cache API는 이를 자동 준수하지 않으므로 라우팅 단계에서 제외해야 한다. 터미널 이력은 휴대폰 localStorage/IndexedDB에 저장하지 않는다. [Cache API](https://developer.mozilla.org/en-US/docs/Web/API/Cache)
 
 모바일은 background에서 타이머와 WebSocket이 중지되거나 페이지가 제거될 수 있다. 서버 세션은 별도로 유지하고 visible/pageshow/네트워크 복귀 시 실제 handshake로 재연결한다. `navigator.onLine`만으로 연결됨을 판단하지 않는다. retry는 0.5초부터 최대 30초까지 지수 backoff+jitter, 사용자 수동 재시도 제공을 제안한다. 인증 오류와 버전 오류는 무한 자동 재시도하지 않는다.
 

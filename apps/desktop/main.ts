@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, Notification, session, Tray, type IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, Notification, powerMonitor, session, Tray, type IpcMainInvokeEvent } from 'electron';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { connectOwnerPipe } from '../../packages/local-ipc/index';
 import { AppError, PROTOCOL_VERSION, type HostEvent, type Transport } from '../../packages/protocol/index';
 import { HostRegistry } from './host-registry';
+import { addableComputers, ownRemoteOrigin } from './computer-search';
 import { launchHost, prepareDesktopDataDirectory } from './runtime';
 import { RemoteTransport } from './remote-transport';
 import type { ConnectionInfo } from './contracts';
@@ -70,6 +71,20 @@ const pendingHostStarts = new Set<number>();
 const writeClipboard = createVerifiedClipboardWriter(clipboard);
 
 function emitEvent(message: HostEvent) { if (window && !window.isDestroyed()) window.webContents.send('mongle:event', message); }
+let reportedPresence: { transport?: Transport; active?: boolean } = {};
+/**
+ * Connected to another PC: tell it whether this window shows it to someone here, so that PC holds
+ * phone notifications meanwhile. Shown means visible, not minimized and input within the last minute.
+ */
+function reportDesktopPresence(force = false) {
+  const current = transport;
+  if (!current || connection.owner || connection.status !== 'connected') return;
+  const active = !!window && !window.isDestroyed() && window.isVisible() && !window.isMinimized() && powerMonitor.getSystemIdleState(60) === 'active';
+  if (!force && reportedPresence.transport === current && reportedPresence.active === active) return;
+  reportedPresence = { transport: current, active };
+  // Hosts before phone notifications answer NOT_FOUND; nothing depends on the reply.
+  void current.request('presence.update', { active }).catch(() => {});
+}
 function setConnection(info: ConnectionInfo) { connection = info; if (window && !window.isDestroyed()) window.webContents.send('mongle:connection', info); }
 function retry() {
   if (quitting || fullExitCommitted || hostStoppedByUser || retryTimer) return;
@@ -136,6 +151,7 @@ async function connectSelectedAttempt(): Promise<ConnectionInfo> {
     }
     if (cancelled()) { next.close(); return connection; }
     transport = next; retryDelay = 500; setConnection(info);
+    if (!info.owner && info.status === 'connected') reportDesktopPresence(true);
   } catch (error) {
     attempt?.close();
     const message = error instanceof Error ? error.message : '컴퓨터에 연결하지 못했습니다.';
@@ -180,6 +196,20 @@ function handlers() {
     } finally { choosingDirectory = false; }
   });
   ipcMain.handle('mongle:add-host', (event, host) => { trusted(event); return registry.add(host); });
+  ipcMain.handle('mongle:find-computers', async (event, refresh) => {
+    trusted(event); allowConnectionChanges();
+    const again = z.boolean().parse(refresh);
+    if (connection.status !== 'connected' || !transport) return { computers: [], available: false, alreadyAdded: 0, message: '컴퓨터에 연결되면 같은 Tailscale의 다른 몽글 PC를 찾습니다.' };
+    let reply: unknown;
+    try { reply = await transport.request('computers.list', again ? { refresh: true } : {}); }
+    catch (error) {
+      // Hosts before 0.3.20 cannot search. The address form still works for them.
+      const code = (error as { code?: string }).code;
+      const message = code === 'UNKNOWN_METHOD' || code === 'NOT_FOUND' ? '연결한 컴퓨터의 몽글터미널이 이전 버전이라 다른 PC를 찾지 못했습니다. 아래에 주소를 직접 입력해 주세요.' : error instanceof Error ? error.message : '다른 컴퓨터를 찾지 못했습니다.';
+      return { computers: [], available: false, alreadyAdded: 0, message };
+    }
+    return addableComputers(reply, registry.list(), await ownRemoteOrigin(dataDir));
+  });
   ipcMain.handle('mongle:remove-host', async (event, id) => {
     trusted(event); allowConnectionChanges(); z.string().uuid().parse(id);
     const host = registry.get(id); const wasSelected = host.selected;
@@ -230,6 +260,7 @@ async function createWindow() {
   // cancel shutdown. Only the confirmed session-end starts desktop cleanup.
   created.on('session-end', releaseDesktopResources);
   created.on('closed', () => { if (window === created) window = undefined; });
+  for (const event of ['show', 'hide', 'minimize', 'restore'] as const) created.on(event as 'show', () => reportDesktopPresence());
   try { await created.loadFile(entry); }
   catch (error) { if (!created.isDestroyed()) created.destroy(); throw error; }
 }
@@ -386,8 +417,10 @@ if (singleInstance) void app.whenReady().then(async () => {
   session.defaultSession.webRequest.onBeforeRequest({ urls: ['http://*/*', 'https://*/*', 'ws://*/*', 'wss://*/*'] }, (_details, callback) => callback({ cancel: true }));
   setupUpdater(); configureApplicationMenu();
   await registry.load(); handlers(); createTray(); desktopReady = true; await showWindow(); await connectSelected(); updater?.start();
+  for (const event of ['lock-screen', 'unlock-screen', 'suspend', 'resume'] as const) powerMonitor.on(event as 'lock-screen', () => reportDesktopPresence());
   const monitor = setInterval(() => {
     if (connection.status !== 'connected' || !transport || connecting || quitting || fullExitCommitted) return;
+    reportDesktopPresence();
     const current = transport;
     void current.request('connection.info').catch(() => { if (transport === current && !quitting && !fullExitCommitted && !hostStoppedByUser) { setConnection({ ...connection, status: 'offline', error: '연결이 끊어졌습니다.' }); retry(); } });
   }, 5_000);

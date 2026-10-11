@@ -5,7 +5,7 @@ type Receipt = { generation: string; count: number };
 type Receipts = Record<string, Receipt>;
 export type PresentedNotification = { hostId: string; bootId: string; terminalId: string; generation: string; count: number };
 /** Present only for terminals with notifications this device has not seen. */
-export type TerminalNotice = { unread: true; /** Claude's latest alert itself is among the unseen notifications. */ agentUnread: boolean };
+export type TerminalNotice = { unread: true; /** The agent's (Claude's or Codex's) latest alert itself is among the unseen notifications. */ agentUnread: boolean };
 const key = (hostId: string) => `mongle.notifications.read.${hostId}`;
 const scope = (value: PresentedNotification) => `${value.hostId}:${value.bootId}:${value.terminalId}:${value.generation}`;
 const validCount = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) >= 0;
