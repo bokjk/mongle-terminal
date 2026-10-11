@@ -439,6 +439,14 @@ button.pane-title { background: transparent; border: 0; text-align: left; paddin
 .computer-add .hint { margin: -8px 0 12px; }
 .computer-add-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
 .computer-note { margin-top: 16px; }
+.found-computers { margin: -6px 0 20px; padding-bottom: 16px; border-bottom: 1px solid var(--border-subtle); }
+.found-computers-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.found-computers-header .settings-title { margin: 0; }
+.found-computers-header .icon-button[aria-disabled='true'] { cursor: default; }
+.found-computers .computer-status { margin: 10px 0 6px; }
+.found-computer-action { display: inline-flex; flex-shrink: 0; align-items: center; gap: 4px; padding: 4px 10px; border: 1px solid var(--border); border-radius: 999px; color: var(--accent-strong); font-size: 11px; font-weight: 550; }
+.panel-list .computer-row > .device-row:not([aria-disabled='true']):hover .found-computer-action { background: var(--surface); }
+.found-computers-manual { margin-bottom: 12px; }
 @media (max-width: 700px) { .computer-actions .button { min-height: 44px; } .computer-add-actions .button { flex: 1; } }
 .modal > form { display: flex; flex-direction: column; min-height: 0; }
 .modal-body.settings-layout { padding: 0; }

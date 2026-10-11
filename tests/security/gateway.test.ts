@@ -379,6 +379,26 @@ test('a paired device lists other Mongle PCs while its other requests keep flowi
   } finally { await plain.close(); }
 });
 
+test('the PC app lists other Mongle PCs through its own host', async () => {
+  const refreshes: boolean[] = [];
+  const found = {computers: [{name: 'office-pc', origin: 'https://office-pc.tail1234.ts.net'}], available: true, checkedAt: 1};
+  const f = await fixture({computers: async refresh => { refreshes.push(refresh); return found; }});
+  try {
+    assert.deepEqual(await f.gateway.ownerRequest('computers.list', {}), found);
+    assert.deepEqual(await f.gateway.ownerRequest('computers.list', {refresh: true}), found);
+    assert.deepEqual(refreshes, [false, true]);
+    await assert.rejects(f.gateway.ownerRequest('computers.list', {refresh: true, target: 'https://attacker.example'}), 'The PC app cannot choose what the host contacts either');
+    assert.deepEqual(refreshes, [false, true]);
+    assert.equal(f.core.calls.length, 0, 'The gateway answers discovery; it never reaches core');
+  } finally { await f.close(); }
+  const plain = await fixture();
+  try {
+    const reply = await plain.gateway.ownerRequest('computers.list', {});
+    assert.equal(reply.available, false, 'A host without discovery reports that it cannot search');
+    assert.deepEqual(reply.computers, []);
+  } finally { await plain.close(); }
+});
+
 test('a paired device cannot see or decide pairing requests made through another address', async () => {
   const f = await fixture();
   try {

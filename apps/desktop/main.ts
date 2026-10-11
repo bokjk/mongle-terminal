@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { connectOwnerPipe } from '../../packages/local-ipc/index';
 import { AppError, PROTOCOL_VERSION, type HostEvent, type Transport } from '../../packages/protocol/index';
 import { HostRegistry } from './host-registry';
+import { addableComputers, ownRemoteOrigin } from './computer-search';
 import { launchHost, prepareDesktopDataDirectory } from './runtime';
 import { RemoteTransport } from './remote-transport';
 import type { ConnectionInfo } from './contracts';
@@ -180,6 +181,20 @@ function handlers() {
     } finally { choosingDirectory = false; }
   });
   ipcMain.handle('mongle:add-host', (event, host) => { trusted(event); return registry.add(host); });
+  ipcMain.handle('mongle:find-computers', async (event, refresh) => {
+    trusted(event); allowConnectionChanges();
+    const again = z.boolean().parse(refresh);
+    if (connection.status !== 'connected' || !transport) return { computers: [], available: false, alreadyAdded: 0, message: '컴퓨터에 연결되면 같은 Tailscale의 다른 몽글 PC를 찾습니다.' };
+    let reply: unknown;
+    try { reply = await transport.request('computers.list', again ? { refresh: true } : {}); }
+    catch (error) {
+      // Hosts before 0.3.20 cannot search. The address form still works for them.
+      const code = (error as { code?: string }).code;
+      const message = code === 'UNKNOWN_METHOD' || code === 'NOT_FOUND' ? '연결한 컴퓨터의 몽글터미널이 이전 버전이라 다른 PC를 찾지 못했습니다. 아래에 주소를 직접 입력해 주세요.' : error instanceof Error ? error.message : '다른 컴퓨터를 찾지 못했습니다.';
+      return { computers: [], available: false, alreadyAdded: 0, message };
+    }
+    return addableComputers(reply, registry.list(), await ownRemoteOrigin(dataDir));
+  });
   ipcMain.handle('mongle:remove-host', async (event, id) => {
     trusted(event); allowConnectionChanges(); z.string().uuid().parse(id);
     const host = registry.get(id); const wasSelected = host.selected;

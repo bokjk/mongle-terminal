@@ -20,7 +20,7 @@ interface GatewayOptions {
 }
 type Ticket = { deviceId: string; origin: string; expiresAt: number };
 type Peer = { ws: WebSocket; ctx: ConnectionContext; session: AuthSession; connected: boolean; expireTimer?: NodeJS.Timeout; };
-const ownerMethods = new Set(['pairing.create', 'pairing.status', 'pairing.list', 'pairing.approve', 'pairing.reject', 'devices.list', 'devices.revoke', 'remote.configure', 'remote.status']);
+const ownerMethods = new Set(['pairing.create', 'pairing.status', 'pairing.list', 'pairing.approve', 'pairing.reject', 'devices.list', 'devices.revoke', 'remote.configure', 'remote.status', 'computers.list']);
 // A paired device can already run shell commands, so it may also let another device in through
 // its own address. Remote access settings and device revocation stay on the PC.
 const deviceApprovalMethods = new Set(['pairing.create', 'pairing.list', 'pairing.approve', 'pairing.reject']);
@@ -369,6 +369,11 @@ export async function startGateway({core, dataDir, webRoot, port = 0, allowedOri
           return remoteStatus();
         }
         case 'remote.status': emptySchema.parse(params); return remoteStatus();
+        case 'computers.list': {
+          // The PC app asks its own host. As for devices, the caller may only ask for a fresh scan, never choose whom the host contacts.
+          const {refresh = false} = computersSchema.parse(params ?? {});
+          return computers ? computers(refresh) : {computers: [], available: false, message: '이 컴퓨터에서는 다른 컴퓨터를 찾을 수 없습니다.', checkedAt: Date.now()};
+        }
       }
     },
     async close() {

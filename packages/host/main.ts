@@ -57,7 +57,7 @@ try {
       if (method === 'remote.diagnose') return remote?.diagnose();
       if (method === 'remote.enable') return remote?.enable();
       if (method === 'remote.disable') return remote?.disable();
-      if (/^(pairing\.|devices\.|remote\.)/.test(method)) return gateway.ownerRequest(method,params);
+      if (/^(pairing\.|devices\.|remote\.|computers\.)/.test(method)) return gateway.ownerRequest(method,params);
       return core.handle(method,params,ctx);
     },
     onDisconnect(id:string) { owners.delete(id); core?.disconnect(id); },
