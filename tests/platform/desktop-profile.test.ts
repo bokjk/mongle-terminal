@@ -82,6 +82,7 @@ function desktopStartup(options: { packaged?: boolean; prepareError?: Error; pri
     '../../packages/local-ipc/index': {},
     '../../packages/protocol/index': {},
     './host-registry': { HostRegistry: class {} },
+    './computer-search': {},
     './runtime': {
       prepareDesktopDataDirectory(root: string, directory: string) {
         calls.push('prepare'); assert.equal(root, expectedRoot); assert.equal(directory, dataDir);
