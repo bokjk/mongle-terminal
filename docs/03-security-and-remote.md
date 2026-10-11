@@ -78,7 +78,7 @@ PC 앞에 없을 때 Claude·Codex의 확인 요청과 새 기기 연결 요청�
 - 저장: 구독(endpoint·키)은 `auth.sqlite`의 `push_subscriptions`에 기기 세션별로 둔다. 기기 해제·로그아웃·원격 주소 변경 때 같은 트랜잭션에서 지우고, 알림 서비스가 404·410으로 답하면 지운다. VAPID 키 쌍(P-256)은 호스트마다 처음 쓸 때 만들어 같은 DB의 `settings`에 둔다. 저장소·배포본에는 넣지 않는다. 이전 버전 호스트는 새 표와 값을 무시한다.
 - 암호화: RFC 8291(aes128gcm)로 메시지마다 새 ECDH 키와 salt를 쓴다. RFC 8291 예제 값과 바이트 단위로 같은 결과를 시험으로 고정했다. RFC 8292 VAPID는 알림 서비스 origin을 `aud`로 하는 12시간 만료 ES256 서명이다. 새 의존성 없이 `node:crypto`만 쓴다.
 - 내용: PC·그룹·터미널 이름, 고정 문구, 열 경로(`/?terminal=<id>` 또는 `/?open=pairing`)만 담는다. 터미널 출력, 질문 내용, 명령, 연결 코드, 요청자 secret은 담지 않는다. 연결 요청 알림의 기기 이름은 요청자가 입력한 값이며 PC의 승인 목록에 보이는 것과 같다.
-- 알림 서비스가 아는 것: endpoint(브라우저가 발급), 보낸 시각과 크기, `TTL`·`Urgency`·`Topic` 헤더. `Topic`은 알림 태그의 SHA-256 앞 32자라 터미널 ID를 그대로 드러내지 않는다. Chrome 계열은 Google, Safari는 Apple, Firefox는 Mozilla의 서비스를 거친다.
+- 알림 서비스가 아는 것: endpoint(브라우저가 발급), 보낸 시각과 크기, `TTL`·`Urgency` 헤더. FCM이 문서화하지 않은 RFC 8030 `Topic` 헤더는 쓰지 않는다. Chrome 계열은 Google, Safari는 Apple, Firefox는 Mozilla의 서비스를 거친다.
 - 자리 비움: 호스트가 `OwnerPipe.exe presence`로 이 Windows 세션의 잠금 여부(`WTSQuerySessionInformation`의 `WTSSessionInfoEx`)와 마지막 입력 뒤 지난 시간(`GetLastInputInfo`)만 읽는다. 입력 내용·창 제목·사용자 이름은 읽지 않으며 데이터 폴더나 파이프를 쓰지 않는다. 읽지 못하면 요청을 놓치지 않도록 자리를 비운 것으로 본다. 보낼 요청과 구독한 기기가 있을 때만 읽는다.
 - 보는 중: 브라우저는 화면 표시 여부(`document.visibilityState`)를, PC 앱은 다른 PC에 연결해 있을 때 창 표시·최소화·최근 1분 입력 여부를 `presence.update`로 알린다. 표시가 꺼지거나 연결이 끊기면 5분 동안은 본 것으로 친다. 기기가 '보는 중'을 계속 보내도 알림이 오지 않을 뿐 다른 권한은 생기지 않는다.
 - 서비스 워커(`apps/web/public/sw.js`): push와 알림 클릭만 처리하고 fetch 처리기와 Cache API를 쓰지 않아 화면·출력을 저장하지 않는다. 알림을 누르면 같은 origin의 경로만 연다.

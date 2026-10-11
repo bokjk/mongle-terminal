@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createDecipheriv, createECDH, createPublicKey, hkdfSync, randomBytes, verify } from 'node:crypto';
-import { encryptPushPayload, generateVapidKeys, pushTopic, sendPush, validPushSubscription, validVapidKeys, vapidAuthorization } from '../../packages/host/web-push.ts';
+import { encryptPushPayload, generateVapidKeys, sendPush, validPushSubscription, validVapidKeys, vapidAuthorization } from '../../packages/host/web-push.ts';
 
 const joined = (value: string) => value.replace(/\s+/g, '');
 // RFC 8291 section 5 and appendix A.
@@ -97,12 +97,12 @@ test('sending posts the encrypted message with Web Push headers and reports drop
   const vapid = generateVapidKeys();
   const calls: Array<{ url: unknown; init: any }> = [];
   const respond = (status: number) => (async (url: unknown, init: any) => { calls.push({ url, init }); return new Response(null, { status }); }) as unknown as typeof fetch;
-  assert.deepEqual(await sendPush(subscription, { ttl: 900, urgency: 'high', topic: pushTopic('attention-1'), payload: { title: 'x' } }, vapid, { fetch: respond(201) }), { status: 'sent' });
+  assert.deepEqual(await sendPush(subscription, { ttl: 900, urgency: 'high', payload: { title: 'x' } }, vapid, { fetch: respond(201) }), { status: 'sent' });
   const { url, init } = calls[0];
   assert.equal(url, subscription.endpoint);
   assert.equal(init.method, 'POST'); assert.equal(init.redirect, 'error');
   assert.equal(init.headers['Content-Encoding'], 'aes128gcm'); assert.equal(init.headers.TTL, '900'); assert.equal(init.headers.Urgency, 'high');
-  assert.match(init.headers.Topic, /^[A-Za-z0-9_-]{32}$/);
+  assert.deepEqual(Object.keys(init.headers).sort(), ['Authorization', 'Content-Encoding', 'Content-Type', 'TTL', 'Urgency'], 'only headers every push service documents');
   assert.match(init.headers.Authorization, /^vapid t=.+, k=/);
   assert.equal(decryptAsBrowser(Buffer.from(init.body), browser).plaintext.toString(), JSON.stringify({ title: 'x' }));
   assert.deepEqual(await sendPush(subscription, { ttl: 1, payload: {} }, vapid, { fetch: respond(410) }), { status: 'gone', httpStatus: 410 });

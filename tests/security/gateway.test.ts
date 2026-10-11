@@ -691,7 +691,7 @@ test('a locked PC sends a waiting request once and a new device request to devic
     f.gateway.observeState(attentionState(f.core, 't1'));
     await eventually(() => push.posts.length === 1, 'the request notification');
     assert.equal(push.posts[0].headers.Urgency, 'high');
-    assert.match(push.posts[0].headers.Topic, /^[A-Za-z0-9_-]{32}$/);
+    assert.equal(push.posts[0].headers.TTL, '900');
     f.gateway.observeState(attentionState(f.core, 't1'));
     await new Promise(resolve => setTimeout(resolve, 150));
     assert.equal(push.posts.length, 1, 'once per request');

@@ -1,4 +1,4 @@
-import { createCipheriv, createECDH, createHash, createPrivateKey, createPublicKey, generateKeyPairSync, hkdfSync, randomBytes, sign, type KeyObject } from 'node:crypto';
+import { createCipheriv, createECDH, createPrivateKey, createPublicKey, generateKeyPairSync, hkdfSync, randomBytes, sign, type KeyObject } from 'node:crypto';
 import { isIP } from 'node:net';
 import { z } from 'zod';
 import { AppError } from '../protocol/index.ts';
@@ -7,7 +7,7 @@ import { AppError } from '../protocol/index.ts';
 export interface VapidKeys { publicKey: string; privateKey: string }
 /** What a browser's PushSubscription.toJSON() gives a host: where to post and how to encrypt for it. */
 export interface PushSubscriptionRecord { endpoint: string; p256dh: string; auth: string }
-export interface PushMessage { ttl: number; urgency?: 'very-low' | 'low' | 'normal' | 'high'; topic?: string; payload: unknown }
+export interface PushMessage { ttl: number; urgency?: 'very-low' | 'low' | 'normal' | 'high'; payload: unknown }
 export type PushResult = { status: 'sent' } | { status: 'gone'; httpStatus: number } | { status: 'failed'; httpStatus?: number };
 
 /** Contact for push services about this sender (RFC 8292 "sub"). */
@@ -98,11 +98,11 @@ export function validPushSubscription(value: unknown): PushSubscriptionRecord {
   return { endpoint: url.href, p256dh: keys.p256dh, auth: keys.auth };
 }
 
-/** Topic lets a push service replace an undelivered message of the same notification (RFC 8030, at most 32 base64url characters). */
-export function pushTopic(tag: string): string { return createHash('sha256').update(tag).digest('base64url').slice(0, 32); }
-
 export interface SendOptions { fetch?: typeof fetch; now?: number; timeoutMs?: number }
-/** Posts one encrypted message. 404/410 mean the browser dropped the subscription. Never follows redirects. */
+/**
+ * Posts one encrypted message with only the headers every push service documents (no RFC 8030 Topic,
+ * which FCM does not document). 404/410 mean the browser dropped the subscription. Never follows redirects.
+ */
 export async function sendPush(subscription: PushSubscriptionRecord, message: PushMessage, keys: VapidKeys, options: SendOptions = {}): Promise<PushResult> {
   const body = encryptPushPayload(Buffer.from(JSON.stringify(message.payload)), subscription);
   const headers: Record<string, string> = {
@@ -110,7 +110,6 @@ export async function sendPush(subscription: PushSubscriptionRecord, message: Pu
     TTL: String(Math.max(0, Math.floor(message.ttl))), Urgency: message.urgency ?? 'normal',
     Authorization: vapidAuthorization(subscription.endpoint, keys, options.now),
   };
-  if (message.topic) headers.Topic = message.topic;
   let response: Response;
   try {
     response = await (options.fetch ?? fetch)(subscription.endpoint, { method: 'POST', headers, body: new Uint8Array(body), redirect: 'error', signal: AbortSignal.timeout(options.timeoutMs ?? 10_000) });

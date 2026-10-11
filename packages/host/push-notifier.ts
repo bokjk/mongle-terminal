@@ -1,6 +1,6 @@
 import { AppError, type HostState } from '../protocol/index.ts';
 import { AWAY_IDLE_MS, type PcPresence } from './presence.ts';
-import { pushTopic, type PushMessage, type PushResult, type PushSubscriptionRecord } from './web-push.ts';
+import type { PushMessage, PushResult, PushSubscriptionRecord } from './web-push.ts';
 
 export interface PushTarget { deviceId: string; subscription: PushSubscriptionRecord }
 /** What the service worker shows (apps/web/public/sw.js). Names only: never terminal output or pairing codes. */
@@ -160,7 +160,7 @@ export class PushNotifier {
     await Promise.all(due.map(async ([alert, target]) => {
       if (this.alerts.get(alert.key) !== alert) return; // answered while checking
       const ttl = Number.isFinite(alert.expiresAt) ? Math.max(1, Math.floor((alert.expiresAt - this.now()) / 1000)) : alert.ttl;
-      const result = await this.options.send(target, { ttl, urgency: 'high', topic: pushTopic(alert.payload.tag), payload: alert.payload }).catch((): PushResult => ({ status: 'failed' }));
+      const result = await this.options.send(target, { ttl, urgency: 'high', payload: alert.payload }).catch((): PushResult => ({ status: 'failed' }));
       if (result.status === 'sent') alert.done.add(target.deviceId);
       else if (result.status === 'gone') { alert.done.add(target.deviceId); this.options.forget(target.deviceId); }
       else { const previous = alert.failures.get(target.deviceId); alert.failures.set(target.deviceId, { count: (previous?.count ?? 0) + 1, at: this.now() }); failed = true; }

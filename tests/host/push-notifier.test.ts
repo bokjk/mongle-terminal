@@ -61,7 +61,7 @@ test('a request waiting while nobody is at the PC is sent once, with names only'
   assert.equal(h.sent.length, 2);
   const claude = h.sent.find(item => item.message.payload && (item.message.payload as any).tag === 'attention-t1')!.message;
   assert.deepEqual({ ...(claude.payload as any), ts: 0 }, { v: 1, kind: 'attention', title: 'MY-PC', body: '작업 · PowerShell: Claude가 확인을 기다리고 있습니다.', tag: 'attention-t1', url: '/?terminal=t1', ts: 0 });
-  assert.equal(claude.urgency, 'high'); assert.equal(claude.ttl, 900); assert.match(claude.topic!, /^[A-Za-z0-9_-]{32}$/);
+  assert.equal(claude.urgency, 'high'); assert.equal(claude.ttl, 900);
   assert.match((h.sent.find(item => (item.message.payload as any).tag === 'attention-t2')!.message.payload as any).body, /Codex가 확인을 기다리고/);
   notifier.observeState(state(terminal('t1', 'attention'), terminal('t2', 'attention', { agentProvider: 'codex' })));
   await h.advance(30 * 60_000);
