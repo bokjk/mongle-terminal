@@ -85,7 +85,7 @@ test('concurrent checks share one request and can check again after completion',
 });
 
 test('automatic download reaches readiness without preparing shutdown or launching an installer', async t => {
-  const { controller, driver, calls } = fixture(t);
+  const { controller, driver, calls, states } = fixture(t);
   const downloaded = deferred<void>();
   driver.checkResult = async () => {
     driver.emit('update-available', { version: '0.2.0' });
@@ -101,8 +101,11 @@ test('automatic download reaches readiness without preparing shutdown or launchi
   assert.equal(controller.getState().status, 'ready');
   assert.equal(controller.getState().availableVersion, '0.2.0');
   assert.equal(controller.getState().progress, 100);
+  const seen = states.length;
   await controller.check();
-  assert.equal(driver.checks, 1, 'keep the downloaded version ready');
+  assert.equal(driver.checks, 2, 'a ready update is still checked for a newer release');
+  assert.ok(states.slice(seen).every(state => state.status === 'ready' && state.availableVersion === '0.2.0'), 'the same release keeps the download installable without a checking or download step');
+  assert.equal(controller.getState().status, 'ready');
   assert.deepEqual(calls, []);
   assert.deepEqual(driver.installs, []);
 });
@@ -142,7 +145,7 @@ test('failed local shutdown never starts installation and can be checked again',
   assert.deepEqual(calls, ['failed']);
   assert.deepEqual(driver.installs, []);
   await controller.check();
-  assert.equal(driver.checks, 1);
+  assert.equal(driver.checks, 2, 'the release check before installing, then this check');
 });
 
 test('installation waits for the lifecycle barrier and coalesces repeated install requests', async t => {
@@ -157,7 +160,7 @@ test('installation waits for the lifecycle barrier and coalesces repeated instal
   assert.deepEqual(calls, []);
   assert.deepEqual(driver.installs, []);
   await controller.check();
-  assert.equal(driver.checks, 0);
+  assert.equal(driver.checks, 1, 'only the release check that runs before installing');
   prepared.resolve(true);
   await first;
   assert.deepEqual(calls, ['allow-quit', 'installer']);
@@ -174,6 +177,8 @@ test('installation reports real lifecycle steps without inventing an install per
   driver.emit('download-progress', { percent: 40 });
   driver.emit('update-downloaded', { version: '0.2.0' });
   const pending = controller.install();
+  assert.equal(controller.getState().phase, 'checking', 'look for a newer release before asking');
+  await flush();
   assert.equal(controller.getState().phase, 'confirming');
   report('saving');
   assert.equal(controller.getState().phase, 'saving');
@@ -181,7 +186,7 @@ test('installation reports real lifecycle steps without inventing an install per
   await pending;
   assert.equal(controller.getState().phase, 'launching');
   const installing = states.filter(state => state.status === 'installing');
-  assert.deepEqual(installing.map(state => state.phase), ['confirming', 'saving', 'launching']);
+  assert.deepEqual(installing.map(state => state.phase), ['checking', 'confirming', 'saving', 'launching']);
   assert.ok(installing.every(state => state.progress === 100), 'download progress is not reused as an install percentage');
   assert.ok(installing.every(state => state.message && !/%/.test(state.message)));
   report('saving');
@@ -212,6 +217,8 @@ for (const accepted of [true, false]) {
     const { controller, driver, calls } = fixture(t, { prepareInstall: () => prepared.promise });
     driver.emit('update-downloaded', { version: '0.2.0' });
     const pending = controller.install();
+    await flush();
+    assert.equal(controller.getState().phase, 'confirming');
     driver.emit('error', new Error('cached update invalid'));
     assert.deepEqual(calls, [], 'do not release the shutdown barrier while preparation is still running');
     prepared.resolve(accepted);
@@ -312,11 +319,135 @@ test('disposing while shutdown is pending prevents installer launch after it com
   const { controller, driver, states, calls } = fixture(t, { prepareInstall: () => prepared.promise });
   driver.emit('update-downloaded', { version: '0.2.0' });
   const pending = controller.install();
+  await flush();
   controller.dispose();
   const count = states.length;
   prepared.resolve(true);
   await pending;
   assert.equal(states.length, count);
   assert.equal(calls.includes('allow-quit'), false);
+  assert.deepEqual(driver.installs, []);
+});
+
+test('a ready update is replaced when a newer release appears, without hiding the install button meanwhile', async t => {
+  const { controller, driver, states } = fixture(t);
+  driver.emit('update-downloaded', { version: '0.2.0' });
+  const download = deferred<void>();
+  driver.checkResult = async () => {
+    driver.emit('checking-for-update');
+    driver.emit('update-available', { version: '0.3.0' });
+    return { downloadPromise: download.promise };
+  };
+  const seen = states.length;
+  await controller.check();
+  assert.ok(!states.slice(seen).some(state => state.status === 'checking'), 'no checking step replaces the ready notice');
+  assert.equal(controller.getState().status, 'downloading');
+  assert.equal(controller.getState().availableVersion, '0.3.0');
+  await assert.rejects(controller.install(), /준비되지/, 'the outdated download is no longer installable');
+  driver.emit('update-downloaded', { version: '0.3.0' });
+  download.resolve();
+  await flush();
+  assert.equal(controller.getState().status, 'ready');
+  assert.equal(controller.getState().availableVersion, '0.3.0');
+});
+
+test('a failed check while an update is ready keeps that download installable', async t => {
+  const { controller, driver, states } = fixture(t);
+  driver.emit('update-downloaded', { version: '0.2.0' });
+  driver.checkResult = async () => {
+    driver.emit('checking-for-update');
+    const error = new Error('offline');
+    driver.emit('error', error);
+    throw error;
+  };
+  const seen = states.length;
+  await controller.check();
+  assert.equal(controller.getState().status, 'ready');
+  assert.equal(controller.getState().availableVersion, '0.2.0');
+  assert.ok(!states.slice(seen).some(state => state.status === 'error' || state.status === 'checking'));
+});
+
+test('a late install downloads the newest release first and installs only that release', async t => {
+  const prepared: string[] = [];
+  const { controller, driver, states, calls } = fixture(t, { prepareInstall: async () => { prepared.push(controller.getState().availableVersion!); calls.push('prepare'); return true; } });
+  driver.emit('update-downloaded', { version: '0.2.0' });
+  const download = deferred<void>();
+  driver.checkResult = async () => {
+    driver.emit('update-available', { version: '0.4.0' });
+    return { downloadPromise: download.promise };
+  };
+  await controller.install();
+  assert.equal(controller.getState().status, 'downloading');
+  assert.equal(controller.getState().availableVersion, '0.4.0');
+  assert.match(controller.getState().message!, /0\.4\.0/);
+  assert.deepEqual(calls, [], 'nothing shuts down for the outdated download');
+  assert.deepEqual(driver.installs, []);
+  driver.emit('update-downloaded', { version: '0.4.0' });
+  download.resolve();
+  await flush();
+  assert.deepEqual(prepared, ['0.4.0'], 'installation continues with the newest release on its own');
+  assert.deepEqual(driver.installs, [[false, true]]);
+  assert.equal(driver.checks, 1);
+  assert.ok(!states.some(state => state.status === 'ready' && state.availableVersion === '0.4.0'), 'goes straight to the confirmation');
+});
+
+test('installation continues with the ready download when the release check fails', async t => {
+  const { controller, driver, calls, states } = fixture(t);
+  driver.emit('update-downloaded', { version: '0.2.0' });
+  driver.checkResult = async () => { const error = new Error('offline'); driver.emit('error', error); throw error; };
+  await controller.install();
+  assert.deepEqual(calls, ['prepare', 'allow-quit']);
+  assert.deepEqual(driver.installs, [[false, true]]);
+  assert.ok(!states.some(state => state.status === 'error'));
+});
+
+test('installation stops when the release is no longer offered', async t => {
+  const { controller, driver, calls } = fixture(t);
+  driver.emit('update-downloaded', { version: '0.2.0' });
+  driver.checkResult = async () => { driver.emit('update-not-available', { version: '0.1.0' }); return {}; };
+  await controller.install();
+  assert.equal(controller.getState().status, 'idle');
+  assert.deepEqual(calls, []);
+  assert.deepEqual(driver.installs, []);
+});
+
+test('a slow release check returns to the ready download without shutting anything down', async t => {
+  const { controller, driver, calls } = fixture(t, { latestCheckTimeoutMs: 20 });
+  driver.emit('update-downloaded', { version: '0.2.0' });
+  const result = deferred<{}>();
+  driver.checkResult = () => result.promise;
+  await controller.install();
+  assert.equal(controller.getState().status, 'ready');
+  assert.match(controller.getState().message!, /늦어지고/);
+  assert.deepEqual(calls, []);
+  result.resolve({});
+  await flush();
+  assert.equal(controller.getState().status, 'ready', 'the late answer keeps the download ready');
+  assert.deepEqual(driver.installs, []);
+});
+
+test('the same release found again is installed after its download is confirmed', async t => {
+  const { controller, driver, calls } = fixture(t);
+  driver.emit('update-downloaded', { version: '0.2.0' });
+  const revalidated = deferred<void>();
+  driver.checkResult = async () => { driver.emit('update-available', { version: '0.2.0' }); return { downloadPromise: revalidated.promise }; };
+  const pending = controller.install();
+  await flush();
+  assert.equal(controller.getState().phase, 'checking');
+  assert.deepEqual(calls, []);
+  driver.emit('update-downloaded', { version: '0.2.0' });
+  revalidated.resolve();
+  await pending;
+  assert.deepEqual(calls, ['prepare', 'allow-quit']);
+  assert.deepEqual(driver.installs, [[false, true]]);
+});
+
+test('invalid release metadata found before installing stops without desktop recovery', async t => {
+  const { controller, driver, calls } = fixture(t);
+  driver.emit('update-downloaded', { version: '0.2.0' });
+  driver.checkResult = async () => { driver.emit('update-available', { version: 'bad' }); return {}; };
+  await controller.install();
+  assert.equal(controller.getState().status, 'error');
+  assert.deepEqual(calls, [], 'nothing was shut down, so nothing is recovered');
   assert.deepEqual(driver.installs, []);
 });

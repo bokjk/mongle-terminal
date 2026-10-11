@@ -3,7 +3,7 @@ import test from 'node:test';
 import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import net from 'node:net';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { mkdtemp, readFile, writeFile, readdir, rm, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
@@ -52,6 +52,8 @@ test('installer keeps user hooks (even ones naming our script), writes an unquot
     assert.ok(!managed[0].command.includes('"'), 'Windows hook runner gets an unquoted command');
     assert.ok(managed[0].command.endsWith(` ${script} ${CODEX_HOOK_MARKER}`));
   }
+  assert.deepEqual(Object.keys(current.hooks).sort(), ['SessionEnd', 'SessionStart', 'Stop'], 'a CLI before 0.162.0 gets no turn events');
+  assert.match(result.message, /0\.162\.0/);
   assert.equal(await readFile(path.join(home, 'config.toml'), 'utf8'), 'notify = ["user-notify"]\n', 'config.toml (notify, trust) untouched');
   assert.equal(await readFile(script, 'utf8'), CODEX_HOOK_SOURCE);
   const files = await readdir(home);
@@ -59,6 +61,40 @@ test('installer keeps user hooks (even ones naming our script), writes an unquot
   await installCodexIntegration({codexHome:home, version:'0.160.1'});
   assert.deepEqual(await readdir(home), files, 'no duplicate hooks or backup clutter');
   assert.deepEqual(JSON.parse(await readFile(file, 'utf8')), current, 'command text is stable so Codex trust is kept');
+});
+
+test('Codex 0.162.0 and later also report their turns: one marked entry per event, session trust kept, removed again for an older CLI', async t => {
+  const home = await directory(t), file = path.join(home, 'hooks.json'), script = path.join(home, 'mongle-terminal-codex-hook.cjs');
+  const userStop = {hooks:[{type:'command', command:'user-stop'}]}, userPost = {matcher:'Bash', hooks:[{type:'command', command:'user-post'}]};
+  await writeFile(file, JSON.stringify({hooks:{Stop:[userStop], PostToolUse:[userPost]}}));
+  assert.equal((await installCodexIntegration({codexHome:home, version:'0.161.0'})).status, 'installed');
+  const sessionOnly = JSON.parse(await readFile(file, 'utf8'));
+  const result = await installCodexIntegration({codexHome:home, version:'0.162.0'});
+  assert.equal(result.status, 'installed');
+  assert.match(result.message, /작업 상태/);
+  const current = JSON.parse(await readFile(file, 'utf8'));
+  for (const event of ['SessionStart', 'SessionEnd']) assert.deepEqual(current.hooks[event], sessionOnly.hooks[event], event + ' keeps its trusted definition');
+  const managed = (event: string) => current.hooks[event].filter((group: any) => group.hooks.some((h: any) => isManagedCodexHook(h, script)));
+  for (const event of ['UserPromptSubmit', 'PermissionRequest', 'PreToolUse', 'PostToolUse', 'Stop', 'Interrupt']) {
+    const groups = managed(event);
+    assert.equal(groups.length, 1, event);
+    assert.equal(groups[0].hooks.length, 1);
+    assert.equal(groups[0].hooks[0].timeout, 3, 'Interrupt accepts at most 3 seconds');
+    assert.equal(groups[0].hooks[0].command, sessionOnly.hooks.SessionStart[0].hooks[0].command, 'one command text for every event');
+  }
+  assert.equal(managed('PreToolUse')[0].matcher, '^request_user_input$');
+  for (const event of ['UserPromptSubmit', 'PermissionRequest', 'PostToolUse', 'Stop', 'Interrupt']) assert.equal(managed(event)[0].matcher, undefined, event);
+  // A background report of an earlier tool could arrive after a later request and hide it (found in the live check).
+  for (const event of ['UserPromptSubmit', 'PermissionRequest', 'PreToolUse', 'PostToolUse', 'Stop', 'Interrupt'])
+    assert.equal(managed(event)[0].hooks[0].async, undefined, event + ' runs in the order of the turn');
+  assert.deepEqual(current.hooks.Stop[0], userStop, 'user hooks stay first and verbatim');
+  assert.deepEqual(current.hooks.PostToolUse[0], userPost);
+  const files = await readdir(home);
+  await installCodexIntegration({codexHome:home, version:'0.162.1'});
+  assert.deepEqual(await readdir(home), files, 'idempotent');
+  assert.deepEqual(JSON.parse(await readFile(file, 'utf8')), current);
+  await installCodexIntegration({codexHome:home, version:'0.161.0'});
+  assert.deepEqual(JSON.parse(await readFile(file, 'utf8')), sessionOnly, 'an older CLI loses only the managed turn events');
 });
 
 test('installer refuses old CLIs, malformed files and paths it cannot pass unquoted', async t => {
@@ -89,29 +125,69 @@ function invoke(script: string, value: unknown, env: Record<string,string|undefi
   });
 }
 
-test('hook forwards only exact wrapped lifecycle events over the pipe and never prints', async t => {
+/** True when all of the input reached the hook process: a hook that exits early leaves Codex writing into a closed pipe. */
+function drains(script: string, value: unknown) {
+  return new Promise<boolean>((resolve, reject) => {
+    const e = {...process.env}; for (const k of ['MONGLE_AGENT_TOKEN', 'MONGLE_AGENT_PIPE', 'MONGLE_CODEX_RUN']) delete e[k];
+    const child = spawn(process.execPath, [script], {env:e, windowsHide:true});
+    let written: boolean | undefined, exited = false;
+    const done = () => { if (written !== undefined && exited) resolve(written); };
+    child.stdin.on('finish', () => { written ??= true; done(); });
+    child.stdin.on('error', () => { written = false; done(); });
+    child.on('error', reject); child.on('exit', () => { exited = true; done(); });
+    child.stdin.end(JSON.stringify(value));
+  });
+}
+
+test('hook forwards the session and only digests of its turns over the pipe and never prints', async t => {
   const dir = await directory(t), script = path.join(dir, 'hook.cjs'); await writeFile(script, CODEX_HOOK_SOURCE);
   const name = pipeName(), lines: any[] = [];
   const server = net.createServer(s=>{let d='';s.on('data',c=>d+=c);s.on('end',()=>lines.push(JSON.parse(d)));});
   await new Promise<void>(r=>server.listen(name,r)); t.after(()=>server.close());
   const env = {MONGLE_AGENT_TOKEN:TOKEN, MONGLE_AGENT_PIPE:name, MONGLE_CODEX_RUN:RUN};
-  const start = {session_id:ID.toUpperCase(), cwd:'D:\\work', hook_event_name:'SessionStart', source:'startup', transcript_path:'C:\\secret.jsonl', model:'m'};
+  const base = {session_id:ID.toUpperCase(), cwd:'D:\\work', transcript_path:'C:\\secret.jsonl', model:'secret-model', permission_mode:'default'};
+  const start = {...base, hook_event_name:'SessionStart', source:'startup'};
+  const prompt = {...base, hook_event_name:'UserPromptSubmit', turn_id:'turn-1', prompt:'secret prompt'};
   for (const [value, e] of [
     [start, {...env, MONGLE_CODEX_RUN:undefined}],            // unwrapped / shared daemon
     [start, {...env, MONGLE_AGENT_TOKEN:'x'}],
-    [{...start, agent_id:'sub'}, env],                         // subagent
+    [{...start, agent_id:'sub'}, env],                         // subagent lifecycle
     [{...start, session_id:'latest'}, env],
-    [{...start, hook_event_name:'UserPromptSubmit', prompt:'secret'}, env],
+    [{...prompt, turn_id:undefined}, env],                     // no turn id
+    [{...prompt, turn_id:'x'.repeat(201)}, env],
+    [{...prompt, agent_id:'sub'}, env],                        // a subagent's own prompt
+    [{...base, hook_event_name:'Stop', turn_id:'s', agent_type:'worker'}, env],
+    [{...base, hook_event_name:'PreCompact', turn_id:'turn-1', trigger:'auto'}, env],
     ['not json', env],
   ] as const) { const r = await invoke(script, value, e as any); assert.equal(r.out+r.err, ''); }
   await settle(); assert.deepEqual(lines, []);
-  assert.deepEqual(await invoke(script, start, env), {out:'', err:''});
-  assert.deepEqual(await invoke(script, {session_id:ID, hook_event_name:'SessionEnd', reason:'other'}, env), {out:'', err:''});
+  // Outside a wrapped Mongle shell (the Codex app, another terminal) the hook still reads all Codex writes.
+  assert.equal(await drains(script, {...base, hook_event_name:'PostToolUse', turn_id:'turn-1', tool_name:'Bash', tool_use_id:'c', tool_input:{}, tool_response:'x'.repeat(2_000_000)}), true);
+  const output = 'secret output '.repeat(10000); // above the earlier 64 KiB input cap
+  for (const value of [
+    start,
+    prompt,
+    {...base, hook_event_name:'PermissionRequest', turn_id:'subagent-turn', agent_id:'agent-7', tool_name:'Bash', tool_input:{command:'secret command', description:'secret reason'}},
+    {...base, hook_event_name:'PreToolUse', turn_id:'turn-1', tool_name:'request_user_input', tool_use_id:'call-1', tool_input:{questions:['secret question']}},
+    {...base, hook_event_name:'PostToolUse', turn_id:'turn-1', tool_name:'Bash', tool_use_id:'call-2', tool_input:{command:'secret command'}, tool_response:output},
+    {...base, hook_event_name:'Stop', turn_id:'turn-1', stop_hook_active:false, last_assistant_message:'secret answer'},
+    {...base, hook_event_name:'Interrupt', turn_id:'turn-2'},
+    {...base, hook_event_name:'SessionEnd', reason:'other'},
+  ]) assert.deepEqual(await invoke(script, value, env), {out:'', err:''});
   await settle();
+  const sha = (value: string) => createHash('sha256').update(value).digest('hex');
+  const head = {v:1, token:TOKEN, run:RUN, sessionId:ID};
   assert.deepEqual(lines, [
-    {v:1, token:TOKEN, run:RUN, event:'SessionStart', sessionId:ID, cwd:'D:\\work'},
-    {v:1, token:TOKEN, run:RUN, event:'SessionEnd', sessionId:ID},
-  ], 'no transcript path, model or prompt leaves the hook');
+    {...head, event:'SessionStart', cwd:'D:\\work', source:'startup'},
+    {...head, event:'UserPromptSubmit', turn:sha('turn-1')},
+    {...head, event:'PermissionRequest', turn:sha('subagent-turn'), agent:sha('agent-7')},
+    {...head, event:'PreToolUse', turn:sha('turn-1'), question:true},
+    {...head, event:'PostToolUse', turn:sha('turn-1')},
+    {...head, event:'Stop', turn:sha('turn-1')},
+    {...head, event:'Interrupt', turn:sha('turn-2')},
+    {...head, event:'SessionEnd'},
+  ]);
+  assert.doesNotMatch(JSON.stringify(lines), /secret|turn-1|agent-7/, 'no prompt, tool data, answer, transcript, model or raw id leaves the hook');
 });
 
 test('pipe ends only the identical run+conversation and never sends a generic clear', async t => {
@@ -131,6 +207,32 @@ test('pipe ends only the identical run+conversation and never sends a generic cl
   await send(pipe.name, msg({event:'SessionEnd', sessionId:ID}));
   await settle();
   assert.deepEqual(calls.slice(1), [{kind:'end', token:TOKEN, session:{provider:'codex', sessionId:ID}}], 'one identity-bound end');
+});
+
+test('pipe forwards turn events only for the run and conversation the shell started', async t => {
+  const calls: unknown[] = [];
+  const pipe = await startAgentPipe({start:()=>true, end:()=>true, status:(token, event)=>{calls.push([token, event]); return true;}}, {name:pipeName()}); t.after(()=>pipe.close());
+  const msg = (o: object) => JSON.stringify({v:1, token:TOKEN, run:RUN, sessionId:ID, ...o}) + '\n';
+  const TURN = 'e'.repeat(64), AGENT = 'f'.repeat(64);
+  await send(pipe.name, msg({event:'UserPromptSubmit', turn:TURN}));                        // before the conversation started
+  await send(pipe.name, msg({event:'SessionStart', source:'startup'}));
+  await send(pipe.name, msg({event:'UserPromptSubmit', turn:TURN}));
+  await send(pipe.name, msg({event:'PermissionRequest', turn:TURN, agent:AGENT}));
+  await send(pipe.name, msg({event:'Stop', turn:TURN, run:'ef'.repeat(16)}));                // other run
+  await send(pipe.name, msg({event:'Stop', turn:TURN, sessionId:'01a1168a-fd50-7563-b070-000000000000'})); // other conversation
+  await send(pipe.name, msg({event:'Stop', turn:'turn-1'}));                                 // not a digest
+  await send(pipe.name, msg({event:'PreCompact', turn:TURN}));
+  await send(pipe.name, msg({event:'Stop', turn:TURN, prompt:'secret'}));
+  await send(pipe.name, msg({event:'SessionEnd'}));
+  await send(pipe.name, msg({event:'Stop', turn:TURN}));                                     // after the end
+  await settle();
+  assert.deepEqual(calls, [
+    [TOKEN, {event:'SessionStart', source:'startup'}],
+    [TOKEN, {event:'UserPromptSubmit', turn:TURN}],
+    [TOKEN, {event:'PermissionRequest', turn:TURN, agent:AGENT}],
+    [TOKEN, {event:'Stop', turn:TURN}],
+    [TOKEN, {event:'SessionEnd'}],
+  ]);
 });
 
 test('pipe handles chunked lines once, drops forgotten or rejected shells, caps tracking, and closes open sockets', async t => {

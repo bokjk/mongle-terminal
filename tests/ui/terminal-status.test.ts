@@ -19,6 +19,15 @@ test('a single terminal shows only hook-proven Claude states or an unseen notifi
   assert.equal(terminalStatusDescription(terminalStatus(terminal('a', 'attention'), unseen())), '확인 요청 · 미확인');
 });
 
+test('a Codex terminal shows its hook-proven states like Claude; another CLI shows none', () => {
+  const codex = (agentStatus: TerminalInfo['agentStatus']): TerminalInfo => ({...terminal('c'), agentStatus, agentProvider:'codex'});
+  assert.equal(terminalStatus(codex('working'))?.kind, 'working');
+  assert.equal(terminalStatus(codex('attention'), unseen())?.kind, 'attention');
+  assert.equal(terminalStatus(codex('completed'), unseen())?.kind, 'completed');
+  assert.equal(terminalStatus(codex('completed')), undefined, 'a read completion leaves nothing behind');
+  assert.equal(terminalStatus({...codex('working'), agentProvider:'other' as any}), undefined);
+});
+
 test('groups keep every unseen alert visible beside the most urgent state', () => {
   const both = aggregateTerminalStatus([terminal('a', 'error'), terminal('b', 'attention')], new Map([['b', unseen()]]));
   assert.equal(both?.kind, 'error');

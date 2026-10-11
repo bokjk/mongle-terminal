@@ -60,6 +60,40 @@ internal static class OwnerPipe
     [DllImport("kernel32.dll", SetLastError = true)] private static extern bool DuplicateHandle(IntPtr sourceProcess, IntPtr sourceHandle, IntPtr targetProcess, out IntPtr targetHandle, uint access, bool inherit, uint options);
     [StructLayout(LayoutKind.Sequential)] private struct ProcessBasicInformation { public IntPtr Reserved1; public IntPtr Peb; public IntPtr Reserved2a; public IntPtr Reserved2b; public IntPtr ProcessId; public IntPtr ParentProcessId; }
     [DllImport("ntdll.dll")] private static extern int NtQueryInformationProcess(IntPtr process, int informationClass, ref ProcessBasicInformation information, int length, out int returnLength);
+    [StructLayout(LayoutKind.Sequential)] private struct LastInputInfo { public uint Size; public uint Time; }
+    [DllImport("user32.dll")] private static extern bool GetLastInputInfo(ref LastInputInfo info);
+    [DllImport("kernel32.dll")] private static extern uint GetTickCount();
+    [DllImport("wtsapi32.dll", SetLastError = true)] private static extern bool WTSQuerySessionInformation(IntPtr server, int sessionId, int infoClass, out IntPtr buffer, out int bytes);
+    [DllImport("wtsapi32.dll")] private static extern void WTSFreeMemory(IntPtr memory);
+
+    // Whether someone is at this PC, for phone notifications: the session's lock state and the time
+    // since the last keyboard or mouse input. Reads no input content, window titles or user names,
+    // needs no data directory and starts no IPC.
+    private static string Presence()
+    {
+        long idleMs = -1;
+        LastInputInfo input = new LastInputInfo();
+        input.Size = (uint)Marshal.SizeOf(typeof(LastInputInfo));
+        if (GetLastInputInfo(ref input)) idleMs = unchecked(GetTickCount() - input.Time);
+        string session = "unknown", locked = "null";
+        IntPtr buffer; int bytes;
+        // WTSSessionInfoEx (25) for the current session (-1). WTSINFOEXW is a DWORD level followed by a
+        // union aligned to 8 bytes: SessionId at 8, SessionState at 12, SessionFlags at 16.
+        if (WTSQuerySessionInformation(IntPtr.Zero, -1, 25, out buffer, out bytes))
+        {
+            try
+            {
+                if (bytes >= 20 && Marshal.ReadInt32(buffer, 0) == 1 && Marshal.ReadInt32(buffer, 8) == Process.GetCurrentProcess().SessionId)
+                {
+                    session = Marshal.ReadInt32(buffer, 12) == 0 ? "active" : "other";
+                    int flags = Marshal.ReadInt32(buffer, 16);
+                    locked = flags == 0 ? "true" : flags == 1 ? "false" : "null";
+                }
+            }
+            finally { WTSFreeMemory(buffer); }
+        }
+        return "{\"kind\":\"presence\",\"idleMs\":" + idleMs + ",\"session\":\"" + session + "\",\"locked\":" + locked + "}";
+    }
 
     private sealed class OwnerException : Exception
     {
@@ -74,6 +108,12 @@ internal static class OwnerPipe
         new Thread(WriteOutput) { IsBackground = true, Name = "owner-output" }.Start();
         try
         {
+            if (args.Length == 1 && args[0] == "presence")
+            {
+                Console.WriteLine(Presence());
+                Console.Out.Flush();
+                return 0;
+            }
             if (Environment.OSVersion.Platform != PlatformID.Win32NT || args.Length < 2 || (args[0] != "server" && args[0] != "client" && args[0] != "prepare") || (args[0] == "server" ? args.Length != 3 : args.Length != 2))
                 throw new InvalidOperationException("Windows owner IPC requires server/client/prepare and a data directory.");
             if (args[0] == "server" && (!Int32.TryParse(args[2], out ParentPid) || ParentPid <= 0)) throw new SecurityException("Owner host parent identity is required.");

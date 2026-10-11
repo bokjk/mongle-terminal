@@ -1,6 +1,6 @@
 import type { HostEvent, Transport } from '../protocol/index';
-import type { UpdateState } from '../../apps/desktop/contracts';
-export type { UpdateState } from '../../apps/desktop/contracts';
+import type { ComputerSearch, UpdateState } from '../../apps/desktop/contracts';
+export type { ComputerSearch, UpdateState } from '../../apps/desktop/contracts';
 
 export type ConnectionInfo = { status: 'connecting' | 'connected' | 'pairing' | 'offline'; hostId?: string; connectionId?: string; owner: boolean; error?: string };
 export type SavedHost = { id: string; name: string; url?: string; local: boolean; selected: boolean };
@@ -12,6 +12,7 @@ export interface DesktopBridge {
   subscribe(listener: (event: HostEvent) => void): () => void;
   listHosts(): Promise<SavedHost[]>;
   addHost(host: {name: string; url: string}): Promise<SavedHost>;
+  findComputers?(refresh: boolean): Promise<ComputerSearch>;
   removeHost(id: string): Promise<void>;
   selectHost(id: string): Promise<ConnectionInfo>;
   selectDirectory?(currentPath?: string): Promise<string | null>;

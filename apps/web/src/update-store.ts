@@ -104,6 +104,7 @@ export function useAppUpdate(): UpdateSnapshot & { store: UpdateStore } {
 
 /** Visible, non-percentage step text for the install lifecycle. */
 export const INSTALL_STEPS: Array<{ phase: NonNullable<UpdateState['phase']>; label: string }> = [
+  { phase: 'checking', label: '최신 버전 확인' },
   { phase: 'confirming', label: '설치 확인' },
   { phase: 'saving', label: '작업 저장·종료' },
   { phase: 'launching', label: '설치 프로그램 실행' },

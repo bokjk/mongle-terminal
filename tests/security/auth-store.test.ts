@@ -193,3 +193,45 @@ test('an authentication store from an earlier version keeps its devices and gain
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('phone notification subscriptions belong to live devices and leave with them', () => {
+  const f = fixture();
+  try {
+    f.store.setOrigin(origin);
+    const phone = f.pair(), tablet = f.pair();
+    const subscription = (name: string) => ({ endpoint: `https://push.example.net/${name}`, p256dh: 'BP' + name, auth: 'A' + name });
+    f.store.setPushSubscription(phone.session.deviceId, subscription('phone'));
+    f.store.setPushSubscription(phone.session.deviceId, subscription('phone-renewed'));
+    f.store.setPushSubscription(tablet.session.deviceId, subscription('tablet'));
+    assert.deepEqual(f.store.pushSubscription(phone.session.deviceId), subscription('phone-renewed'), 'a new subscription replaces the old one');
+    assert.deepEqual(f.store.pushTargets().map(target => target.deviceId).sort(), [phone.session.deviceId, tablet.session.deviceId].sort());
+    assert.equal(f.store.pushTargets(origin).length, 2);
+    assert.equal(f.store.pushTargets('https://other.example-tailnet.ts.net').length, 0, 'only devices paired through that address');
+    assert.equal(f.store.listDevices().find(device => device.deviceId === phone.session.deviceId)?.notifications, true);
+    f.store.revoke(tablet.session.deviceId);
+    assert.equal(f.store.pushSubscription(tablet.session.deviceId), undefined);
+    assert.equal(f.store.listDevices().find(device => device.deviceId === tablet.session.deviceId)?.notifications, undefined);
+    assert.throws(() => f.store.setPushSubscription(tablet.session.deviceId, subscription('again')), /승인/);
+    assert.throws(() => f.store.setPushSubscription(randomUUID(), subscription('unknown')), /승인/);
+    f.store.removePushSubscription(phone.session.deviceId);
+    assert.equal(f.store.pushTargets().length, 0);
+    f.store.setPushSubscription(phone.session.deviceId, subscription('phone'));
+    f.store.setOrigin('https://moved.example-tailnet.ts.net');
+    assert.equal(f.store.pushSubscription(phone.session.deviceId), undefined, 'changing the remote address removes them with the devices');
+    assert.equal(f.store.pushTargets().length, 0);
+  } finally { f.close(); }
+});
+
+test('the Web Push key pair is made once and replaced only when unreadable', () => {
+  const f = fixture();
+  try {
+    let made = 0;
+    const create = () => ({ publicKey: 'public-' + ++made, privateKey: 'private-' + made });
+    const valid = (value: unknown) => typeof (value as any)?.publicKey === 'string' && (value as any).publicKey.startsWith('public-');
+    const first = f.store.pushKeys(create, valid);
+    f.reopen();
+    assert.deepEqual(f.store.pushKeys(create, valid), first);
+    assert.equal(made, 1);
+    assert.deepEqual(f.store.pushKeys(create, () => false), { publicKey: 'public-2', privateKey: 'private-2' });
+  } finally { f.close(); }
+});
