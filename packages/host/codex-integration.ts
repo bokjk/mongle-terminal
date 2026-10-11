@@ -67,8 +67,7 @@ export function mergeCodexHooks(config: unknown, node: string, script: string, s
     const handler = CODEX_HOOK_HANDLERS[event];
     if (handler.status && !status) { if (kept.length) hooks[event] = kept; else delete hooks[event]; continue; }
     // Codex caps SessionEnd and Interrupt hooks at 3 seconds; use the same bound for every event.
-    const entry = {type:'command', command, timeout:3, ...(handler.async ? {async:true} : {})};
-    hooks[event] = [...kept, {...(handler.matcher ? {matcher:handler.matcher} : {}), hooks:[entry]}];
+    hooks[event] = [...kept, {...(handler.matcher ? {matcher:handler.matcher} : {}), hooks:[{type:'command', command, timeout:3}]}];
   }
   return {...config, hooks};
 }

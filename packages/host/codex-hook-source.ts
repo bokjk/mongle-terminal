@@ -57,7 +57,7 @@ process.stdin.on('end', () => {
 export const CODEX_HOOK_EVENTS = ['SessionStart', 'SessionEnd', 'UserPromptSubmit', 'PermissionRequest', 'PreToolUse', 'PostToolUse', 'Stop', 'Interrupt'] as const;
 export type CodexHookEvent = typeof CODEX_HOOK_EVENTS[number];
 /** status: an event of a turn (work, request and completion status), installed only for CLIs that know it. */
-export interface CodexHookHandler { readonly status?: true; readonly matcher?: string; readonly async?: true }
+export interface CodexHookHandler { readonly status?: true; readonly matcher?: string }
 /** How Codex runs each managed event. SessionStart and SessionEnd keep their first definition, and with it their Codex trust. */
 export const CODEX_HOOK_HANDLERS: Readonly<Record<CodexHookEvent, CodexHookHandler>> = {
   SessionStart: {},
@@ -66,8 +66,9 @@ export const CODEX_HOOK_HANDLERS: Readonly<Record<CodexHookEvent, CodexHookHandl
   PermissionRequest: {status:true},
   // Only Codex's question tool needs a report before it runs.
   PreToolUse: {status:true, matcher:'^request_user_input$'},
-  // Every finished tool reports in the background, so no turn waits for it.
-  PostToolUse: {status:true, async:true},
+  // Synchronous like every other event: a background report of an earlier tool could arrive after a later
+  // request and hide it. It runs alongside the other hooks of the same event.
+  PostToolUse: {status:true},
   Stop: {status:true},
   Interrupt: {status:true},
 };

@@ -83,11 +83,10 @@ test('Codex 0.162.0 and later also report their turns: one marked entry per even
     assert.equal(groups[0].hooks[0].command, sessionOnly.hooks.SessionStart[0].hooks[0].command, 'one command text for every event');
   }
   assert.equal(managed('PreToolUse')[0].matcher, '^request_user_input$');
-  assert.equal(managed('PostToolUse')[0].hooks[0].async, true, 'tool reports never hold up a turn');
-  for (const event of ['UserPromptSubmit', 'PermissionRequest', 'Stop', 'Interrupt']) {
-    assert.equal(managed(event)[0].matcher, undefined, event);
-    assert.equal(managed(event)[0].hooks[0].async, undefined, event + ' keeps the order of the turn');
-  }
+  for (const event of ['UserPromptSubmit', 'PermissionRequest', 'PostToolUse', 'Stop', 'Interrupt']) assert.equal(managed(event)[0].matcher, undefined, event);
+  // A background report of an earlier tool could arrive after a later request and hide it (found in the live check).
+  for (const event of ['UserPromptSubmit', 'PermissionRequest', 'PreToolUse', 'PostToolUse', 'Stop', 'Interrupt'])
+    assert.equal(managed(event)[0].hooks[0].async, undefined, event + ' runs in the order of the turn');
   assert.deepEqual(current.hooks.Stop[0], userStop, 'user hooks stay first and verbatim');
   assert.deepEqual(current.hooks.PostToolUse[0], userPost);
   const files = await readdir(home);
