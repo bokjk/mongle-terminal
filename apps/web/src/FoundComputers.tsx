@@ -12,13 +12,21 @@ type Scan = { status: 'loading' | 'done' | 'error'; result?: ComputerSearch; err
 export function FoundComputers({find, adding, disabled, onChoose}: {find: (refresh: boolean) => Promise<ComputerSearch>; adding?: string; disabled: boolean; onChoose: (computer: Found) => void}) {
   const [scan, setScan] = useState<Scan>({status: 'loading'});
   const sequence = useRef(0);
+  const section = useRef<HTMLElement>(null), refreshButton = useRef<HTMLButtonElement>(null);
   // The parent passes a new function on every render. Search once when the dialog opens, then only on request.
   const finder = useRef(find);
   finder.current = find;
   const load = useCallback(async (refresh: boolean) => {
     const id = ++sequence.current;
     setScan(previous => ({status: 'loading', result: previous.result}));
-    try { const result = await finder.current(refresh); if (id === sequence.current) setScan({status: 'done', result}); }
+    try {
+      const result = await finder.current(refresh);
+      if (id !== sequence.current) return;
+      // A PC can drop out of the new results. Move focus off its row first so Escape and Tab stay in the dialog.
+      const focused = document.activeElement instanceof HTMLElement && section.current?.contains(document.activeElement) ? document.activeElement.dataset.origin : undefined;
+      if (focused && !result.computers.some(computer => computer.origin === focused)) refreshButton.current?.focus();
+      setScan({status: 'done', result});
+    }
     catch (error) { if (id === sequence.current) setScan(previous => ({status: 'error', result: previous.result, error: error instanceof Error ? error.message : '다른 컴퓨터를 찾지 못했습니다.'})); }
   }, []);
   useEffect(() => { void load(false); return () => { sequence.current++; }; }, [load]);
@@ -32,10 +40,10 @@ export function FoundComputers({find, adding, disabled, onChoose}: {find: (refre
     : computers.length ? `추가할 수 있는 몽글 PC ${computers.length}대를 찾았습니다.`
     : scan.result?.alreadyAdded ? '찾은 몽글 PC는 모두 컴퓨터 목록에 있습니다.'
     : '추가할 몽글 PC를 찾지 못했습니다. 그 PC의 몽글터미널과 원격 접속이 켜져 있는지 확인하거나, 아래에 주소를 직접 입력해 주세요.';
-  return <section className="found-computers panel-list" aria-labelledby="found-computers-title">
+  return <section ref={section} className="found-computers panel-list" aria-labelledby="found-computers-title">
     <div className="found-computers-header">
       <h3 id="found-computers-title" className="settings-title">같은 Tailscale에서 찾은 PC</h3>
-      <button type="button" className="icon-button" aria-label={searching ? '찾는 중' : '다시 찾기'} title="다시 찾기" aria-disabled={searching || blocked} onClick={() => { if (!searching && !blocked) void load(true); }}>
+      <button ref={refreshButton} type="button" className="icon-button" aria-label={searching ? '찾는 중' : '다시 찾기'} title="다시 찾기" aria-disabled={searching || blocked} onClick={() => { if (!searching && !blocked) void load(true); }}>
         {searching ? <LoaderCircle size={15} className="spin" aria-hidden="true"/> : <RefreshCw size={15} aria-hidden="true"/>}
       </button>
     </div>

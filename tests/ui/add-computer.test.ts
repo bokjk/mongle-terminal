@@ -40,7 +40,7 @@ test('the PC app adds a Mongle PC found in the tailnet with one choice and keeps
         if (query.has('error')) return Promise.reject(new Error('Tailscale에서 작업을 완료하지 못했습니다.'));
         if (query.has('none')) return Promise.resolve({ computers: [], available: true, alreadyAdded: query.has('added') ? 1 : 0 });
         // Searching takes a while on a real network; the test decides when the answer arrives.
-        return new Promise(resolve => { (window as any).releaseFind = () => resolve(found); });
+        return new Promise(resolve => { (window as any).releaseFind = (names?: string[]) => resolve(names ? { ...found, computers: found.computers.filter(computer => names.includes(computer.name)) } : found); });
       },
     };
   });
@@ -72,9 +72,12 @@ test('the PC app adds a Mongle PC found in the tailnet with one choice and keeps
     await refresh.click();
     await expect(refresh).toBeFocused();
     await expect(status).toHaveText('같은 Tailscale에서 다른 몽글 PC를 찾는 중…');
-    await page.keyboard.press('Tab'); await expect(dialog.locator(':focus')).toHaveCount(1);
-    await page.evaluate(() => (window as any).releaseFind());
-    await expect(notebook).toBeVisible();
+    await page.keyboard.press('Tab'); await expect(notebook).toBeFocused();
+    // The focused PC is missing from the new results, so focus moves to the search button and stays in the dialog.
+    await page.evaluate(() => (window as any).releaseFind(['studio']));
+    await expect(notebook).toHaveCount(0);
+    await expect(refresh).toBeFocused();
+    await expect(status).toHaveText('추가할 수 있는 몽글 PC 1대를 찾았습니다.');
     assert.deepEqual((await calls()).find, [false, true]);
     await page.keyboard.press('Escape');
     await expect(dialog).toHaveCount(0);
