@@ -7,7 +7,7 @@ import { z } from 'zod';
 import { APP_VERSION, PROTOCOL_VERSION, AppError, appendTab, dimensionSchema, groupRepositoryIds, idSchema, leafIds, removeLeaf, splitLeaf } from '../protocol/index.js';
 import type { ConnectionContext, Group, HostSettings, HostState, LayoutNode, PresentationSnapshot, Send, ShellProfile, SnapshotEvent, TerminalInfo, Repository, Worktree, WorktreeOperation, ProjectInspection } from '../protocol/index.js';
 import { HostStore, type PersistedHost, type PersistedSnapshot } from '../storage/index.js';
-import { agentInputSignal, validAgentSession, type AgentSessionIdentity } from '../terminal/agent-status.js';
+import { agentInputSignal, validAgentSession, validCodexEvent, type AgentSessionIdentity } from '../terminal/agent-status.js';
 import { AGENT_PIPE_NAME, agentResumeCommand, isTerminalReportOnly, resolveAgentExecutable } from '../shell-profiles/agent-resume.js';
 import { detectShellProfiles, resolveShellLaunch, safeShellEnvironment } from '../shell-profiles/index.js';
 import { TerminalEngine } from '../terminal/engine.js';
@@ -690,7 +690,7 @@ export class HostCore {
       notificationsEnabled:()=>!runtime.disposed&&!this.closing&&!this.shutdownPrepared&&this.runtimes.get(info.id)===runtime,
       onNotification:count=>{info.notificationCount=count;runtime.notificationChanged=true;},
       agentToken,
-      onAgentStatus:(status,count)=>{info.agentStatus=status;info.agentProvider='claude';if(count!==undefined)info.agentNotificationCount=count;runtime.notificationChanged=true;},
+      onAgentStatus:(status,count,provider='claude')=>{info.agentStatus=status;info.agentProvider=provider;if(count!==undefined)info.agentNotificationCount=count;runtime.notificationChanged=true;},
       onAgentSession:session=>{if(current())this.recordAgentSession(info,session);},
       // The first prompt after a restore types the resume line and keeps the intent until
       // the CLI reports itself or exits; any other prompt means no agent is running.
@@ -833,6 +833,15 @@ export class HostCore {
     const record=this.agentSessions.get(runtime.info.id);
     if(!record||record.generation!==runtime.info.generation||record.session.provider!==valid.provider||record.session.sessionId!==valid.sessionId)return false;
     this.recordAgentSession(runtime.info,null);return true;
+  }
+  /**
+   * An event of a Codex turn from the managed hook (through the local IPC). token must be the per-shell
+   * MONGLE_AGENT_TOKEN of a running terminal of this boot. Returns false when rejected.
+   */
+  reportAgentStatus(token:string,event:unknown):boolean{
+    const runtime=this.agentRuntime(token),valid=validCodexEvent(event);if(!runtime||!valid)return false;
+    void runtime.engine.acceptCodexEvent(valid).then(changed=>{if(changed)this.scheduleFrame(runtime);}).catch(()=>{});
+    return true;
   }
   private updateController(runtime:Runtime){const l=runtime.lease;runtime.info.controller=l?{connectionId:l.connectionId,deviceName:l.deviceName,epoch:l.epoch,ready:l.ready}:undefined;}
   private expireLeases(){let changed=false;for(const r of this.runtimes.values())if(r.lease&&r.lease.expires<=Date.now()){this.revoke(r);changed=true;}if(changed)this.broadcastState();}

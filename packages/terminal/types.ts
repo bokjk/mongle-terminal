@@ -46,8 +46,8 @@ export interface TerminalEngineOptions {
   onDirectory?: (directory: string) => void;
   onNotification?: (count: number) => void;
   agentToken?: string;
-  /** notificationCount: the notification number this Claude alert produced, if it produced one. */
-  onAgentStatus?: (status: import('../protocol/index.js').AgentStatus, notificationCount?: number) => void;
+  /** notificationCount: the notification number this agent alert produced, if it produced one. provider: the CLI that reported it. */
+  onAgentStatus?: (status: import('../protocol/index.js').AgentStatus, notificationCount?: number, provider?: import('./agent-status.js').AgentProvider) => void;
   /** Exact hook-verified Claude conversation, or null when it ended / the prompt returned. */
   onAgentSession?: (session: import('./agent-status.js').AgentSessionIdentity | null) => void;
   /** The shell printed its token-authenticated prompt marker. */

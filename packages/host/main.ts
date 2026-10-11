@@ -85,6 +85,7 @@ try {
     agentPipe = await startAgentPipe({
       start:(token,session)=>!closing&&owner.reportAgentSession(token,session),
       end:(token,session)=>!closing&&owner.endAgentSession(token,session),
+      status:(token,event)=>!closing&&owner.reportAgentStatus(token,event),
     });
     // Shells read the pipe name from this process before any terminal starts (core.init).
     process.env.MONGLE_AGENT_PIPE = agentPipe.name;

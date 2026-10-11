@@ -48,6 +48,24 @@ export function agentInputSignal(data: string, requestShown = false): string | u
   return relevant ? signal : undefined;
 }
 
+/** True when Enter is typed outside a bracketed paste. Paste state survives chunk boundaries. */
+function submitsOutsidePaste(data: string, paste: {active: boolean}): boolean {
+  let submitted = false, index = 0;
+  while (index < data.length) {
+    if (paste.active) {
+      const end = data.indexOf(PASTE_END, index);
+      if (end < 0) return submitted;
+      paste.active = false; index = end + PASTE_END.length;
+    } else {
+      const start = data.indexOf(PASTE_START, index);
+      if ((start < 0 ? data.slice(index) : data.slice(index, start)).includes('\r')) submitted = true;
+      if (start < 0) return submitted;
+      paste.active = true; index = start + PASTE_START.length;
+    }
+  }
+  return submitted;
+}
+
 export type AgentStatusUpdate = { status: AgentStatus; notify: boolean };
 /** asked: a PermissionRequest already belongs to this call (an AskUserQuestion also gets one). */
 type ToolRecord = { hash: string; state: 'running' | 'waiting' | 'answered'; asked: boolean; question: boolean };
@@ -76,7 +94,7 @@ export class ClaudeTaskState {
   private provisional = false;
   private lastEventAt = Number.NEGATIVE_INFINITY;
   /** Bracketed paste spans input chunks; Enter inside it is text, not an answer. */
-  private pasting = false;
+  private paste = {active:false};
   /** No key reached the shown permission dialog since it appeared, so its preselected approval holds. */
   private untouched = false;
   /** The last visible request was answered here; a reminder for it is not a new request. */
@@ -89,23 +107,7 @@ export class ClaudeTaskState {
   private find(hash: string, state: ToolRecord['state'], loose = false) {
     for (const [key, record] of this.tools) if (record.hash === hash && record.state === state && (!loose || !key.startsWith('c:'))) return key;
   }
-  /** True when Enter is typed outside a bracketed paste. Paste state survives chunk boundaries. */
-  private submits(data: string): boolean {
-    let submitted = false, index = 0;
-    while (index < data.length) {
-      if (this.pasting) {
-        const end = data.indexOf(PASTE_END, index);
-        if (end < 0) return submitted;
-        this.pasting = false; index = end + PASTE_END.length;
-      } else {
-        const start = data.indexOf(PASTE_START, index);
-        if ((start < 0 ? data.slice(index) : data.slice(index, start)).includes('\r')) submitted = true;
-        if (start < 0) return submitted;
-        this.pasting = true; index = start + PASTE_START.length;
-      }
-    }
-    return submitted;
-  }
+  private submits(data: string): boolean { return submitsOutsidePaste(data, this.paste); }
   private track(key: string, record: ToolRecord) {
     this.tools.set(key, record);
     if (this.tools.size > MAX_TOOLS) this.tools.delete(this.tools.keys().next().value!);
@@ -236,5 +238,108 @@ export class ClaudeTaskState {
       case 'SessionEnd': this.reset(); this.session = ''; return this.move('idle');
       default: return;
     }
+  }
+}
+
+type CodexSource = 'startup' | 'resume' | 'clear' | 'compact' | 'fork';
+export type CodexTurnEvent = 'UserPromptSubmit' | 'PermissionRequest' | 'PreToolUse' | 'PostToolUse' | 'Stop' | 'Interrupt';
+/**
+ * A managed Codex hook event as the host accepts it: digests and flags only, never prompts or tool data.
+ * turn: digest of Codex's turn id. agent: digest of the subagent that reported it, if one did.
+ */
+export type CodexAgentEvent =
+  | { event: 'SessionStart'; source?: CodexSource }
+  | { event: 'SessionEnd' }
+  | { event: CodexTurnEvent; turn: string; agent?: string; question?: true };
+const CODEX_SOURCES: ReadonlySet<string> = new Set<CodexSource>(['startup', 'resume', 'clear', 'compact', 'fork']);
+const CODEX_TURN_EVENTS: ReadonlySet<string> = new Set<CodexTurnEvent>(['UserPromptSubmit', 'PermissionRequest', 'PreToolUse', 'PostToolUse', 'Stop', 'Interrupt']);
+/** Keeps exactly the fields the managed hook sends, in their exact shapes. */
+export function validCodexEvent(value: unknown): CodexAgentEvent | undefined {
+  if (!value || typeof value !== 'object') return;
+  const v = value as Record<string, unknown>;
+  if (v.event === 'SessionStart') return typeof v.source === 'string' && CODEX_SOURCES.has(v.source) ? {event:'SessionStart', source:v.source as CodexSource} : {event:'SessionStart'};
+  if (v.event === 'SessionEnd') return {event:'SessionEnd'};
+  if (typeof v.event !== 'string' || !CODEX_TURN_EVENTS.has(v.event) || typeof v.turn !== 'string' || !DIGEST.test(v.turn)) return;
+  if (v.agent !== undefined && (typeof v.agent !== 'string' || !DIGEST.test(v.agent))) return;
+  return {event:v.event as CodexTurnEvent, turn:v.turn, ...(typeof v.agent === 'string' ? {agent:v.agent} : {}), ...(v.question === true ? {question:true as const} : {})};
+}
+
+/**
+ * Codex states come only from the managed Codex hook through the host pipe, never titles or output.
+ * Codex names every turn and reports an interrupt itself, so an event of another or a finished turn
+ * changes nothing, and a tool report that arrives late (it runs in the background) cannot revive a turn.
+ * Delivered keys count only as Codex shows them: a cancel key interrupts the turn or declines the shown
+ * request, and Enter that no other key preceded picks Codex's preselected "Yes, proceed", so the approved
+ * tool runs on. Any other answer may be a rejection, which Codex does not report; an approval then proves
+ * itself when its tool finishes.
+ */
+export class CodexTaskState {
+  private status: AgentStatus = 'idle';
+  /** Digest of the user's turn in progress; empty once it stopped or was interrupted. */
+  private turn = '';
+  /** Requests waiting for the user, oldest first, by the thread that asked ('' is the main thread). */
+  private requests = new Map<string, 'permission' | 'question'>();
+  /** No key reached the shown approval since it appeared, so its preselected answer holds. */
+  private untouched = false;
+  private paste = {active:false};
+  private move(next: AgentStatus, finishedTurn = false): AgentStatusUpdate | undefined {
+    const changed = next !== this.status;
+    this.status = next;
+    if (!changed && !finishedTurn) return;
+    return {status:next, notify:finishedTurn || next === 'attention'};
+  }
+  private clear() { this.requests.clear(); this.untouched = false; }
+  /** A new conversation, its end, or the shell prompt: nothing of the last turn runs any more. */
+  reset(): AgentStatusUpdate | undefined { this.turn = ''; this.clear(); return this.move('idle'); }
+
+  accept(event: CodexAgentEvent): AgentStatusUpdate | undefined {
+    // Compaction continues the same conversation and turn; any other start is a new conversation.
+    if (event.event === 'SessionStart') return event.source === 'compact' ? undefined : this.reset();
+    if (event.event === 'SessionEnd') return this.reset();
+    // A subagent's own prompt and end are not the user's turn.
+    if (event.agent !== undefined && (event.event === 'UserPromptSubmit' || event.event === 'Stop' || event.event === 'Interrupt')) return;
+    if (event.event === 'UserPromptSubmit') { this.turn = event.turn; this.clear(); return this.move('working'); }
+    // Everything else belongs to the turn in progress; a subagent's events carry the subagent's own turn ids.
+    if (!this.turn || (event.agent === undefined && event.turn !== this.turn)) return;
+    const thread = event.agent ?? '';
+    if (event.event === 'PermissionRequest' || (event.event === 'PreToolUse' && event.question)) {
+      this.requests.delete(thread);
+      this.requests.set(thread, event.event === 'PermissionRequest' ? 'permission' : 'question');
+      // Shown at once only when nothing else waits; then its preselection holds until a key reaches it.
+      this.untouched = this.requests.size === 1 && event.event === 'PermissionRequest';
+      return this.move('attention');
+    }
+    switch (event.event) {
+      case 'PostToolUse':
+        // A finished tool shows its thread going on, also after a key here lowered the status.
+        this.requests.delete(thread);
+        if (!this.requests.size) this.untouched = false;
+        return this.move(this.requests.size ? 'attention' : 'working');
+      case 'Stop': this.turn = ''; this.clear(); return this.move('completed', true);
+      case 'Interrupt': this.turn = ''; this.clear(); return this.move('idle');
+      default: return;
+    }
+  }
+
+  /** A delivered key is evidence about this shell's Codex, never a completion. */
+  observeInput(data: string): AgentStatusUpdate | undefined {
+    const submitted = submitsOutsidePaste(data, this.paste);
+    if (this.status !== 'working' && this.status !== 'attention') return;
+    if (isCancelInput(data)) {
+      // Codex reports a real interrupt. If the key only closed a menu or declined a request,
+      // the turn's next event restores the status.
+      this.clear();
+      return this.move('idle');
+    }
+    if (this.status !== 'attention') return;
+    // Arrow keys, digits or letters may move the selection or answer through a shortcut.
+    if (!submitted) { this.untouched = false; return; }
+    const preselected = this.untouched && data === '\r';
+    this.untouched = false;
+    const [oldest] = this.requests;
+    if (oldest) this.requests.delete(oldest[0]);
+    // Another request is shown next, with a selection nobody knows.
+    if (this.requests.size) return;
+    return this.move(preselected && oldest?.[1] === 'permission' ? 'working' : 'idle');
   }
 }

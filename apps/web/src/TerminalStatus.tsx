@@ -20,13 +20,13 @@ export const NO_NOTICES: TerminalNotices = new Map();
 /** True while disconnected: every status is the last one observed and must not look live. */
 export const TerminalStatusStale = createContext(false);
 
-/** Only hook-proven Claude states, otherwise an unseen CLI notification. */
+/** Only hook-proven Claude or Codex states, otherwise an unseen CLI notification. */
 export function terminalStatus(terminal: TerminalInfo | undefined, notice?: TerminalNotice): TerminalStatusSummary | undefined {
-  const agent = terminal?.status === 'running' && terminal.agentProvider === 'claude' ? terminal.agentStatus : undefined;
+  const agent = terminal?.status === 'running' && (terminal.agentProvider === 'claude' || terminal.agentProvider === 'codex') ? terminal.agentStatus : undefined;
   // A new turn takes precedence over an older unread notification; the dot keeps it discoverable without consuming it.
   if (agent === 'working') return {kind:'working', unread:false, alsoUnread:notice?.unread === true};
   if (agent === 'attention' || agent === 'error') return {kind:agent, unread:notice?.unread === true};
-  // A completion is shown only while Claude's own alert is unseen; later plain notifications stay plain.
+  // A completion is shown only while the agent's own alert is unseen; later plain notifications stay plain.
   if (agent === 'completed' && notice?.agentUnread) return {kind:'completed', unread:true};
   return notice?.unread ? {kind:'notification', unread:true} : undefined;
 }

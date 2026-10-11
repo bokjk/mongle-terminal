@@ -2,7 +2,7 @@ import Headless from '@xterm/headless';
 import type { Terminal } from '@xterm/headless';
 import { SerializeAddon } from '@xterm/addon-serialize';
 import { reportedDirectory } from '../shell-profiles/integration.js';
-import { ClaudeTaskState } from './agent-status.js';
+import { ClaudeTaskState, CodexTaskState, type AgentProvider, type AgentStatusUpdate, type CodexAgentEvent } from './agent-status.js';
 import { clearScrollback, isPresentationPending, presentationExtras } from './pinned-xterm.js';
 import { assertGeometry, PRESENTATION_VERSION } from './types.js';
 import type { PresentationSnapshot, TerminalEngineOptions, TerminalModes } from './types.js';
@@ -24,6 +24,7 @@ export class TerminalEngine {
   private restoringHistory = false;
   private win32InputMode = false;
   private observeAgentInput: (data:string)=>boolean = ()=>false;
+  private acceptCodex: (event:CodexAgentEvent)=>boolean = ()=>false;
 
   constructor(options: TerminalEngineOptions) {
     assertGeometry(options.cols, options.rows);
@@ -87,17 +88,30 @@ export class TerminalEngine {
       onSession: session => options.onAgentSession?.(session),
       onPrompt: () => options.onShellPrompt?.(),
     });
+    // Codex reports through the host's pipe instead of the output (acceptCodexEvent).
+    const codex = new CodexTaskState();
+    // The host records which notification number belongs to an agent alert, so a later plain
+    // BEL/OSC notification is never presented as the agent's completion.
+    const report = (update: AgentStatusUpdate | undefined, provider: AgentProvider) => {
+      if (!update) return false;
+      const notified = update.notify && notify();
+      options.onAgentStatus?.(update.status, notified ? this.notificationCount : undefined, provider);
+      return true;
+    };
     this.observeAgentInput = data => {
       if(this.closing || options.notificationsEnabled?.() === false)return false;
-      const update=agent.observeInput(data);if(update)options.onAgentStatus?.(update.status);
-      return update!==undefined;
+      // A key never notifies; each CLI's state decides what it means for that CLI.
+      let changed = false;
+      for (const [update, provider] of [[agent.observeInput(data), 'claude'], [codex.observeInput(data), 'codex']] as const)
+        if (update) { options.onAgentStatus?.(update.status, undefined, provider); changed = true; }
+      return changed;
     };
+    this.acceptCodex = event => !this.closing && !this.restoringHistory && options.notificationsEnabled?.() !== false && report(codex.accept(event), 'codex');
     this.terminal.parser.registerOscHandler(777, data => {
       if (!this.closing && !this.restoringHistory && options.notificationsEnabled?.() !== false) {
-        const update = agent.accept(data);
-        // The host records which notification number belongs to this alert, so a later plain
-        // BEL/OSC notification is never presented as Claude's completion.
-        if (update) { const notified = update.notify && notify(); options.onAgentStatus?.(update.status, notified ? this.notificationCount : undefined); }
+        report(agent.accept(data), 'claude');
+        // Back at the authenticated shell prompt: no Codex of this shell runs any more either.
+        if (options.agentToken && data === 'mongle-shell;' + options.agentToken) report(codex.reset(), 'codex');
       }
       // rxvt-compatible notification. Payload is never retained or executed.
       if (data.startsWith('notify;')) {
@@ -120,6 +134,8 @@ export class TerminalEngine {
 
   /** A delivered key, observed after all output received before it. True when the agent status changed. */
   observeInput(data:string): Promise<boolean> {return this.enqueue(()=>this.observeAgentInput(data));}
+  /** An event of this shell's Codex, already authenticated by the host; ordered after the output parsed so far. */
+  acceptCodexEvent(event:CodexAgentEvent): Promise<boolean> {return this.enqueue(()=>this.acceptCodex(event));}
 
   write(data: string | Uint8Array): Promise<void> {
     if (this.closing) return Promise.reject(new Error('Terminal engine is disposed.'));
