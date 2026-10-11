@@ -16,7 +16,7 @@ HTTPS 원격에서는 `__Host-mongle; Secure; HttpOnly; SameSite=Strict; Path=/`
 
 쿠키는 포트로 격리되지 않으므로 같은 호스트명에 신뢰하지 않는 서비스를 함께 제공하면 안 된다. `remote.configure`는 `.ts.net` HTTPS origin 설정만 저장한다. 실제 Tailscale Serve 생성/해제 및 기존 설정 보존은 별도 플랫폼 모듈의 책임이다.
 
-API와 정적 응답은 `no-store` 및 기본 CSP를 제공한다. 터미널 화면/출력/세션 인증을 브라우저 localStorage에 기록하지 않는 것은 클라이언트 구현에서 보장해야 한다. 이 게이트웨이 자체는 서비스 워커를 생성하거나 Cache API를 호출하지 않는다. 사용자 자산 이외의 임의 파일, 경로 이탈 및 외부 경로로 향하는 심볼릭 링크는 static 파일로 제공하지 않는다.
+API와 정적 응답은 `no-store` 및 기본 CSP를 제공한다. 터미널 화면/출력/세션 인증을 브라우저 localStorage에 기록하지 않는 것은 클라이언트 구현에서 보장해야 한다. 이 게이트웨이 자체는 서비스 워커를 생성하거나 Cache API를 호출하지 않는다. 2026-10-12부터 웹 화면이 휴대폰 알림용 `/sw.js`를 등록하지만, 이 워커는 fetch 처리기와 Cache API가 없어 응답을 저장하지 않는다([휴대폰 알림](phone-notifications.md)). 사용자 자산 이외의 임의 파일, 경로 이탈 및 외부 경로로 향하는 심볼릭 링크는 static 파일로 제공하지 않는다.
 
 ## 실행한 검사
 
@@ -35,11 +35,12 @@ API와 정적 응답은 `no-store` 및 기본 CSP를 제공한다. 터미널 화
 | 한도/비정상 입력 | 16KiB 초과 HTTP 413, 128KiB 초과 WS 차단·core 1회 해제, 비정상 JSON/바이너리/owner 위조 필드 차단, 요청 홍수 및 11번째 분당 페어링 생성 제한 |
 | 다른 몽글 PC 찾기 (2026-10-10) | 승인된 기기의 `computers.list`를 게이트웨이가 처리하고 core에 전달하지 않음, `refresh` 외 매개변수(접속 대상 지정) 거부, 기기당 분당 30회, 검색을 기다리는 동안 같은 연결의 다른 요청 응답, 검색 기능이 없는 게이트웨이는 찾을 수 없음으로 응답 |
 | PC 앱의 다른 PC 찾기 (2026-10-11) | 소유자 채널의 `computers.list`도 게이트웨이가 처리하고 core에 전달하지 않음, `refresh` 외 매개변수 거부, 검색 기능이 없는 호스트는 찾을 수 없음으로 응답 |
+| 휴대폰 알림 (2026-10-12) | 기기별 `push.*`·`presence.update`를 게이트웨이가 처리하고 core에 전달하지 않음, 다른 기기 구독 비노출, http·IP·포트·잘못된 키 구독 거부, 시험 알림의 aes128gcm·VAPID 헤더, 410 응답 시 구독 삭제, 키 쌍의 재시작 유지, 기기 해제·원격 주소 변경 시 구독 삭제, 연결 요청 주소별 대상, PC 잠금 시 요청당 한 번 전송, 기기가 화면을 보는 동안과 닫은 직후 미전송 |
 | 원격 기기 승인 (2026-10-09) | 승인된 기기의 코드 생성·조회·승인·거절, 다른 origin 요청 조회·결정 차단, 승인 기기 기록·이전 DB 열 추가, `devices.*`·`remote.*`·`pairing.status` 계속 차단, core 미전달, 발급자별 코드 유지(다른 기기 코드 무효화 방지)와 모든 코드에 실패 횟수 누적, 응답의 호스트 시각 |
 
 검증 파일: `tests/security/auth-store.test.ts`, `tests/security/gateway.test.ts`. 관련 파일의 strict TypeScript 검사도 통과했다.
 
-2026-10-09 원격 기기 승인 추가 후 `node --import tsx --test --test-concurrency=1 tests/security/gateway.test.ts tests/security/auth-store.test.ts` 24/24 통과(신규 4개 포함). 2026-10-10 독립 코드 검토 지적을 고친 뒤 25/25 통과(발급자별 코드 시험 1개 추가, 이전 DB 시험에 코드 발급자 열 추가 확인, 게이트웨이 시험에 PC 코드 유지와 응답 시각 확인). 2026-10-10 다른 몽글 PC 찾기 추가 후 26/26 통과(신규 1개). 2026-10-11 PC 앱의 다른 PC 찾기 추가 후 27/27 통과(신규 1개). 찾기 규칙은 `tests/host/computers.test.ts` 5/5로 따로 확인했다(16대씩 동시 확인, 같은 사용자의 온라인 Windows 기기만 대상, 포트 순서·자기 자신 제외·캐시, Tailscale 오류 메시지, 몽글 health 형식·Host 헤더·자격 증명 없음·시간 제한).
+2026-10-09 원격 기기 승인 추가 후 `node --import tsx --test --test-concurrency=1 tests/security/gateway.test.ts tests/security/auth-store.test.ts` 24/24 통과(신규 4개 포함). 2026-10-10 독립 코드 검토 지적을 고친 뒤 25/25 통과(발급자별 코드 시험 1개 추가, 이전 DB 시험에 코드 발급자 열 추가 확인, 게이트웨이 시험에 PC 코드 유지와 응답 시각 확인). 2026-10-10 다른 몽글 PC 찾기 추가 후 26/26 통과(신규 1개). 2026-10-11 PC 앱의 다른 PC 찾기 추가 후 27/27 통과(신규 1개). 2026-10-12 휴대폰 알림 추가 후 32/32 통과(게이트웨이 신규 3개, 인증 저장소 신규 2개). 찾기 규칙은 `tests/host/computers.test.ts` 5/5로 따로 확인했다(16대씩 동시 확인, 같은 사용자의 온라인 Windows 기기만 대상, 포트 순서·자기 자신 제외·캐시, Tailscale 오류 메시지, 몽글 health 형식·Host 헤더·자격 증명 없음·시간 제한).
 
 ## 남은 실기 검증 및 경계
 

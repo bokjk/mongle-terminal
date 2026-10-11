@@ -495,6 +495,14 @@ button.pane-title { background: transparent; border: 0; text-align: left; paddin
 .remote-access-qr > svg { display: block; flex: 0 0 auto; width: 232px; height: 232px; max-width: 100%; background: #fff; }
 .remote-access-qr > figcaption { flex: 1 1 170px; min-width: 0; }
 .remote-access-qr .hint { line-height: 1.8; }
+.push-reasons { margin: -8px 0 14px; padding-left: 18px; color: var(--text-secondary); font-size: 11px; line-height: 1.85; }
+.push-preview { display: flex; align-items: center; gap: 10px; max-width: 380px; margin: 0 0 14px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface-raised); }
+.push-preview img { width: 28px; height: 28px; flex: none; border-radius: 7px; }
+.push-preview div { display: grid; gap: 2px; min-width: 0; }
+.push-preview strong { overflow: hidden; color: var(--text); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.push-preview span { overflow: hidden; color: var(--text-secondary); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.push-settings .push-status { margin: 14px 0 10px; }
+.push-owner-hint { margin: 2px 0 6px; }
 .setting-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; min-height: 50px; padding: 12px 0; border-bottom: 1px solid var(--border-subtle); }
 .setting-row:last-child { border: 0; }
 .setting-label { color: var(--text-secondary); font-size: 12px; }

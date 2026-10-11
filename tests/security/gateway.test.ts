@@ -6,7 +6,9 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
 import WebSocket from 'ws';
+import { createECDH, randomBytes } from 'node:crypto';
 import { startGateway } from '../../packages/host/gateway.ts';
+import type { PcPresence } from '../../packages/host/presence.ts';
 
 type JsonResponse = { status: number; headers: Record<string, any>; body: any; text: string };
 type Gateway = Awaited<ReturnType<typeof startGateway>>;
@@ -80,7 +82,7 @@ class SocketProbe {
   destroy() { this.socket.terminate(); }
 }
 
-async function fixture(options: { computers?: (refresh: boolean) => Promise<unknown> } = {}) {
+async function fixture(options: { computers?: (refresh: boolean) => Promise<unknown>; presence?: () => Promise<PcPresence>; pushFetch?: typeof fetch } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'mongle-security-'));
   const dataDir = join(root, 'state');
   const webRoot = join(root, 'web');
@@ -88,7 +90,10 @@ async function fixture(options: { computers?: (refresh: boolean) => Promise<unkn
   await writeFile(join(webRoot, 'index.html'), '<!doctype html><title>Mongle security fixture</title>');
   await writeFile(join(root, 'private-secret.txt'), 'MONGLE_OUTSIDE_WEBROOT_SECRET');
   const core = mockCore();
-  let gateway: Gateway = await startGateway({ core: core as any, dataDir, webRoot, port: 0, computers: options.computers });
+  // Phone notifications never reach the network or this PC's real lock state in tests.
+  const presence = options.presence ?? (async (): Promise<PcPresence> => ({ away: false, reason: 'active', idleMs: 0 }));
+  const pushFetch = options.pushFetch ?? ((async () => { throw new Error('No network in tests'); }) as unknown as typeof fetch);
+  let gateway: Gateway = await startGateway({ core: core as any, dataDir, webRoot, port: 0, computers: options.computers, presence, pushFetch });
   const sockets: SocketProbe[] = [];
   const origin = () => `http://127.0.0.1:${gateway.port}`;
   async function request(method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<JsonResponse> {
@@ -144,7 +149,7 @@ async function fixture(options: { computers?: (refresh: boolean) => Promise<unkn
     async restart() {
       const port = gateway.port;
       await gateway.close();
-      gateway = await startGateway({ core: core as any, dataDir, webRoot, port, computers: options.computers });
+      gateway = await startGateway({ core: core as any, dataDir, webRoot, port, computers: options.computers, presence, pushFetch });
     },
     async close() {
       for (const socket of sockets) socket.destroy();
@@ -616,5 +621,98 @@ test('pairing-create rate limit refuses the eleventh request in one minute', asy
     assert.equal(refused.body.error.code, 'RATE_LIMITED');
     assert.equal((await f.gateway.ownerRequest('pairing.status', {})).requests.length, 10);
     assert.equal((await f.gateway.ownerRequest('devices.list', {})).devices.length, 0);
+  } finally { await f.close(); }
+});
+
+function pushSubscription(name = 'phone') {
+  const ecdh = createECDH('prime256v1'); ecdh.generateKeys();
+  return { endpoint: `https://push.example.net/push/${name}`, keys: { p256dh: ecdh.getPublicKey().toString('base64url'), auth: randomBytes(16).toString('base64url') } };
+}
+function pushRecorder() {
+  const posts: Array<{ url: string; headers: Record<string, string> }> = [];
+  let status = 201;
+  const fetchImpl = (async (url: unknown, init: any) => { posts.push({ url: String(url), headers: init.headers }); return new Response(null, { status }); }) as unknown as typeof fetch;
+  return { posts, fetch: fetchImpl, respond(value: number) { status = value; } };
+}
+function attentionState(core: ReturnType<typeof mockCore>, ...ids: string[]) {
+  const base = core.getState();
+  return { ...base, groups: [{ id: 'g', name: '작업', cwd: 'C:\\work', profileId: 'p', revision: 1, layout: null }],
+    terminals: ids.map(id => ({ id, groupId: 'g', title: 'PowerShell', profileId: 'p', cwd: 'C:\\work', generation: 'gen-' + id, status: 'running', cols: 80, rows: 24, agentStatus: 'attention', agentProvider: 'claude' })) } as any;
+}
+async function eventually(predicate: () => boolean, description: string) {
+  const deadline = Date.now() + 3000;
+  while (!predicate()) { assert.ok(Date.now() < deadline, `Timed out waiting for ${description}`); await new Promise(resolve => setTimeout(resolve, 20)); }
+}
+
+test('a paired device turns its own phone notifications on and off, and the PC sees which devices have them', async () => {
+  const push = pushRecorder();
+  const f = await fixture({ pushFetch: push.fetch, presence: async () => ({ away: false, reason: 'active', idleMs: 0 }) });
+  try {
+    const phoneAuth = await f.paired('Phone'), tabletAuth = await f.paired('Tablet');
+    const phone = await approver(f, phoneAuth), tablet = await approver(f, tabletAuth);
+    const status = await phone('push.status');
+    assert.equal(status.ok, true); assert.equal(status.result.subscribed, false);
+    assert.match(status.result.publicKey, /^[A-Za-z0-9_-]{87}$/);
+    const subscription = pushSubscription();
+    assert.equal((await phone('push.subscribe', subscription)).ok, true);
+    assert.deepEqual((await phone('push.status')).result, { publicKey: status.result.publicKey, subscribed: true, endpoint: subscription.endpoint });
+    assert.equal((await tablet('push.status')).result.subscribed, false, 'a device sees only its own subscription');
+    for (const bad of [{ ...subscription, endpoint: 'http://push.example.net/x' }, { ...subscription, endpoint: 'https://127.0.0.1/x' }, { ...subscription, keys: { ...subscription.keys, auth: 'short' } }, { endpoint: subscription.endpoint }])
+      assert.equal((await phone('push.subscribe', bad)).ok, false);
+    const listed = await f.gateway.ownerRequest('devices.list', {});
+    assert.equal(listed.devices.find((device: any) => device.name === 'Phone').notifications, true);
+    assert.equal(listed.devices.find((device: any) => device.name === 'Tablet').notifications, undefined);
+    assert.equal((await phone('push.test')).ok, true);
+    assert.equal(push.posts.length, 1);
+    assert.equal(push.posts[0].url, subscription.endpoint);
+    assert.equal(push.posts[0].headers['Content-Encoding'], 'aes128gcm');
+    assert.ok(push.posts[0].headers.Authorization.endsWith(`, k=${status.result.publicKey}`));
+    assert.equal((await tablet('push.test')).error.code, 'PUSH_NOT_SUBSCRIBED');
+    push.respond(410);
+    assert.equal((await phone('push.test')).error.code, 'PUSH_EXPIRED');
+    assert.equal((await phone('push.status')).result.subscribed, false, 'a subscription the browser dropped is removed');
+    assert.equal((await phone('push.subscribe', subscription)).ok, true);
+    assert.equal((await phone('push.unsubscribe')).ok, true);
+    assert.equal((await phone('push.status')).result.subscribed, false);
+    assert.equal((await phone('presence.update', { active: 'yes' })).ok, false);
+    assert.equal(f.core.calls.some(call => /^(push|presence)\./.test(call.method)), false, 'the gateway answers these, never the terminal core');
+    await f.restart();
+    const again = await approver(f, phoneAuth);
+    assert.equal((await again('push.status')).result.publicKey, status.result.publicKey, 'the key pair survives a host restart');
+  } finally { await f.close(); }
+});
+
+test('a locked PC sends a waiting request once and a new device request to devices of that address', async () => {
+  const push = pushRecorder();
+  const f = await fixture({ pushFetch: push.fetch, presence: async () => ({ away: true, reason: 'locked' }) });
+  try {
+    const phone = await approver(f, await f.paired('Phone'));
+    assert.equal((await phone('push.subscribe', pushSubscription())).ok, true);
+    f.gateway.observeState(attentionState(f.core, 't1'));
+    await eventually(() => push.posts.length === 1, 'the request notification');
+    assert.equal(push.posts[0].headers.Urgency, 'high');
+    assert.match(push.posts[0].headers.Topic, /^[A-Za-z0-9_-]{32}$/);
+    f.gateway.observeState(attentionState(f.core, 't1'));
+    await new Promise(resolve => setTimeout(resolve, 150));
+    assert.equal(push.posts.length, 1, 'once per request');
+    await f.pairing('New tablet');
+    await eventually(() => push.posts.length === 2, 'the new device request notification');
+  } finally { await f.close(); }
+});
+
+test('nothing is sent while a device shows this PC, even with the PC locked', async () => {
+  const push = pushRecorder();
+  const f = await fixture({ pushFetch: push.fetch, presence: async () => ({ away: true, reason: 'locked' }) });
+  try {
+    const phone = await approver(f, await f.paired('Phone'));
+    assert.equal((await phone('push.subscribe', pushSubscription())).ok, true);
+    assert.equal((await phone('presence.update', { active: true })).ok, true);
+    f.gateway.observeState(attentionState(f.core, 't1'));
+    await new Promise(resolve => setTimeout(resolve, 200));
+    assert.equal(push.posts.length, 0);
+    // Hidden again: still within five minutes of looking at it.
+    assert.equal((await phone('presence.update', { active: false })).ok, true);
+    await new Promise(resolve => setTimeout(resolve, 200));
+    assert.equal(push.posts.length, 0);
   } finally { await f.close(); }
 });

@@ -22,6 +22,7 @@ import { TerminalTabs } from './TerminalTabs';
 import { ProjectOpenModal, ProjectWorktrees } from './Projects';
 import { aggregateTerminalStatus, terminalStatus, terminalStatusDescription, TerminalStatusBadge, TerminalStatusStale } from './TerminalStatus';
 import { useTerminalNotifications } from './use-terminal-notifications';
+import { useNotificationTarget, usePushPresence } from './use-push';
 
 type Editor = {kind:'group';group?:Group;cwd?:string} | {kind:'terminal';terminal:TerminalInfo} | {kind:'new-terminal';splitTarget?:string;tabTarget?:string;axis?:'horizontal'|'vertical'} | {kind:'host'};
 type Dialog = {title:string;description:string;action:string;danger?:boolean;detail?:string;focusAction?:boolean;resolve:(value:boolean)=>void};
@@ -90,6 +91,14 @@ export function App(){
   },[state?.hostId,groupId,activeId,panelIds.join(','),JSON.stringify(savedTabs)]);
   const notifications=useTerminalNotifications(state,activeId,connected&&panelIds.includes(activeId)&&(!maximized||maximized===activeId)&&!settingsOpen&&!editor&&!projectEditor&&!dialog&&!moving&&!panelsOpen&&!(mobile&&sidebarOpen)&&!(fileDocs.visible&&(mobile||fileMaximized))&&!(mobile&&filesOpen));
   const groupStatuses=new Map(state?.groups.map(item=>[item.id,aggregateTerminalStatus(state.terminals.filter(info=>info.groupId===item.id),notifications.notices)]));
+  usePushPresence(client,connection,state?.capabilities?.includes('notifications.push')===true);
+  const [notificationTarget,clearNotificationTarget]=useNotificationTarget();
+  useEffect(()=>{
+    if(!notificationTarget||!state||connection.status!=='connected')return;
+    if('open' in notificationTarget){setSettingsTab('remote');setSettingsOpen(true);}
+    else{const terminal=state.terminals.find(item=>item.id===notificationTarget.terminalId);if(terminal){projectNavigation.current++;setGroupId(terminal.groupId);setSidebarOpen(false);selectTerminal(terminal.id,true);}}
+    clearNotificationTarget();
+  },[notificationTarget,state?.hostId,state?.bootId,connection.status]);
   const otherPanelsStatus=aggregateTerminalStatus(state?.terminals.filter(info=>info.groupId===groupId&&info.id!==activeId)||[],notifications.notices);
   const activeStatus=terminalStatus(state?.terminals.find(info=>info.id===activeId),notifications.notices.get(activeId));
   const allTerminalStatus=aggregateTerminalStatus(state?.terminals.filter(info=>info.id!==activeId)||[],notifications.notices);

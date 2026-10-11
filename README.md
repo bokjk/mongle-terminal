@@ -64,6 +64,8 @@ PowerShell·명령 프롬프트와 설치된 Git Bash·WSL을 사용합니다. C
 
 Codex 등 다른 CLI가 보낸 알림도 목록·탭·그룹·모바일 전환 목록에 표시합니다. 읽음 처리는 기기별로 저장되며, Claude·Codex 연동 밖의 CLI는 해당 프로그램의 알림 설정을 따릅니다. **Codex 작업 상태(미배포):** PowerShell에서 `codex`로 시작한 Codex도 작업 중·확인 요청·응답 완료를 Claude처럼 표시합니다. Codex CLI 0.162.0 이상에서, 업데이트 뒤 Codex의 `/hooks`에서 새 몽글터미널 훅을 신뢰하면 동작합니다. [알림 사용법](docs/USER-GUIDE.md#작업-알림--0316) · [Codex 작업 상태](docs/USER-GUIDE.md#codex-작업-상태--미배포)
 
+**휴대폰 알림(미배포):** 휴대폰에서 **설정 → 원격 연결 → 이 기기로 알림 받기**를 켜면, PC 앞에 없을 때(잠금 또는 5분 동안 입력 없음) Claude·Codex의 확인 요청과 새 기기 연결 요청을 휴대폰 알림으로 받습니다. 어느 기기에서든 그 PC의 몽글터미널 화면을 보고 있으면 보내지 않고, 알림에는 이름만 담습니다. [사용법](docs/USER-GUIDE.md#휴대폰-알림--미배포) · [보안과 검증](docs/validation/phone-notifications.md)
+
 컴퓨터 선택과 작업 그룹 전환을 얇은 상단 줄에 모았습니다. **왼쪽 사이드바 맨 위**에서 접고 펼칠 수 있습니다. 접으면 44px 아이콘 줄만 남고, 같은 자리에 펼치기 버튼이 유지됩니다.
 
 ![사이드바를 접어 작업 영역을 넓힌 몽글터미널](docs/assets/desktop-collapsed.png)

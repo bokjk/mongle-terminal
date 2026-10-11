@@ -125,7 +125,7 @@ export class HostCore {
     return result;
   }
   getState(): HostState {
-    return structuredClone({ hostId:this.hostId, bootId:this.bootId, name:this.settings.name, version:APP_VERSION, protocolVersion:PROTOCOL_VERSION, capabilities:['control.acquire-if-free','files.read','files.edit','files.pdf','git.read','layout.tabs','pairing.remote-approve','worktrees.manage','worktrees.terminal-context'], groups:this.groups, terminals:this.terminals, repositories:this.repositories,worktrees:this.worktrees,worktreeOperations:this.worktreeOperations,profiles:this.profiles, settings:this.settings, ...(this.options.claudeIntegration ? {claudeIntegration:this.options.claudeIntegration} : {}), ...(this.options.codexIntegration ? {codexIntegration:this.options.codexIntegration} : {}), ...(this.storageError ? {storageError:this.storageError} : {}) });
+    return structuredClone({ hostId:this.hostId, bootId:this.bootId, name:this.settings.name, version:APP_VERSION, protocolVersion:PROTOCOL_VERSION, capabilities:['control.acquire-if-free','files.read','files.edit','files.pdf','git.read','layout.tabs','notifications.push','pairing.remote-approve','worktrees.manage','worktrees.terminal-context'], groups:this.groups, terminals:this.terminals, repositories:this.repositories,worktrees:this.worktrees,worktreeOperations:this.worktreeOperations,profiles:this.profiles, settings:this.settings, ...(this.options.claudeIntegration ? {claudeIntegration:this.options.claudeIntegration} : {}), ...(this.options.codexIntegration ? {codexIntegration:this.options.codexIntegration} : {}), ...(this.storageError ? {storageError:this.storageError} : {}) });
   }
   connect(ctx: ConnectionContext, send: Send): void {
     if (!this.initialized || this.closing || this.shutdownPrepared) throw new AppError('HOST_UNAVAILABLE','호스트가 준비되지 않았습니다.');
@@ -888,7 +888,10 @@ export class HostCore {
   }
   private persist(required=false,clearSnapshots?:'all'|string[]){if(!this.initialized && !required)return;try{this.store.save(this.persisted(),clearSnapshots);this.metadataVersion++;this.storageError=undefined;}catch{this.storageError='설정을 저장하지 못했습니다. 디스크 공간과 접근 권한을 확인해 주세요.';if(required)throw new AppError('STORAGE_ERROR',this.storageError);}}
   private send(client:Client,message:Parameters<Send>[0]){try{client.send(message);}catch{this.disconnect(client.ctx.id);}}
-  private broadcastState(){const event={type:'state' as const,state:this.getState()};for(const client of this.clients.values())this.send(client,event);}
+  private readonly stateListeners=new Set<(state:HostState)=>void>();
+  /** Every state broadcast, for host services such as phone notifications. Listeners must not change the state. */
+  onState(listener:(state:HostState)=>void){this.stateListeners.add(listener);return()=>{this.stateListeners.delete(listener);};}
+  private broadcastState(){const event={type:'state' as const,state:this.getState()};for(const client of this.clients.values())this.send(client,event);for(const listener of this.stateListeners){try{listener(event.state);}catch{/* a listener failure never blocks terminals */}}}
   private notice(code:string,message:string){for(const client of this.clients.values())this.send(client,{type:'notice',code,message});}
   private async stopTerminal(info:TerminalInfo,preserveForBoot=false){if(!preserveForBoot){info.resumeOnBoot=false;delete info.restoreError;this.agentSessions.delete(info.id);}const r=this.runtimes.get(info.id);if(r){r.stopping=true;this.cancelResume(r);}if(!r){if(!preserveForBoot)info.status='exited';return;}if(r.pty){await r.stopPty?.();r.pty=undefined;}info.status='exited';delete info.pid;this.revoke(r);const frame=await this.frame(info);this.checkpoint(r,frame);this.broadcastFrame(frame);}
   private async disposeRuntime(id:string){const r=this.runtimes.get(id);if(!r)return;r.stopping=true;if(r.timer)clearTimeout(r.timer);this.cancelResume(r);if(r.pty)await r.stopPty?.();r.disposed=true;await r.engine.dispose();this.runtimes.delete(id);}
