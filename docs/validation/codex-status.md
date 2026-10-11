@@ -1,6 +1,6 @@
 # Codex 작업 상태
 
-2026-10-11, Windows x64, 0.3.21 배포 준비. PowerShell에서 `codex`로 시작한 Codex의 작업 중·확인 요청·응답 완료를 Claude와 같은 표시와 알림 번호로 보여 준다. 배포 검사는 [0.3.21 배포 검증](public-release-0.3.21.md)에 기록한다.
+2026-10-11, Windows x64, 0.3.21 공개. PowerShell에서 `codex`로 시작한 Codex의 작업 중·확인 요청·응답 완료를 Claude와 같은 표시와 알림 번호로 보여 준다. 공개 검증은 [0.3.21 배포 검증](public-release-0.3.21.md#final)을 따른다.
 
 ## 배경
 
