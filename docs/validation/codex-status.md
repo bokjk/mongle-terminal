@@ -91,7 +91,8 @@
 - 변경: `packages/terminal/engine.ts`(감지), `packages/terminal/types.ts`·`packages/protocol/index.ts`(`codexHooksReview`), `packages/host/core.ts`(전달·정리), `apps/web/src/TerminalPane.tsx`·`styles.css`(안내 띠), `apps/web/src/Settings.tsx`·`packages/host/codex-integration.ts`(안내 문구).
 - 검증: 타입 검사. `tests/terminal/codex-status.test.ts`의 엔진 감지 시험(일반 출력의 같은 글자 무시, 창이 뜨면 한 번, 답하면 내림).
 - 실제 확인(2026-10-12, 아스트라): 같은 격리 앱에서 PowerShell로 같은 문구를 전체 화면에 그려 확인했다. 첫 명령에서는 전체 화면에 남은 이전 글자가 제목 바로 뒤에 붙어 알아보지 못했다(`ad43a23`에서 제목 뒤 공백을 요구하지 않게 고침). 화면을 지운 명령에서는 PC 앱과 Aside 원격 화면(기본 폭) 모두에 안내 띠가 나타났고 Enter 뒤 사라졌다. Aside 원격 화면은 캡처가 시간 초과되어 접근성 기록으로 확인했다. 실제 Codex가 띄운 확인 창은 이번에 관찰하지 못했다. 다만 0.3.17 시험에서 몽글 안의 Codex가 그린 화면 기록 21개는 모두 전체 화면 모드였다. 배포 저장소 README의 0.3.21 안내도 같은 기준으로 고쳤다(배포 저장소 PR #15).
-- 확인하지 않은 범위: 실제 Codex 확인 창에서의 안내 띠, 390px 같은 좁은 화면, `--no-alt-screen`으로 실행한 Codex. 저장소 규칙의 Mobbin 사례 확인은 Aside에서 Mobbin이 로그아웃되어 있어 하지 못했다.
+- 디자인 참고(Mobbin): 2026-10-12 로그인 없이 공개 화면을 확인했다. [Front 플러그인 순서 안내](https://mobbin.com/explore/screens/aee31eb0-2aa7-4abc-ab02-aaefdba981c4)와 [Nextdoor 사업자 인증 안내(웹)](https://mobbin.com/explore/screens/bc1d3feb-063b-438d-801b-70eb22d609dd)는 직접 열어 보았고, [Nextdoor(모바일)](https://mobbin.com/explore/screens/309771f7-976f-4f3a-bac3-818e8806ceea)와 [Ubank 급여 주기 안내](https://mobbin.com/explore/screens/28a542d5-06b8-4208-8b3f-2c3a70bbafca)는 Aside 에이전트의 조사 결과로 확인했다. 모두 관련 내용 바로 옆에 붙은 띠로, 왼쪽 아이콘, 굵은 첫 문장, 설명, 옅은 강조색 배경을 쓴다. 이를 따라 안내 띠 배경과 테두리를 몽글의 옅은 강조색(`--accent-dim`)으로 바꿨다. 닫기 버튼은 Nextdoor처럼 해야 할 일을 안내하는 띠에는 없고, 이 안내는 창에 답하면 저절로 사라지므로 두지 않았다. 실행 버튼은 신뢰가 사용자의 결정이라 두지 않았다.
+- 확인하지 않은 범위: 실제 Codex 확인 창에서의 안내 띠, 390px 같은 좁은 화면, `--no-alt-screen`으로 실행한 Codex, 강조색 배경으로 바꾼 뒤의 실제 앱 화면.
 
 ## 확인하지 않은 범위
 
