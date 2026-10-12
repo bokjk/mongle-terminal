@@ -18,6 +18,18 @@ test('terminal output paths are found in Windows, relative and agent forms witho
   assert.deepEqual(paths('~/notes/a.md /usr/lib/x.so \\\\server\\share\\a.txt'), []);
 });
 
+test('a path with spaces is one link from its drive or quote, never a misleading tail', () => {
+  assert.deepEqual(paths('error C:\\work\\my project\\src\\a.ts:3 failed'), ['C:\\work\\my project\\src\\a.ts']);
+  assert.deepEqual(paths('● Update(C:\\Users\\me\\My Docs\\notes.md)'), ['C:\\Users\\me\\My Docs\\notes.md']);
+  assert.deepEqual(paths('open "my project\\src\\a.ts" now'), ['my project\\src\\a.ts']);
+  assert.deepEqual(paths('see C:\\a\\b.ts and src/c.ts'), ['C:\\a\\b.ts', 'src/c.ts'], 'separate paths stay separate');
+  assert.deepEqual(paths('C:\\a\\b.ts src\\c.ts'), ['C:\\a\\b.ts', 'src\\c.ts']);
+  assert.deepEqual(paths('folder\\my project\\src\\a.ts'), [], 'a tail whose start cannot be found is no link');
+  const [match] = findPaths('x C:\\my dir\\a.ts y');
+  assert.deepEqual([match!.start, match!.end, match!.text], [2, 16, 'C:\\my dir\\a.ts']);
+});
+
+
 test('only files inside the terminal folder resolve, with any separator or letter case', () => {
   const root = 'C:\\Work\\Project';
   assert.deepEqual(resolveTerminalPath(root, 'src/app.ts'), { ok: true, path: 'src\\app.ts' });
@@ -38,4 +50,3 @@ test('a path wrapped across rows and after wide characters is found under every 
   assert.equal(pathAtCell(buffer, 19, 1), undefined);
   terminal.dispose();
 });
-

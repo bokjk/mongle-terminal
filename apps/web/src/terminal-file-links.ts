@@ -22,21 +22,52 @@ const BARE_EXTENSIONS = new Set(('md markdown txt pdf json jsonc yml yaml toml i
   + 'sql graphql proto gradle svg').split(' '));
 const MAX_LINE = 4096;
 
+/**
+ * A path with spaces ("C:\work\my project\a.ts") reaches the pattern only as its last words. When the
+ * word before the match continues a path, join the match to the drive, ".\" or opening quote that began
+ * it; when no such start is found, the match is only part of a path and is no link at all.
+ * Answers undefined to keep the match as it is, null to drop it.
+ */
+function joinSpaced(text: string, start: number, end: number, path: string, found: readonly PathMatch[]): { start: number; path: string } | null | undefined {
+  if (text[start - 1] !== ' ') return undefined;
+  let tokenStart = start - 1;
+  while (tokenStart > 0 && !/\s/.test(text[tokenStart - 1]!)) tokenStart--;
+  const previous = text.slice(tokenStart, start - 1);
+  if (!previous || found.some(item => item.end === start - 1)) return undefined;
+  const from = Math.max(0, start - 260);
+  const before = text.slice(from, start);
+  const quote = Math.max(before.lastIndexOf('"'), before.lastIndexOf("'"), before.lastIndexOf('\x60'));
+  if (quote >= 0 && text[end] === before[quote]) {
+    const joined = before.slice(quote + 1) + path;
+    return /["'\x60<>|?*\t]/.test(joined) ? null : { start: from + quote + 1, path: joined };
+  }
+  if (!/[\\/]|^[("'\x60[]?[A-Za-z]:/.test(previous)) return undefined;
+  let drive = -1;
+  for (const match of before.matchAll(/(?<![\p{L}\p{N}_.])(?:[A-Za-z]:[\\/]|\.[\\/])/gu)) drive = from + match.index;
+  if (drive < 0 || found.some(item => drive >= item.start && drive < item.end)) return null;
+  const joined = text.slice(drive, start) + path;
+  return /["<>|?*\t]/.test(joined) || joined.slice(2).includes(':') ? null : { start: drive, path: joined };
+}
+
 /** Every path in one line of text, with its optional :line:column. Web addresses are skipped. */
 export function findPaths(text: string): PathMatch[] {
   if (text.length > MAX_LINE) return [];
   const urls = [...text.matchAll(/[A-Za-z][A-Za-z0-9+.-]*:\/\/\S*/g)].map(match => [match.index, match.index + match[0].length] as const);
   const found: PathMatch[] = [];
   for (const match of text.matchAll(PATH)) {
-    const path = match[1]!, start = match.index, end = start + match[0].length;
+    let path = match[1]!, start = match.index;
+    const end = start + match[0].length;
     if (urls.some(([from, to]) => start < to && end > from)) continue;
+    const joined = joinSpaced(text, start, end, path, found);
+    if (joined === null) continue;
+    if (joined) ({ start, path } = joined);
     const segments = path.split(/[\\/]/);
     const name = segments.at(-1)!, extension = name.slice(name.lastIndexOf('.') + 1).toLowerCase();
     if (!/[a-z]/.test(extension) || segments.some(part => part === '..')) continue;
     if (segments.length === 1 && !BARE_EXTENSIONS.has(extension)) continue;
     if (!/\p{L}/u.test(path.slice(0, path.length - extension.length - 1))) continue;
     const line = match[2] ?? match[4], column = match[3] ?? match[5];
-    found.push({ start, end, text: match[0], path, ...(line ? { line: Number(line) } : {}), ...(column ? { column: Number(column) } : {}) });
+    found.push({ start, end, text: text.slice(start, end), path, ...(line ? { line: Number(line) } : {}), ...(column ? { column: Number(column) } : {}) });
   }
   return found;
 }
@@ -139,6 +170,8 @@ export function attachTerminalPathLinks(terminal: Terminal, element: HTMLElement
   }));
   let swallow = false;
   const press = (event: MouseEvent) => {
+    // Every press starts a new gesture; a press that opened a path is the only one swallowed.
+    swallow = false;
     if (event.button !== 0 || !(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
     const hit = pathAtPoint(terminal, event.clientX, event.clientY);
     if (!hit || !open(hit.path)) return;
@@ -150,11 +183,15 @@ export function attachTerminalPathLinks(terminal: Terminal, element: HTMLElement
     if (event.type === 'click') swallow = false;
   };
   element.addEventListener('mousedown', press, true);
+  // A press that opened a path may be released outside the terminal: its swallowed release never comes here.
+  const releasedElsewhere = (event: MouseEvent) => { if (swallow && !element.contains(event.target as Node)) swallow = false; };
+  window.addEventListener('mouseup', releasedElsewhere, true);
   element.addEventListener('mouseup', release, true);
   element.addEventListener('click', release, true);
   return () => {
     links.dispose();
     element.removeEventListener('mousedown', press, true);
+    window.removeEventListener('mouseup', releasedElsewhere, true);
     element.removeEventListener('mouseup', release, true);
     element.removeEventListener('click', release, true);
     element.removeAttribute('title');

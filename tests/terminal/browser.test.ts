@@ -724,6 +724,17 @@ test('real Chrome: Ctrl+click opens a printed path without reaching a mouse-repo
     await page.keyboard.up('Control');
     assert.deepEqual(await opened(), ['src\\app.ts']);
     assert.ok((await reports()).some((data: string) => /^\x1b\[<16;\d+;\d+M$/.test(data)), 'Ctrl+click outside a path keeps its CLI report');
+    // A Ctrl+press on a path released outside the terminal must not swallow the next plain click.
+    await page.evaluate(() => { (window as any).mongleTerminalTest.inputs.length = 0; });
+    await page.keyboard.down('Control');
+    await page.mouse.move(cell.x + 9.5 * cell.width, cell.y);
+    await page.mouse.down();
+    await page.mouse.move(5, 500);
+    await page.mouse.up();
+    await page.keyboard.up('Control');
+    await page.mouse.click(cell.x + 9.5 * cell.width, cell.y);
+    const after = await reports();
+    assert.ok(after.some((data: string) => /^\x1b\[<0;\d+;\d+M$/.test(data)) && after.some((data: string) => /^\x1b\[<0;\d+;\d+m$/.test(data)), 'the next plain click reaches the CLI with its press and release');
   }));
 
 test('real Chrome: Ctrl+click on a path in shell output reaches no later mouse handler (selection, tap control)',
