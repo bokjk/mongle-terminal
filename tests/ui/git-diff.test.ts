@@ -28,7 +28,8 @@ test('Git review shows every branch change on one page, moves by file and change
   // Only the executable bit changes (staged, so it also counts on Windows where Git keeps the bit in the index).
   await git(repository, 'update-index', '--chmod=+x', '--', 'README.md');
   const host = new HostCore({ dataDir: fixture.data, name: 'Git 비교 검증 PC' }); await host.init();
-  t.after(async () => { await host.close(); assert.equal(path.dirname(fixture.root), tmpdir()); await rm(fixture.root, { recursive: true, force: true }); });
+  // The closed shell and a last background Git read can hold the folder briefly on Windows (EBUSY), so removal retries.
+  t.after(async () => { await host.close(); assert.equal(path.dirname(fixture.root), tmpdir()); await rm(fixture.root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }); });
   const ctx: ConnectionContext = { id: randomUUID(), deviceId: 'git-diff-ui', deviceName: '검증 브라우저', owner: true }; host.connect(ctx, () => {});
   const terminal: TerminalInfo = await host.handle('terminals.create', { groupId: host.getState().groups[0].id, profileId: 'cmd', cwd: repository }, ctx);
   await host.handle('terminals.rename', { id: terminal.id, title: 'Git 프로젝트' }, ctx);
