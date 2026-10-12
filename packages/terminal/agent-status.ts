@@ -374,7 +374,8 @@ export class CodexTaskState {
   observeScreen(screen: CodexScreen): AgentStatusUpdate | undefined {
     const waiting = this.requests.find(request => !request.shown);
     if (!waiting) return;
-    if (screen.prompt) return this.show(waiting);
+    // Codex shows one approval at a time: while one is shown, a prompt on screen is that one's.
+    if (screen.prompt) return this.anyShown() ? undefined : this.show(waiting);
     if (screen.review) this.requests = this.requests.filter(request => request.shown);
     return;
   }
