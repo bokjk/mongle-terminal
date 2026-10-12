@@ -202,14 +202,18 @@ export async function readGitDiff(root: string, dataDir: string, request: { path
       const listing = area === 'INDEX' ? await run(['ls-files', '-s', '--', path.relative(base, location.target).split(path.sep).join('/')]) : await run(['ls-tree', '--full-tree', area, '--', location.repositoryPath]);
       return /^(\d{6}) /.exec(listing.stdout)?.[1];
     }
-    let fileMode: boolean | undefined;
+    let fileMode: boolean | undefined, symlinks: boolean | undefined;
+    const setting = (name: string) => run(['config', '--bool', name]).then(output => output.stdout.trim() !== 'false', () => true);
     async function workingMode(location: { target: string; repositoryPath: string }, recorded?: string) {
       const info = await lstat(location.target);
       if (info.isSymbolicLink()) return '120000';
       // Windows reports no executable bit and Git turns core.fileMode off there: Git then takes the bit from the index.
-      fileMode ??= process.platform !== 'win32' && (await run(['config', '--bool', 'core.fileMode']).then(output => output.stdout.trim(), () => '')) !== 'false';
+      fileMode ??= process.platform !== 'win32' && await setting('core.fileMode');
+      // With core.symlinks off a link is checked out as a file holding its target; the index still records a link.
+      symlinks ??= await setting('core.symlinks');
+      const indexed = !fileMode || !symlinks ? await storedMode('INDEX', location) : undefined;
+      if (!symlinks && indexed === '120000') return '120000';
       if (fileMode) return info.mode & 0o100 ? '100755' : '100644';
-      const indexed = await storedMode('INDEX', location);
       return (indexed && indexed !== '120000' ? indexed : recorded) === '100755' ? '100755' : '100644';
     }
     const original = await stored(request.base, request.base === 'INDEX' ? current : previous);
@@ -323,6 +327,8 @@ export async function readGitReview(root: string, dataDir: string, mode: GitRevi
     const unchanged = new Set<string>();
     // Git compares the executable bit too: from the file on POSIX, from the index when core.fileMode is off (as on Windows).
     const fileMode = process.platform !== 'win32' && recheck.length > 0 && (await attempt(['config', '--bool', 'core.fileMode'])).trim() !== 'false';
+    // With core.symlinks off (common on Windows) Git checks a link out as a small file holding its target and keeps it a link in the index.
+    const symlinks = recheck.length === 0 || (await attempt(['config', '--bool', 'core.symlinks'])).trim() !== 'false';
     if (GIT_COMMIT_PATTERN.test(baseCommit)) for (let start = 0; start < recheck.length; start += 100) {
       const part = recheck.slice(start, start + 100);
       const stored = new Map<string, { mode: string; blob: string }>();
@@ -333,8 +339,8 @@ export async function readGitReview(root: string, dataDir: string, mode: GitRevi
       }
       const repositoryPath = (file: string) => path.relative(listing.repositoryRoot, path.resolve(base, file)).split(path.sep).join('/');
       // A symbolic link is stored as its target text; hash-object would hash the file it points to.
-      const actual = new Map<string, string>(), regular: string[] = [], links = new Set<string>(), executable = new Set<string>(), indexExecutable = new Set<string>();
-      if (!fileMode) for (const record of (await attempt(['ls-files', '-s', '-z', '--full-name', '--', ...part])).split('\0')) { const match = /^(\d+) [0-9a-f]+ \d\t(.+)$/.exec(record); if (match?.[1] === '100755') indexExecutable.add(match[2]); }
+      const actual = new Map<string, string>(), regular: string[] = [], links = new Set<string>(), executable = new Set<string>(), indexModes = new Map<string, string>();
+      if (!fileMode || !symlinks) for (const record of (await attempt(['ls-files', '-s', '-z', '--full-name', '--', ...part])).split('\0')) { const match = /^(\d+) [0-9a-f]+ \d\t(.+)$/.exec(record); if (match) indexModes.set(match[2], match[1]); }
       for (const file of part) {
         const target = path.resolve(base, file);
         const info = await lstat(target).catch(() => undefined);
@@ -351,7 +357,8 @@ export async function readGitReview(root: string, dataDir: string, mode: GitRevi
       // Same content is not enough: a link turned into a regular file (or back), or a changed executable bit, is a change Git reports too.
       for (const file of part) {
         const want = stored.get(repositoryPath(file));
-        if (want && actual.get(file) === want.blob && (want.mode === '120000') === links.has(file) && (links.has(file) || (want.mode === '100755') === (fileMode ? executable.has(file) : indexExecutable.has(repositoryPath(file))))) unchanged.add(file);
+        const indexMode = indexModes.get(repositoryPath(file)), link = links.has(file) || (!symlinks && indexMode === '120000');
+        if (want && actual.get(file) === want.blob && (want.mode === '120000') === link && (link || (want.mode === '100755') === (fileMode ? executable.has(file) : indexMode === '100755'))) unchanged.add(file);
       }
     }
     for (const file of recheck) if (!unchanged.has(file)) files.push({ path: file, status: 'modified' });

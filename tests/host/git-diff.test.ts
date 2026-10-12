@@ -200,6 +200,23 @@ test('Git diff reports both Git modes so a chmod or link change is not an empty 
   assert.deepEqual([deleted.modified, deleted.originalMode, deleted.modifiedMode], [null, undefined, undefined], 'no mode when one side is missing');
 });
 
+test('With core.symlinks off, a link checked out as a plain file is still compared as a link', async t => {
+  // PR #74 review: Git for Windows often keeps links as small files holding the target; the index still says 120000.
+  const { repository, data } = await fixture(t);
+  await git(repository, 'config', 'core.symlinks', 'false');
+  const stage = async (target: string) => { await writeFile(path.join(repository, 'link'), target); const hash = (await git(repository, 'hash-object', '-w', '--', 'link')).trim(); await git(repository, 'update-index', '--add', '--cacheinfo', `120000,${hash},link`); };
+  await stage('first.txt'); await git(repository, 'commit', '-qm', 'link');
+  await git(repository, 'update-ref', 'refs/remotes/origin/main', 'HEAD'); await git(repository, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+  await git(repository, 'checkout', '-qb', 'feature');
+  await stage('second.txt'); await git(repository, 'commit', '-qm', 'point elsewhere');
+  await writeFile(path.join(repository, 'link'), 'first.txt');
+  const review = await readGitReview(repository, data, 'branch');
+  assert.deepEqual(review.state === 'repository' && review.files, [], 'the file holds the base target again');
+  if (review.state !== 'repository') return;
+  const diff = await readGitDiff(repository, data, { path: 'link', base: 'INDEX', target: 'WORKTREE' });
+  assert.deepEqual([diff.original, diff.modified, diff.originalMode, diff.modifiedMode, modeChange(diff)], ['second.txt', 'first.txt', '120000', '120000', undefined]);
+});
+
 test('Git review keeps a file whose executable bit differs from the base on POSIX', async t => {
   // PR #74 review: chmod alone is a mode change Git reports while core.fileMode is on.
   if (process.platform === 'win32') { t.skip('Windows has no executable bit; Git sets core.fileMode off there'); return; }
@@ -226,6 +243,8 @@ test('Git review keeps a staged deletion, and a symbolic link restored to the ba
   try { await symlink('first.txt', path.join(repository, 'link'), 'file'); }
   catch (error) { if (['EPERM', 'EACCES'].includes((error as NodeJS.ErrnoException).code || '')) { t.skip('creating a symbolic link needs Developer Mode on this Windows'); return; } throw error; }
   await writeFile(path.join(repository, 'first.txt'), 'first\n'); await writeFile(path.join(repository, 'second.txt'), 'second\n');
+  // Real links here; a link checked out as a plain file (core.symlinks off) has its own test.
+  await git(repository, 'config', 'core.symlinks', 'true');
   await git(repository, '-c', 'core.symlinks=true', 'add', '--', 'link', 'first.txt', 'second.txt'); await git(repository, 'commit', '-qm', 'link');
   await git(repository, 'update-ref', 'refs/remotes/origin/main', 'HEAD'); await git(repository, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
   await git(repository, 'checkout', '-qb', 'feature');
