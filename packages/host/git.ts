@@ -248,41 +248,66 @@ export async function readGitReview(root: string, dataDir: string, mode: GitRevi
       }
       if (used !== 'branch') notice = head ? '비교할 기준 브랜치를 찾지 못해 커밋하지 않은 변경만 보여 줍니다.' : '아직 커밋이 없어 커밋하지 않은 변경만 보여 줍니다.';
     }
-    type Entry = { status?: string; originalPath?: string; atBase: boolean; inWorktree: boolean; conflicted?: boolean };
-    const entries = new Map<string, Entry>();
+    // Each path's existence at the base and in the working folder decides its status. Paths the tree
+    // diff does not name are the same at the base and at HEAD, so git status alone describes them.
+    type Tree = { code: string; originalPath?: string };
+    const tree = new Map<string, Tree>();
     const inside = (relative: string) => validRelative(relative) && within(base, path.resolve(base, relative)) && !within(protectedRoot, path.resolve(base, relative));
     if (used === 'branch' && baseCommit !== head) {
       // Tree-to-tree only: no working-folder reads, so no clean filters or index refresh run here.
       for (const entry of parseNameStatus(await run(['diff', '--relative', '--name-status', '-z', '-M', '--no-ext-diff', '--no-textconv', '--no-color', baseCommit, head]))) {
         if (!inside(entry.path) || (entry.originalPath && !inside(entry.originalPath))) continue;
-        if (entry.code === 'R' && entry.originalPath) {
-          entries.set(entry.path, { originalPath: entry.originalPath, atBase: true, inWorktree: true });
-          entries.set(entry.originalPath, { atBase: true, inWorktree: false, status: 'moved' });
-        } else entries.set(entry.path, { atBase: entry.code !== 'A' && entry.code !== 'C', inWorktree: entry.code !== 'D' });
+        if (entry.code === 'R' && entry.originalPath) { tree.set(entry.path, { code: 'R', originalPath: entry.originalPath }); tree.set(entry.originalPath, { code: 'R-' }); }
+        else tree.set(entry.path, { code: entry.code === 'C' ? 'A' : entry.code });
       }
     }
-    for (const change of listing.changes) {
-      const previous = entries.get(change.path);
-      // Without a branch entry, HEAD and the base agree for this path.
-      const atBase = previous ? previous.atBase : !(change.untracked && !change.index) && change.index !== 'A' && change.index !== 'R' && change.index !== 'C';
-      const inWorktree = change.conflicted || change.untracked || (change.worktree !== 'D' && !(change.index === 'D' && !change.untracked));
-      const next: Entry = { atBase: previous?.status === 'moved' ? true : atBase, inWorktree, conflicted: change.conflicted, originalPath: previous?.originalPath };
-      if (change.index === 'R' && change.originalPath) {
-        const origin = entries.get(change.originalPath);
-        if (origin?.originalPath) next.originalPath = origin.originalPath;
-        else if (origin && !origin.atBase) next.atBase = false;
-        else next.originalPath = change.originalPath;
-        next.atBase = next.atBase || Boolean(next.originalPath);
-        entries.set(change.originalPath, { atBase: true, inWorktree: false, status: 'moved' });
+    const status = new Map(listing.changes.map(change => [change.path, change]));
+    const renamedAway = new Set(listing.changes.flatMap(change => change.index === 'R' && change.originalPath ? [change.originalPath] : []));
+    const inHead = (file: string) => { const change = status.get(file); return !change || (!(change.untracked && !change.index) && change.index !== 'A' && change.index !== 'R' && change.index !== 'C'); };
+    const atBase = (file: string) => { const entry = tree.get(file); return entry ? entry.code !== 'A' && entry.code !== 'R' : inHead(file); };
+    const inWorktree = (file: string) => {
+      const change = status.get(file);
+      if (change) return change.conflicted || change.untracked || (change.worktree !== 'D' && !(change.index === 'D' && !change.untracked));
+      if (renamedAway.has(file)) return false;
+      const entry = tree.get(file);
+      return !entry || (entry.code !== 'D' && entry.code !== 'R-');
+    };
+    // A staged rename may continue a committed one; only a path that existed at the base can be a source.
+    const source = (file: string) => {
+      const change = status.get(file), staged = change?.index === 'R' && change.originalPath ? change.originalPath : undefined;
+      const entry = tree.get(staged ?? file);
+      return entry?.code === 'R' ? entry.originalPath : staged;
+    };
+    const paths = new Set([...tree.keys(), ...status.keys(), ...renamedAway]);
+    const files: GitReviewFile[] = [], consumed = new Set<string>(), recheck: string[] = [];
+    for (const file of paths) {
+      if (status.get(file)?.conflicted) { files.push({ path: file, status: 'conflicted' }); continue; }
+      if (atBase(file) || !inWorktree(file)) continue;
+      const from = source(file);
+      if (from && atBase(from) && !inWorktree(from)) { consumed.add(from); files.push({ path: file, originalPath: from, status: 'renamed' }); }
+      else files.push({ path: file, status: 'added' });
+    }
+    for (const file of paths) {
+      if (status.get(file)?.conflicted || consumed.has(file) || !atBase(file)) continue;
+      if (!inWorktree(file)) files.push({ path: file, status: 'deleted' });
+      // Changed again after the branch committed it, or staged and then edited back: it may equal the base.
+      else if (status.has(file)) recheck.push(file);
+      else files.push({ path: file, status: 'modified' });
+    }
+    const unchanged = new Set<string>();
+    if (GIT_COMMIT_PATTERN.test(baseCommit)) for (let start = 0; start < recheck.length; start += 100) {
+      const part = recheck.slice(start, start + 100);
+      const stored = new Map<string, string>();
+      // --full-tree with repository paths; --no-filters hashes the working file as is, running no filter program.
+      for (const record of (await attempt(['ls-tree', '-z', '--full-tree', '--full-name', baseCommit, '--', ...part.map(file => path.relative(listing.repositoryRoot, path.resolve(base, file)).split(path.sep).join('/'))])).split('\0')) {
+        const match = /^\d+ blob ([0-9a-f]+)\t(.+)$/.exec(record);
+        if (match) stored.set(match[2], match[1]);
       }
-      entries.set(change.path, next);
+      const hashes = (await attempt(['hash-object', '--no-filters', '--', ...part])).split(/\r?\n/);
+      if (hashes.length !== part.length) continue;
+      part.forEach((file, index) => { if (stored.get(path.relative(listing.repositoryRoot, path.resolve(base, file)).split(path.sep).join('/')) === hashes[index]) unchanged.add(file); });
     }
-    const files: GitReviewFile[] = [];
-    for (const [file, entry] of entries) {
-      if (entry.status === 'moved' && !entry.inWorktree) continue;
-      const status = entry.conflicted ? 'conflicted' : entry.atBase && entry.inWorktree ? (entry.originalPath ? 'renamed' : 'modified') : entry.inWorktree ? 'added' : entry.atBase ? 'deleted' : undefined;
-      if (status) files.push({ path: file, ...(status === 'renamed' ? { originalPath: entry.originalPath } : {}), status });
-    }
+    for (const file of recheck) if (!unchanged.has(file)) files.push({ path: file, status: 'modified' });
     files.sort((a, b) => a.path.localeCompare(b.path, 'en'));
     const truncated = listing.truncated || files.length > GIT_CHANGE_LIMIT;
     return { state: 'repository', root, repositoryRoot: listing.repositoryRoot, branch: listing.branch, detached: listing.detached, mode: used, base: baseCommit, baseLabel, ...(notice ? { notice } : {}), files: files.slice(0, GIT_CHANGE_LIMIT), truncated };

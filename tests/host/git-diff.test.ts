@@ -148,3 +148,24 @@ test('Git review lists every change since the branch left its base, falls back t
   assert.equal(await digest(path.join(repository, '.git', 'index')), before); assert.equal(existsSync(marker), false);
   await assert.rejects(readGitDiff(repository, data, { path: 'staged.txt', base: 'HEAD~1', target: 'WORKTREE' }), { code: 'INVALID_REQUEST' });
 });
+
+test('Git review leaves out files the working folder brought back to the base, including a reverted rename', async t => {
+  // PR #74 review: a committed change undone in the working folder is no change at all.
+  const { repository, data } = await fixture(t);
+  await git(repository, 'update-ref', 'refs/remotes/origin/main', 'HEAD'); await git(repository, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+  await git(repository, 'checkout', '-qb', 'feature');
+  await writeFile(path.join(repository, 'src', 'modified.ts'), 'export const value = 2;\n'); await writeFile(path.join(repository, 'staged.txt'), 'changed on the branch\n');
+  await git(repository, 'mv', '--', '이전 이름.txt', '새 이름.txt');
+  await git(repository, 'add', '--', '.'); await git(repository, 'commit', '-qm', 'feature work');
+  await writeFile(path.join(repository, 'src', 'modified.ts'), 'export const value = 1;\n');
+  await git(repository, 'mv', '--', '새 이름.txt', '이전 이름.txt');
+  await writeFile(path.join(repository, 'README.md'), '# Test project\n'); await git(repository, 'add', '--', 'README.md');
+  const before = await digest(path.join(repository, '.git', 'index'));
+  const review = await readGitReview(repository, data, 'branch');
+  assert.equal(review.state, 'repository'); if (review.state !== 'repository') return;
+  assert.deepEqual(review.files, [{ path: 'staged.txt', status: 'modified' }], 'only the change that still differs from the base');
+  await writeFile(path.join(repository, 'staged.txt'), 'before\n');
+  const reverted = await readGitReview(repository, data, 'branch');
+  assert.deepEqual(reverted.state === 'repository' && reverted.files, []);
+  assert.equal(await digest(path.join(repository, '.git', 'index')), before, 'hashing the files writes nothing');
+});
