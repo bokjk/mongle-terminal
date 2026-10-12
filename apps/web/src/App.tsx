@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Check, ChevronDown, ChevronRight, Folder, FolderOpen, Keyboard, Menu, Monitor, PanelLeftClose, PanelLeftOpen, Plus, RefreshCw, Settings as SettingsIcon, SquareTerminal, Trash2, X, WifiOff } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, Folder, FolderOpen, Menu, Monitor, PanelLeftClose, PanelLeftOpen, Plus, RefreshCw, Settings as SettingsIcon, SquareTerminal, Trash2, X, WifiOff } from 'lucide-react';
 import { createClient, type ComputerSearch, type ConnectionInfo, type SavedHost } from '../../../packages/client/index';
 import { APP_VERSION, findLeaf, leafIds, groupRepositoryIds, type LayoutLeaf, type Group, type HostState, type LayoutNode, type TerminalInfo, type ProjectInspection } from '../../../packages/protocol/index';
 import { updateRatio } from '../../../packages/ui/layout';
@@ -11,6 +11,9 @@ import { usePaneDrag } from './use-pane-drag';
 import { FileExplorer } from './FileExplorer';
 import { explorerClient } from './explorer-queue';
 import { useFileDocuments } from './use-file-documents';
+import { resolveTerminalPath } from './terminal-file-links';
+import { MobileKeyBar } from './KeyBar';
+import { sanitizeKeyBar } from './key-bar';
 import { touchScrollSpeed } from '../../../packages/terminal/touch-scrollback';
 const FileEditorPanel = lazy(() => import('./FileEditorPanel').then(module => ({ default: module.FileEditorPanel })));
 import { HostPicker } from './HostPicker';
@@ -23,6 +26,7 @@ import { ProjectOpenModal, ProjectWorktrees } from './Projects';
 import { aggregateTerminalStatus, terminalStatus, terminalStatusDescription, TerminalStatusBadge, TerminalStatusStale } from './TerminalStatus';
 import { useTerminalNotifications } from './use-terminal-notifications';
 import { useNotificationTarget, usePushPresence } from './use-push';
+import { useScreenWakeLock } from './use-screen-wake-lock';
 
 type Editor = {kind:'group';group?:Group;cwd?:string} | {kind:'terminal';terminal:TerminalInfo} | {kind:'new-terminal';splitTarget?:string;tabTarget?:string;axis?:'horizontal'|'vertical'} | {kind:'host'};
 type Dialog = {title:string;description:string;action:string;danger?:boolean;detail?:string;focusAction?:boolean;resolve:(value:boolean)=>void};
@@ -62,9 +66,15 @@ export function App(){
   const [mobileCompact,setMobileCompact] = useState(()=>preference<unknown>('mongle.mobileCompact',false)===true);
   const [scrollSpeed,setScrollSpeed] = useState(()=>touchScrollSpeed(preference<unknown>('mongle.touchScrollSpeed',undefined)));
   useEffect(()=>savePreference('mongle.touchScrollSpeed',scrollSpeed),[scrollSpeed]);
+  const [keyBar,setKeyBar] = useState(()=>sanitizeKeyBar(preference<unknown>('mongle.keyBar',undefined)));
+  useEffect(()=>savePreference('mongle.keyBar',keyBar),[keyBar]);
+  const [keepScreenOn,setKeepScreenOn] = useState(()=>preference<unknown>('mongle.keepScreenOn',false)===true);
+  useEffect(()=>savePreference('mongle.keepScreenOn',keepScreenOn),[keepScreenOn]);
   const [sidebarWidth,setSidebarWidth] = useState(()=>{const width=preference<unknown>('mongle.sidebarWidth',212);return typeof width==='number'&&Number.isFinite(width)?Math.max(180,Math.min(360,width)):212;});
   const [mobile,setMobile] = useState(()=>matchMedia('(max-width:700px)').matches);
   const [ctrl,setCtrl] = useState(false);const [alt,setAlt] = useState(false);
+  // A latched Ctrl or Alt removed from the key bar would keep changing input with no key left to turn it off.
+  const updateKeyBar=(ids:string[])=>{setKeyBar(ids);if(!ids.includes('ctrl'))setCtrl(false);if(!ids.includes('alt'))setAlt(false);};
   const actions = useRef(new Map<string,PaneActions>());
   const layoutQueue = useRef<Promise<void>>(Promise.resolve());
   const hostSelection = useRef(0);
@@ -72,6 +82,8 @@ export function App(){
   const stateRequests = useRef(0);
   const notify = useCallback((message:string)=>setToast(message),[]);
   const connected=connection.status==='connected';
+  // Opt-in, per device: a phone watching an agent work need not lock itself.
+  useScreenWakeLock(keepScreenOn&&connected&&Boolean(activeId));
   const [fileClient] = useState(() => explorerClient(client));
   const fileDocs = useFileDocuments(fileClient, state, connected, connection.connectionId);
   const [fileMaximized,setFileMaximized] = useState(false);
@@ -218,7 +230,14 @@ export function App(){
       await client.request('groups.layout',{id,revision:currentGroup.revision,layout:transform(currentGroup.layout)});if(same())await loadState();
     }catch(error){if(same()){notify(error instanceof Error?error.message:'배치를 저장하지 못했습니다.');await loadState();}}});return layoutQueue.current;
   }
-  function renderPane(id:string,leaf?:LayoutLeaf,visible=true){const info=state?.terminals.find(t=>t.id===id);if(!state||!info)return null;return <TerminalPane key={`${state.hostId}:${id}:${info.generation}`} client={client} state={state} info={info} connected={connected} owner={connection.owner} connectionId={connection.connectionId} selected={activeId===id} maximized={maximized===id} tabbed={!mobile} tabs={!mobile&&leaf&&visible?<TerminalTabs notices={notifications.notices} terminals={leafIds(leaf).map(tab=>state!.terminals.find(terminal=>terminal.id===tab)).filter((terminal):terminal is TerminalInfo=>Boolean(terminal))} activeId={selectedTab(leaf)} connected={connected} worktrees={state.worktrees} insertion={paneDrag.preview?.target===id?paneDrag.preview.insertion:undefined} onSelect={selectTerminal} onClose={terminal=>void closeTerminal(terminal)} onRename={terminal=>setEditor({kind:'terminal',terminal})} clickAllowed={paneDrag.clickAllowed} dragEnabled={paneDrag.enabled} onDragStart={(event,tabId)=>paneDrag.start(event,tabId,'tab')} onDragEnd={paneDrag.cancel}/>:undefined} worktreeActions={visible?{request:projectRequest,refresh:refreshProject,prepareFocus:id=>projectFocus(id,false),onError:notify}:undefined} onNewTab={()=>setEditor({kind:'new-terminal',tabTarget:leaf?leafIds(leaf).at(-1):id})} canAddTab={state.capabilities?.includes('layout.tabs')} fontSize={fontSize} touchScrollSpeed={scrollSpeed} theme={theme} ctrl={ctrl} alt={alt} onSelect={()=>selectTerminal(id)} onSplit={axis=>setEditor({kind:'new-terminal',splitTarget:id,axis})} onMaximize={()=>setMaximized(maximized===id?undefined:id)} onClose={()=>void closeTerminal(info)} onRename={()=>setEditor({kind:'terminal',terminal:info})} onRestart={()=>void restartTerminal(info)} onMove={()=>setMoving(info)} onClearHistory={()=>void clearHistory(info)} onTerminate={()=>void terminateTerminal(info)} dragEnabled={paneDrag.enabled} onPaneDragStart={event=>paneDrag.start(event,id)} onPaneDragEnd={paneDrag.cancel} onPaneDragOver={event=>paneDrag.over(id,event)} onPaneDrop={event=>paneDrag.drop(id,event)} onPanePointerStart={paneDrag.pointerStart} dragClickAllowed={paneDrag.clickAllowed} dropPreview={paneDrag.preview?.target===id?paneDrag.preview:undefined} onError={notify} confirmPaste={confirmPaste} register={register} onPresentedNotification={notifications.onPresented}/>;}
+  function openTerminalPath(info:TerminalInfo,printed:string){
+    if(!state)return;
+    if(!state.capabilities?.includes('files.read')){notify('이 컴퓨터의 몽글터미널을 업데이트하면 터미널의 파일 경로를 열 수 있습니다.');return;}
+    const root=info.currentCwd||info.cwd,resolved=resolveTerminalPath(root,printed);
+    if(!resolved.ok){notify(resolved.reason);return;}
+    void fileDocs.open({id:info.id,hostId:state.hostId,bootId:state.bootId,generation:info.generation,root},resolved.path);
+  }
+  function renderPane(id:string,leaf?:LayoutLeaf,visible=true){const info=state?.terminals.find(t=>t.id===id);if(!state||!info)return null;return <TerminalPane key={`${state.hostId}:${id}:${info.generation}`} client={client} state={state} info={info} connected={connected} owner={connection.owner} connectionId={connection.connectionId} selected={activeId===id} maximized={maximized===id} tabbed={!mobile} tabs={!mobile&&leaf&&visible?<TerminalTabs notices={notifications.notices} terminals={leafIds(leaf).map(tab=>state!.terminals.find(terminal=>terminal.id===tab)).filter((terminal):terminal is TerminalInfo=>Boolean(terminal))} activeId={selectedTab(leaf)} connected={connected} worktrees={state.worktrees} insertion={paneDrag.preview?.target===id?paneDrag.preview.insertion:undefined} onSelect={selectTerminal} onClose={terminal=>void closeTerminal(terminal)} onRename={terminal=>setEditor({kind:'terminal',terminal})} clickAllowed={paneDrag.clickAllowed} dragEnabled={paneDrag.enabled} onDragStart={(event,tabId)=>paneDrag.start(event,tabId,'tab')} onDragEnd={paneDrag.cancel}/>:undefined} worktreeActions={visible?{request:projectRequest,refresh:refreshProject,prepareFocus:id=>projectFocus(id,false),onError:notify}:undefined} onNewTab={()=>setEditor({kind:'new-terminal',tabTarget:leaf?leafIds(leaf).at(-1):id})} canAddTab={state.capabilities?.includes('layout.tabs')} fontSize={fontSize} touchScrollSpeed={scrollSpeed} theme={theme} ctrl={ctrl} alt={alt} onSelect={()=>selectTerminal(id)} onSplit={axis=>setEditor({kind:'new-terminal',splitTarget:id,axis})} onMaximize={()=>setMaximized(maximized===id?undefined:id)} onClose={()=>void closeTerminal(info)} onRename={()=>setEditor({kind:'terminal',terminal:info})} onRestart={()=>void restartTerminal(info)} onMove={()=>setMoving(info)} onClearHistory={()=>void clearHistory(info)} onTerminate={()=>void terminateTerminal(info)} dragEnabled={paneDrag.enabled} onPaneDragStart={event=>paneDrag.start(event,id)} onPaneDragEnd={paneDrag.cancel} onPaneDragOver={event=>paneDrag.over(id,event)} onPaneDrop={event=>paneDrag.drop(id,event)} onPanePointerStart={paneDrag.pointerStart} dragClickAllowed={paneDrag.clickAllowed} dropPreview={paneDrag.preview?.target===id?paneDrag.preview:undefined} onError={notify} onOpenPath={openTerminalPath} confirmPaste={confirmPaste} register={register} onPresentedNotification={notifications.onPresented}/>;}
   const hostName=state?.name||selectedHost?.name||(window.mongle?'이 PC':location.hostname);
 
   const hostPicker=(window.mongle?<HostPicker hosts={hosts} fallback={hostName} onSelect={id=>void chooseHost(id)}/>:<ComputerSwitcher client={client} name={hostName} connected={connected}/>);
@@ -278,12 +297,12 @@ export function App(){
           {fileDocs.visible&&<Suspense fallback={<p className="file-message">편집기를 여는 중…</p>}><FileEditorPanel files={fileDocs} treeOpen={filesOpen} onToggleTree={()=>setFilesOpen(value=>!value)} maximized={fileMaximized} onMaximize={()=>setFileMaximized(value=>!value)} onError={notify}/></Suspense>}
         </div>}
         </div>
-        {mobile&&<div className="mobile-keys" aria-label="터미널 보조 키">{[['Esc','\x1b'],['Tab','\t']].map(([label,key])=><button key={label} className="key-button" onPointerDown={e=>e.preventDefault()} onClick={()=>actions.current.get(activeId)?.key(key)}>{label}</button>)}<button className={`key-button ${ctrl?'latched':''}`} aria-pressed={ctrl} onPointerDown={e=>e.preventDefault()} onClick={()=>setCtrl(!ctrl)}>Ctrl</button><button className={`key-button ${alt?'latched':''}`} aria-pressed={alt} onPointerDown={e=>e.preventDefault()} onClick={()=>setAlt(!alt)}>Alt</button><button className="key-button" onPointerDown={e=>e.preventDefault()} onClick={()=>actions.current.get(activeId)?.key('\x03')}>^C</button>{[[ArrowLeft,'\x1b[D','왼쪽'],[ArrowDown,'\x1b[B','아래'],[ArrowUp,'\x1b[A','위'],[ArrowRight,'\x1b[C','오른쪽']].map(([Icon,key,label])=>{const Component=Icon as typeof ArrowLeft;return <button className="key-button" key={String(label)} aria-label={String(label)} onPointerDown={e=>e.preventDefault()} onClick={()=>actions.current.get(activeId)?.key(String(key))}><Component size={17}/></button>;})}<button className="key-button" aria-label="키보드 열기" onPointerDown={e=>e.preventDefault()} onClick={()=>actions.current.get(activeId)?.focus()}><Keyboard size={18}/></button></div>}
+        {mobile&&<MobileKeyBar ids={keyBar} modifiers={{ctrl,alt}} onKey={data=>actions.current.get(activeId)?.key(data)} onModifier={modifier=>modifier==='ctrl'?setCtrl(!ctrl):setAlt(!alt)} onKeyboard={()=>actions.current.get(activeId)?.focus()}/>}
       </>}
       {fileDocs.visible&&!group?.layout&&<div className="orphan-file-editor"><Suspense fallback={<p className="file-message">편집기를 여는 중…</p>}><FileEditorPanel files={fileDocs} treeOpen={false} onToggleTree={()=>setFilesOpen(true)} maximized={true} onMaximize={()=>fileDocs.setVisible(false)} onError={notify}/></Suspense></div>}
       <footer className="status-bar"><span><span className={`connection-dot ${connected?'connected':'offline'}`}/>{connected?'세션 연결됨':'오프라인'}</span><span>{state?`${state.terminals.filter(t=>t.status==='running').length}개 실행 중`:'연결 대기'}</span>{fileDocs.documents.length>0&&<button className="open-files-status" onClick={()=>fileDocs.setVisible(true)}>열린 파일 {fileDocs.documents.length}{fileDocs.unsaved?` · 수정 중 ${fileDocs.unsaved}`:''}</button>}<span className="status-right">{connection.owner?'이 컴퓨터':'원격 연결'} · {group?.cwd||'몽글터미널'}</span></footer>
     </main>
-    {settingsOpen&&state&&<Settings initialTab={settingsTab} client={client} state={state} owner={connection.owner} theme={theme} fontSize={fontSize} scrollSpeed={scrollSpeed} onScrollSpeed={setScrollSpeed} refreshBlocked={fileDocs.unsaved > 0 || fileDocs.documents.some(doc => doc.saving)} onTheme={setTheme} onFontSize={setFontSize} onClose={()=>{setSettingsOpen(false);setSettingsTab(undefined);}} onError={notify}/>}
+    {settingsOpen&&state&&<Settings initialTab={settingsTab} client={client} state={state} owner={connection.owner} theme={theme} fontSize={fontSize} scrollSpeed={scrollSpeed} onScrollSpeed={setScrollSpeed} keyBar={keyBar} onKeyBar={updateKeyBar} keepScreenOn={keepScreenOn} onKeepScreenOn={setKeepScreenOn} refreshBlocked={fileDocs.unsaved > 0 || fileDocs.documents.some(doc => doc.saving)} onTheme={setTheme} onFontSize={setFontSize} onClose={()=>{setSettingsOpen(false);setSettingsTab(undefined);}} onError={notify}/>}
     {editor&&<EditorModal key={`${state?.hostId}:${group?.id}:${editor.kind}:${editor.kind==='group'?editor.group?.id:editor.kind==='new-terminal'?editor.tabTarget||editor.splitTarget:''}`} editor={editor} state={state} group={group} activeId={activeId} findComputers={window.mongle?.findComputers?refresh=>window.mongle!.findComputers!(refresh):undefined} pickDirectory={connected&&connection.owner&&window.mongle?.selectDirectory?path=>window.mongle!.selectDirectory!(path):undefined} onClose={()=>setEditor(undefined)} onSubmit={async values=>{
       const selection=hostSelection.current,navigation=projectNavigation.current,hostId=state?.hostId,bootId=state?.bootId;
       const sameHost=()=>selection===hostSelection.current&&layoutContext.current.hostId===hostId&&layoutContext.current.bootId===bootId;
