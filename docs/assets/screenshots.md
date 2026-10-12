@@ -6,6 +6,7 @@
 | --- | --- |
 | `desktop.png` | Chrome 1440 × 900, 어두운 테마, 3개 분할 영역·4개 셸. 첫 영역에 독립된 탭 두 개와 마지막 탭 뒤 + |
 | `mobile.png` | Chrome 모바일 에뮬레이션 390 × 844, 12px 글꼴, 같은 호스트의 첫 번째 터미널 |
+| `git-diff.png` / `git-review.png` | Chrome 1440 × 900, 어두운 테마. `scripts/capture-git-diff.ts`가 임시 드라이브의 예시 저장소(`origin/main`에서 갈라진 브랜치, 커밋한 변경과 작업 중 변경)를 실제 HostCore·cmd·Git으로 열고, Git 목록의 파일 하나 비교 탭과 **변경 검토** 탭을 촬영 |
 | `git-switch.png` / `git-files.png` / `git-changes.png` | 실제 0.3.6 패키지 Electron·OwnerPipe·cmd·Git, 격리된 샘플 저장소. 실제 탐색기 제목줄과 트리 영역을 각각 캡처 |
 
 터미널 내용은 README를 위한 **예시 프로젝트**입니다. 화면의 테스트 2개는 예시 프로젝트의 패널 추가·그룹 이름 변경 함수를 실제 Node 테스트 러너로 실행한 결과이며, 몽글터미널 전체 회귀 검사 결과를 나타내지 않습니다. 모바일 이미지는 반응형 화면 설명용입니다. 실제 휴대폰, 소프트 키보드, Tailscale 통신을 검증했다는 의미는 아닙니다.
@@ -37,3 +38,7 @@ PowerShell은 `-NoProfile`로 실행하고 명령 기록 저장을 끕니다. �
 ## 0.3.8 재촬영 · 2026-10-02
 
 얇은 상단·사이드바 맨 위 접기 버튼·13px 터미널을 반영해 데스크톱 펼침/접힘과 모바일 화면을 재촬영했다. 캡처 명령은 `MONGLE_README_DATA_ROOT=C:\Users\Public\Documents\ESTsoft\CreatorTemp\MongleDemo038`에서 실행했고 기존과 동일한 예제 Git 저장소·워크트리·실제 셸 네 개를 사용했다. Git이 경로 별칭을 실제 경로로 정규화하므로 공용 격리 폴더만 표시된다. 일반 폴더는 임시 드라이브의 notes 경로를 사용한다. 초기 개인 TEMP 경로 캡처는 개인정보 검사에서 거부되어 폐기했고 최종 공용 폴더 캡처만 게시한다. 이미지에 개인 경로·인증 정보·사용자 명령 출력이 없는 것을 확인했다.
+
+## Git 변경 비교 촬영 · 2026-10-12
+
+`npx tsx scripts/capture-git-diff.ts`로 `git-diff.png`와 `git-review.png`를 촬영했다. 스크립트는 `.test-data/readme-git-diff/` 아래 격리 폴더를 빈 드라이브 문자로 잠시 매핑해 `X:\workspace` 같은 예시 경로만 보이게 하고, 그룹 시작 폴더도 그 경로로 바꾼다. 화면 글자에 `C:\Users\` 경로나 실제 원격 주소가 있으면 촬영을 중단한다(첫 시도에서 하단 상태줄의 기본 그룹 폴더 때문에 중단되어 고쳤다). Git 훅은 끄고, 끝나면 자신이 만든 드라이브 매핑과 격리 폴더만 확인 후 지운다. 픽셀·앱 DOM은 수정하지 않았다.

@@ -16,6 +16,7 @@
 | @codemirror/lang-python | 6.2.1 | MIT | [LICENSE](licenses/codemirror__lang-python6.2.1/LICENSE) |
 | @codemirror/language | 6.12.4 | MIT | [LICENSE](licenses/codemirror__language6.12.4/LICENSE) |
 | @codemirror/lint | 6.9.7 | MIT | [LICENSE](licenses/codemirror__lint6.9.7/LICENSE) |
+| @codemirror/merge | 6.12.2 | MIT | [LICENSE](licenses/codemirror__merge6.12.2/LICENSE) |
 | @codemirror/search | 6.7.2 | MIT | [LICENSE](licenses/codemirror__search6.7.2/LICENSE) |
 | @codemirror/state | 6.7.6 | MIT | [LICENSE](licenses/codemirror__state6.7.6/LICENSE) |
 | @codemirror/view | 6.43.13 | MIT | [LICENSE](licenses/codemirror__view6.43.13/LICENSE) |
@@ -171,7 +172,7 @@
 | Node.js independent host runtime | v24.11.1 | Node.js MIT and bundled third-party licenses | [LICENSE](licenses/node-v24.11.1/LICENSE) |
 | Microsoft.Windows.Console.ConPTY / OpenConsole | 1.23.251008001 | MIT plus upstream notices (conservative superset) | [LICENSE](licenses/conpty-1.23.251008001/LICENSE) · [NOTICE.md](licenses/conpty-1.23.251008001/NOTICE.md) · [Microsoft.Windows.Console.ConPTY.nuspec](licenses/conpty-1.23.251008001/Microsoft.Windows.Console.ConPTY.nuspec) |
 
-Production 직접·전이 의존성 161개와 별도 런타임 고지를 수집했습니다. 번들링 과정에서 제거된 코드에 대한 고지가 포함될 수 있습니다. 빌드 도구 자체는 배포하지 않는 범위에서 제외하며, Electron/Chromium은 개발 의존성에 선언되어도 실제 앱에 들어가므로 별도로 포함합니다. `node-addon-api`와 node-pty의 winpty 고지 역시 실제 설치 패키지에서 보존합니다.
+Production 직접·전이 의존성 162개와 별도 런타임 고지를 수집했습니다. 번들링 과정에서 제거된 코드에 대한 고지가 포함될 수 있습니다. 빌드 도구 자체는 배포하지 않는 범위에서 제외하며, Electron/Chromium은 개발 의존성에 선언되어도 실제 앱에 들어가므로 별도로 포함합니다. `node-addon-api`와 node-pty의 winpty 고지 역시 실제 설치 패키지에서 보존합니다.
 
 ## 바이너리와 출처
 

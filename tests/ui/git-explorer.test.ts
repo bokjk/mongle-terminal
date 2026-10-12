@@ -22,7 +22,8 @@ test('Git switch, tree decorations, grouped changes, refresh, stale responses an
   await writeFile(path.join(repository, '새 파일.txt'), '<script>window.gitPreviewExecuted=true</script>\n안녕하세요');
   for (const folder of ['one', 'two', 'three']) { await mkdir(path.join(repository, folder)); await writeFile(path.join(repository, folder, 'nested.txt'), folder); }
   const host = new HostCore({ dataDir: fixture.data, name: 'Git UI 검증 PC' }); await host.init();
-  t.after(async () => { await host.close(); assert.equal(path.dirname(fixture.root), tmpdir()); await rm(fixture.root, { recursive: true, force: true }); });
+  // The closed shell can hold the folder briefly on Windows (EBUSY), so removal retries.
+  t.after(async () => { await host.close(); assert.equal(path.dirname(fixture.root), tmpdir()); await rm(fixture.root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }); });
   const ctx: ConnectionContext = { id: randomUUID(), deviceId: 'git-ui', deviceName: '검증 브라우저', owner: true }; host.connect(ctx, () => {});
   const groupId = host.getState().groups[0].id;
   const first: TerminalInfo = await host.handle('terminals.create', { groupId, profileId: 'cmd', cwd: repository }, ctx);
@@ -38,7 +39,8 @@ test('Git switch, tree decorations, grouped changes, refresh, stale responses an
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve)); const address = server.address(); assert.ok(address && typeof address !== 'string');
   t.after(() => new Promise<void>(resolve => server.close(() => resolve())));
   let delayGit = false, releaseDelayed: (() => void) | undefined, oldHost = false;
-  const compatible = (value: any) => oldHost && value?.capabilities ? { ...value, capabilities: value.capabilities.filter((capability: string) => capability !== 'git.read') } : value;
+  // This test covers hosts without git.diff/git.review, where a Git row opens the current file; tests/ui/git-diff.test.ts covers comparisons.
+  const compatible = (value: any) => value?.capabilities ? { ...value, capabilities: value.capabilities.filter((capability: string) => capability !== 'git.diff' && capability !== 'git.review' && (!oldHost || capability !== 'git.read')) } : value;
   await page.exposeBinding('hostRequest', async (_source, method: string, params: any) => {
     requests.push(method);
     try {

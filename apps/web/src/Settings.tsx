@@ -278,7 +278,7 @@ export function Settings({ client, state, owner, theme, fontSize, scrollSpeed, o
               {state.codexIntegration&&<>
                 <p className={state.codexIntegration.status==='installed'?'hint':'hint warning'}>{state.codexIntegration.status==='installed'?'Codex 연동 등록됨':'Codex 연동 사용 불가'}</p>
                 <p className="hint">{state.codexIntegration.message}</p>
-                <p className="hint">PowerShell에서 codex로 시작한 대화에 작업 상태와 대화 재개를 적용합니다. 처음 연동할 때와 업데이트로 몽글터미널 훅이 늘어났을 때는 Codex의 /hooks에서 몽글터미널 훅을 검토·신뢰한 뒤 Codex를 다시 시작하세요. 기존 요청을 다시 보내지는 않습니다.</p>
+                <p className="hint">PowerShell에서 codex로 시작한 대화에 작업 상태와 대화 재개를 적용합니다. 처음 연동할 때와 업데이트로 몽글터미널 훅이 늘어났을 때는 Codex를 켜면 Hooks need review 창이 뜹니다. 2. Trust all and continue를 고르면 바로 동작합니다. 다른 프로그램의 훅도 쓰고 있다면 1. Review hooks에서 하나씩 확인하세요. 창을 건너뛰었다면 Codex의 /hooks에서 몽글터미널 훅을 신뢰한 뒤 Codex를 다시 시작하세요. 기존 요청을 다시 보내지는 않습니다.</p>
               </>}
               <p className="hint">Windows용 Claude Code 2.1.292 이상에서 공식 훅으로 연결합니다. 기존 설정을 보존하며 terminal_bell을 따로 설정할 필요가 없습니다. 실행부가 연동을 준비한 뒤 새 터미널에서 Claude를 시작해 주세요. 이미 실행 중인 Claude와 셸에는 적용되지 않습니다.</p>
               <p className="hint">WSL·SSH 내부의 Claude 자동 설정은 지원하지 않습니다. 응답 완료는 작업의 성공을 보장하지 않습니다. 그 밖의 CLI는 프로그램이 보낸 알림만 점으로 표시하며, 알림 기능이 꺼져 있으면 표시되지 않습니다.</p>

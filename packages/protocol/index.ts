@@ -19,7 +19,8 @@ export type ClaudeIntegration = {status:'ready' | 'unavailable'; message?:string
 /** installed: managed hook written; Codex runs it only after the user trusts it once in /hooks. */
 export type CodexIntegration = {status:'installed' | 'unavailable'; message:string};
 /** agentNotificationCount: the notificationCount value produced by the latest Claude alert (completion, request or error). */
-export interface TerminalInfo { id: string; groupId: string; title: string; profileId: string; cwd: string; currentCwd?: string; generation: string; status: 'running' | 'exited' | 'interrupted'; cols: number; rows: number; pid?: number; exitCode?: number; controller?: Controller; historyAvailable?: boolean; resumeOnBoot?: boolean; restoreError?: string; worktreeId?: string; notificationCount?: number; agentStatus?: AgentStatus; agentProvider?: 'claude' | 'codex'; agentNotificationCount?: number; }
+/** codexHooksReview: Codex shows its startup review of new or changed hooks in this terminal now. */
+export interface TerminalInfo { id: string; groupId: string; title: string; profileId: string; cwd: string; currentCwd?: string; generation: string; status: 'running' | 'exited' | 'interrupted'; cols: number; rows: number; pid?: number; exitCode?: number; controller?: Controller; historyAvailable?: boolean; resumeOnBoot?: boolean; restoreError?: string; worktreeId?: string; notificationCount?: number; agentStatus?: AgentStatus; agentProvider?: 'claude' | 'codex'; agentNotificationCount?: number; codexHooksReview?: boolean; }
 export interface HostSettings { name: string; recordHistory: boolean; scrollback: number; }
 export interface HostState { hostId: string; bootId: string; name: string; version: string; protocolVersion: number; capabilities?: string[]; groups: Group[]; terminals: TerminalInfo[]; profiles: ShellProfile[]; settings: HostSettings; claudeIntegration?: ClaudeIntegration; codexIntegration?: CodexIntegration; storageError?: string; repositories?: Repository[]; worktrees?: Worktree[]; worktreeOperations?: WorktreeOperation[]; }
 export interface ConnectionContext { id: string; deviceId: string; deviceName: string; owner: boolean; }
@@ -35,6 +36,20 @@ export interface PdfChunk { path: string; absolutePath: string; size: number; ve
 export type GitStatusCode = '' | 'M' | 'A' | 'D' | 'R' | 'C' | 'T';
 export interface GitChange { path: string; originalPath?: string; index: GitStatusCode; worktree: GitStatusCode; untracked: boolean; conflicted: boolean; }
 export type GitListing = { state: 'not-repository' | 'unavailable'; root: string; message: string } | { state: 'repository'; root: string; repositoryRoot: string; branch: string; detached: boolean; changes: GitChange[]; truncated: boolean };
+/** Each compared side is limited so a diff response stays well below the remote send buffer. */
+export const GIT_DIFF_BYTES = 256 * 1024;
+/** HEAD, the index, or a full commit id such as the branch base used by the review tab. */
+export type GitDiffBase = 'HEAD' | 'INDEX' | (string & {});
+export type GitDiffTarget = 'INDEX' | 'WORKTREE';
+/** original/modified are null when the file does not exist on that side. unavailable explains why text is not shown. */
+/** null marks a missing side; with unavailable, an existing side is '' (content not sent). originalMode/modifiedMode are Git modes (100644, 100755, 120000) when both sides exist. */
+export interface GitDiff { path: string; originalPath?: string; absolutePath: string; base: GitDiffBase; target: GitDiffTarget; original: string | null; modified: string | null; originalMode?: string; modifiedMode?: string; unavailable?: string; }
+export const GIT_COMMIT_PATTERN = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
+export type GitReviewMode = 'branch' | 'head';
+export type GitReviewStatus = 'added' | 'modified' | 'deleted' | 'renamed' | 'conflicted';
+export interface GitReviewFile { path: string; originalPath?: string; status: GitReviewStatus; }
+/** Every change from base to the working folder. mode is what was actually used; notice explains a fallback. */
+export type GitReview = { state: 'not-repository' | 'unavailable'; root: string; message: string } | { state: 'repository'; root: string; repositoryRoot: string; branch: string; detached: boolean; mode: GitReviewMode; base: string; baseLabel: string; notice?: string; files: GitReviewFile[]; truncated: boolean };
 export interface RpcRequest { type: 'request'; id: string; method: string; params: unknown; }
 export type RpcResponse = { type: 'response'; id: string; ok: true; result: any } | { type: 'response'; id: string; ok: false; error: { code: string; message: string } };
 export interface PresentationSnapshot { kind: 'presentation-v1'; data: string; cols: number; rows: number; modes: Record<string, unknown>; version: string; inputResetGeneration?: number; notificationCount?: number; }
