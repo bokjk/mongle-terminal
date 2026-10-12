@@ -178,6 +178,9 @@ export async function readGitDiff(root: string, dataDir: string, request: { path
       return text === undefined ? { unavailable: notText } : { text };
     }
     async function working(location: { target: string }): Promise<DiffSide> {
+      // Git stores a symbolic link as the text of its target, so a link is compared as that text.
+      try { if ((await lstat(location.target)).isSymbolicLink()) return { text: (await readlink(location.target)).split(path.sep).join('/') }; }
+      catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { text: null }; throw error; }
       let real: string;
       try { real = await realpath(location.target); }
       catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { text: null }; throw error; }

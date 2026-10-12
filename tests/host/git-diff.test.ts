@@ -169,3 +169,13 @@ test('Git review leaves out files the working folder brought back to the base, i
   assert.deepEqual(reverted.state === 'repository' && reverted.files, []);
   assert.equal(await digest(path.join(repository, '.git', 'index')), before, 'hashing the files writes nothing');
 });
+
+test('Git diff compares a symbolic link as its target text, as Git stores it', async t => {
+  // PR #74 review: following the link compared the contents of the files it points to.
+  const { repository, data } = await fixture(t);
+  await writeFile(path.join(repository, 'first.txt'), 'first contents\n');
+  try { await symlink('first.txt', path.join(repository, 'link'), 'file'); }
+  catch (error) { if (['EPERM', 'EACCES'].includes((error as NodeJS.ErrnoException).code || '')) { t.skip('creating a symbolic link needs Developer Mode on this Windows'); return; } throw error; }
+  const diff = await readGitDiff(repository, data, { path: 'link', base: 'INDEX', target: 'WORKTREE' });
+  assert.deepEqual([diff.original, diff.modified], [null, 'first.txt']);
+});

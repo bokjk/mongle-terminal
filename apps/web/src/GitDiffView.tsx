@@ -52,7 +52,9 @@ export function GitDiffView({ path, diff, layout, collapse, active, onLayout, on
     const view = navigation.current; if (!view) return;
     const chunks = getChunks(view.state)?.chunks || [];
     if (!chunks.length) return;
-    if (!(direction > 0 ? goToNextChunk : goToPreviousChunk)(view)) view.dispatch({ selection: { anchor: chunks[0].fromB }, effects: EditorView.scrollIntoView(chunks[0].fromB, { y: 'center' }) });
+    // When the command cannot move (one change, or the cursor outside all of them), wrap like F7 does.
+    const wrap = direction > 0 ? chunks[0] : chunks[chunks.length - 1];
+    if (!(direction > 0 ? goToNextChunk : goToPreviousChunk)(view)) view.dispatch({ selection: { anchor: wrap.fromB }, effects: EditorView.scrollIntoView(wrap.fromB, { y: 'center' }) });
     view.focus(); locate(view);
   }
   useEffect(() => {

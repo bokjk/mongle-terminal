@@ -105,6 +105,8 @@ test('Git review shows every branch change on one page, moves by file and change
     await expect(split.locator('.cm-collapsedLines')).toHaveCount(0); await expect(split.locator('.diff-overview-mark')).toHaveCount(2);
     await page.screenshot({ path: 'test-results/git-diff/inline-dark.png' });
     await split.locator('.diff-overview-mark').nth(1).click(); await expect(split.locator('.diff-position')).toHaveText('2 / 2');
+    await split.getByRole('button', { name: '다음 변경' }).click(); await expect(split.locator('.diff-position')).toHaveText('1 / 2');
+    await split.getByRole('button', { name: '이전 변경' }).click(); await expect(split.locator('.diff-position')).toHaveText('2 / 2', { timeout: 2000 });
     await split.getByRole('button', { name: '나란히' }).click();
     await expect(split.locator('.cm-mergeView')).toBeVisible(); await expect(split.locator('.diff-sides')).toContainText('기준 커밋');
     await expect(split.locator('.cm-merge-a .cm-content')).toContainText('export const line10 = 10;'); await expect(split.locator('.cm-merge-b .cm-content')).toContainText('line10 = "changed"');
