@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Check, ChevronDown, ChevronRight, Folder, FolderOpen, Keyboard, Menu, Monitor, PanelLeftClose, PanelLeftOpen, Plus, RefreshCw, Settings as SettingsIcon, SquareTerminal, Trash2, X, WifiOff } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, Folder, FolderOpen, Menu, Monitor, PanelLeftClose, PanelLeftOpen, Plus, RefreshCw, Settings as SettingsIcon, SquareTerminal, Trash2, X, WifiOff } from 'lucide-react';
 import { createClient, type ComputerSearch, type ConnectionInfo, type SavedHost } from '../../../packages/client/index';
 import { APP_VERSION, findLeaf, leafIds, groupRepositoryIds, type LayoutLeaf, type Group, type HostState, type LayoutNode, type TerminalInfo, type ProjectInspection } from '../../../packages/protocol/index';
 import { updateRatio } from '../../../packages/ui/layout';
@@ -11,6 +11,8 @@ import { usePaneDrag } from './use-pane-drag';
 import { FileExplorer } from './FileExplorer';
 import { explorerClient } from './explorer-queue';
 import { useFileDocuments } from './use-file-documents';
+import { MobileKeyBar } from './KeyBar';
+import { sanitizeKeyBar } from './key-bar';
 import { touchScrollSpeed } from '../../../packages/terminal/touch-scrollback';
 const FileEditorPanel = lazy(() => import('./FileEditorPanel').then(module => ({ default: module.FileEditorPanel })));
 import { HostPicker } from './HostPicker';
@@ -62,6 +64,8 @@ export function App(){
   const [mobileCompact,setMobileCompact] = useState(()=>preference<unknown>('mongle.mobileCompact',false)===true);
   const [scrollSpeed,setScrollSpeed] = useState(()=>touchScrollSpeed(preference<unknown>('mongle.touchScrollSpeed',undefined)));
   useEffect(()=>savePreference('mongle.touchScrollSpeed',scrollSpeed),[scrollSpeed]);
+  const [keyBar,setKeyBar] = useState(()=>sanitizeKeyBar(preference<unknown>('mongle.keyBar',undefined)));
+  useEffect(()=>savePreference('mongle.keyBar',keyBar),[keyBar]);
   const [sidebarWidth,setSidebarWidth] = useState(()=>{const width=preference<unknown>('mongle.sidebarWidth',212);return typeof width==='number'&&Number.isFinite(width)?Math.max(180,Math.min(360,width)):212;});
   const [mobile,setMobile] = useState(()=>matchMedia('(max-width:700px)').matches);
   const [ctrl,setCtrl] = useState(false);const [alt,setAlt] = useState(false);
@@ -278,12 +282,12 @@ export function App(){
           {fileDocs.visible&&<Suspense fallback={<p className="file-message">편집기를 여는 중…</p>}><FileEditorPanel files={fileDocs} treeOpen={filesOpen} onToggleTree={()=>setFilesOpen(value=>!value)} maximized={fileMaximized} onMaximize={()=>setFileMaximized(value=>!value)} onError={notify}/></Suspense>}
         </div>}
         </div>
-        {mobile&&<div className="mobile-keys" aria-label="터미널 보조 키">{[['Esc','\x1b'],['Tab','\t']].map(([label,key])=><button key={label} className="key-button" onPointerDown={e=>e.preventDefault()} onClick={()=>actions.current.get(activeId)?.key(key)}>{label}</button>)}<button className={`key-button ${ctrl?'latched':''}`} aria-pressed={ctrl} onPointerDown={e=>e.preventDefault()} onClick={()=>setCtrl(!ctrl)}>Ctrl</button><button className={`key-button ${alt?'latched':''}`} aria-pressed={alt} onPointerDown={e=>e.preventDefault()} onClick={()=>setAlt(!alt)}>Alt</button><button className="key-button" onPointerDown={e=>e.preventDefault()} onClick={()=>actions.current.get(activeId)?.key('\x03')}>^C</button>{[[ArrowLeft,'\x1b[D','왼쪽'],[ArrowDown,'\x1b[B','아래'],[ArrowUp,'\x1b[A','위'],[ArrowRight,'\x1b[C','오른쪽']].map(([Icon,key,label])=>{const Component=Icon as typeof ArrowLeft;return <button className="key-button" key={String(label)} aria-label={String(label)} onPointerDown={e=>e.preventDefault()} onClick={()=>actions.current.get(activeId)?.key(String(key))}><Component size={17}/></button>;})}<button className="key-button" aria-label="키보드 열기" onPointerDown={e=>e.preventDefault()} onClick={()=>actions.current.get(activeId)?.focus()}><Keyboard size={18}/></button></div>}
+        {mobile&&<MobileKeyBar ids={keyBar} modifiers={{ctrl,alt}} onKey={data=>actions.current.get(activeId)?.key(data)} onModifier={modifier=>modifier==='ctrl'?setCtrl(!ctrl):setAlt(!alt)} onKeyboard={()=>actions.current.get(activeId)?.focus()}/>}
       </>}
       {fileDocs.visible&&!group?.layout&&<div className="orphan-file-editor"><Suspense fallback={<p className="file-message">편집기를 여는 중…</p>}><FileEditorPanel files={fileDocs} treeOpen={false} onToggleTree={()=>setFilesOpen(true)} maximized={true} onMaximize={()=>fileDocs.setVisible(false)} onError={notify}/></Suspense></div>}
       <footer className="status-bar"><span><span className={`connection-dot ${connected?'connected':'offline'}`}/>{connected?'세션 연결됨':'오프라인'}</span><span>{state?`${state.terminals.filter(t=>t.status==='running').length}개 실행 중`:'연결 대기'}</span>{fileDocs.documents.length>0&&<button className="open-files-status" onClick={()=>fileDocs.setVisible(true)}>열린 파일 {fileDocs.documents.length}{fileDocs.unsaved?` · 수정 중 ${fileDocs.unsaved}`:''}</button>}<span className="status-right">{connection.owner?'이 컴퓨터':'원격 연결'} · {group?.cwd||'몽글터미널'}</span></footer>
     </main>
-    {settingsOpen&&state&&<Settings initialTab={settingsTab} client={client} state={state} owner={connection.owner} theme={theme} fontSize={fontSize} scrollSpeed={scrollSpeed} onScrollSpeed={setScrollSpeed} refreshBlocked={fileDocs.unsaved > 0 || fileDocs.documents.some(doc => doc.saving)} onTheme={setTheme} onFontSize={setFontSize} onClose={()=>{setSettingsOpen(false);setSettingsTab(undefined);}} onError={notify}/>}
+    {settingsOpen&&state&&<Settings initialTab={settingsTab} client={client} state={state} owner={connection.owner} theme={theme} fontSize={fontSize} scrollSpeed={scrollSpeed} onScrollSpeed={setScrollSpeed} keyBar={keyBar} onKeyBar={setKeyBar} refreshBlocked={fileDocs.unsaved > 0 || fileDocs.documents.some(doc => doc.saving)} onTheme={setTheme} onFontSize={setFontSize} onClose={()=>{setSettingsOpen(false);setSettingsTab(undefined);}} onError={notify}/>}
     {editor&&<EditorModal key={`${state?.hostId}:${group?.id}:${editor.kind}:${editor.kind==='group'?editor.group?.id:editor.kind==='new-terminal'?editor.tabTarget||editor.splitTarget:''}`} editor={editor} state={state} group={group} activeId={activeId} findComputers={window.mongle?.findComputers?refresh=>window.mongle!.findComputers!(refresh):undefined} pickDirectory={connected&&connection.owner&&window.mongle?.selectDirectory?path=>window.mongle!.selectDirectory!(path):undefined} onClose={()=>setEditor(undefined)} onSubmit={async values=>{
       const selection=hostSelection.current,navigation=projectNavigation.current,hostId=state?.hostId,bootId=state?.bootId;
       const sameHost=()=>selection===hostSelection.current&&layoutContext.current.hostId===hostId&&layoutContext.current.bootId===bootId;
