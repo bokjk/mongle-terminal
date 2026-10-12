@@ -142,6 +142,8 @@ Codex 등 다른 CLI가 보낸 알림도 목록·탭·그룹·모바일 전환 �
 
 **파일 탐색기**는 마지막으로 선택한 터미널의 현재 폴더를 따라갑니다. **파일 / Git**을 전환하면 폴더 트리와 변경 목록을 확인할 수 있습니다. 원격 터미널에서는 해당 PC의 파일을 보여 줍니다.
 
+**터미널의 파일 경로 열기(미배포):** Claude·Codex나 컴파일러가 출력한 `src\app.ts`, `src/a.ts:12:5` 같은 경로를 `Ctrl+클릭`하면 같은 파일 탭으로 엽니다. 일반 클릭은 지금처럼 터미널로 가고, CLI에는 아무것도 보내지 않습니다. 터미널의 현재 폴더 안 파일만 엽니다. [사용법](docs/USER-GUIDE.md#터미널의-파일-경로-열기--미배포)
+
 <table><tr>
 <td align="center"><img src="docs/assets/git-files.png" width="260" alt="파일 트리의 Git 상태 색·문자와 폴더 변경 표시" /><br /><sub>파일 트리와 변경 상태</sub></td>
 <td align="center"><img src="docs/assets/git-changes.png" width="260" alt="스테이징됨·작업 폴더 변경·새 파일을 구분한 Git 목록" /><br /><sub>상태별 Git 변경 목록</sub></td>
