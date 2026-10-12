@@ -81,9 +81,11 @@ export function useFileDocuments(client: Transport, state: HostState | undefined
         const terminal = context.current.state.terminals.find(info => normalize(info.currentCwd || info.cwd) === normalize(doc.reference.root));
         if (!terminal) throw new Error('처음 비교를 연 폴더의 터미널로 이동한 뒤 다시 열어 주세요.');
         reference = { ...reference, id: terminal.id, generation: terminal.generation };
-        const data = await client.request<GitDiff>('git.diff', { ...reference, path: doc.path, ...(doc.diff.originalPath ? { originalPath: doc.diff.originalPath } : {}), base: doc.diff.base, target: doc.diff.target });
+        const originalPath = doc.diff.originalPath;
+        const data = await client.request<GitDiff>('git.diff', { ...reference, path: doc.path, ...(originalPath ? { originalPath } : {}), base: doc.diff.base, target: doc.diff.target });
         const latest = current.current.find(item => item.key === key);
-        if (!latest?.diff || !available(latest) || context.current.connectionId !== startConnection || (replace && latest.loadId !== loadId)) return;
+        // A tab reopened with another rename source drops a refresh still reading the old one.
+        if (!latest?.diff || latest.diff.originalPath !== originalPath || !available(latest) || context.current.connectionId !== startConnection || (replace && latest.loadId !== loadId)) return;
         // Background refreshes keep the current view (and its scroll position) unless Git content changed.
         if (!replace && JSON.stringify(latest.diff.data) === JSON.stringify(data)) return;
         patch(key, { diff: { ...latest.diff, data }, reference, busy: false, error: undefined, connectionId: startConnection });

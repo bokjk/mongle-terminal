@@ -63,11 +63,15 @@ test('Git diff explains binary, oversized and CRLF-only files and refuses paths 
   const read = (request: Parameters<typeof readGitDiff>[2], base = repository) => readGitDiff(base, data, request);
   await writeFile(path.join(repository, 'image.bin'), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0, 1, 2, 3]));
   const binary = await read({ path: 'image.bin', base: 'INDEX', target: 'WORKTREE' });
-  assert.match(binary.unavailable || '', /바이너리/); assert.equal(binary.original, null); assert.equal(binary.modified, null);
+  // Not compared, but the side that exists is '' so the tab can still open the working file.
+  assert.match(binary.unavailable || '', /바이너리/); assert.equal(binary.original, null); assert.equal(binary.modified, '');
   await writeFile(path.join(repository, 'large.txt'), 'a'.repeat(GIT_DIFF_BYTES + 1));
   assert.match((await read({ path: 'large.txt', base: 'INDEX', target: 'WORKTREE' })).unavailable || '', /KiB를 넘는/);
   await git(repository, 'add', '--', 'large.txt');
   assert.match((await read({ path: 'large.txt', base: 'HEAD', target: 'INDEX' })).unavailable || '', /KiB를 넘는/);
+  await writeFile(path.join(repository, 'large.txt'), 'small again\n');
+  const shrunk = await read({ path: 'large.txt', base: 'INDEX', target: 'WORKTREE' });
+  assert.deepEqual([shrunk.unavailable?.includes('KiB를 넘는'), shrunk.original, shrunk.modified], [true, '', ''], 'the oversized staged side hides the content, not the working file');
   await writeFile(path.join(repository, 'staged.txt'), 'before\r\n');
   const crlf = await read({ path: 'staged.txt', base: 'INDEX', target: 'WORKTREE' });
   assert.deepEqual([crlf.original, crlf.modified], ['before\n', 'before\r\n']);

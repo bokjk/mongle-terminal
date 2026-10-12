@@ -220,7 +220,9 @@ export async function readGitDiff(root: string, dataDir: string, request: { path
     const modified = request.target === 'WORKTREE' ? await working(current) : await stored('INDEX', current);
     const result: GitDiff = { path: request.path, ...(request.originalPath ? { originalPath: request.originalPath } : {}), absolutePath: current.target, base: request.base, target: request.target, original: null, modified: null };
     const unavailable = 'unavailable' in original ? original.unavailable : 'unavailable' in modified ? modified.unavailable : undefined;
-    if (unavailable) return { ...result, unavailable };
+    // Not compared, but a side that exists is '' (not null), so the tab still knows the working file is there to open.
+    const present = (side: DiffSide) => 'text' in side && side.text === null ? null : '';
+    if (unavailable) return { ...result, unavailable, original: present(original), modified: present(modified) };
     const originalText = (original as { text: string | null }).text, modifiedText = (modified as { text: string | null }).text;
     // A mode or type change (chmod +x, a link replaced by a file) has no changed line, so both Git modes go along.
     let modes: { originalMode?: string; modifiedMode?: string } = {};
