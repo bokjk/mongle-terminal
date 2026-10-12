@@ -428,8 +428,8 @@ test('required status checks match the workflows and the pull_request_target job
   const [main, dev] = rulesets;
   assert.deepEqual(rule(main, 'update'), { update_allows_fetch_and_merge: false }, 'only bypass actors may update main');
   assert.ok(!dev.rules.some(item => item.type === 'update'));
-  assert.equal(rule(dev, 'pull_request')?.required_approving_review_count, 1);
-  assert.equal(rule(dev, 'pull_request')?.dismiss_stale_reviews_on_push, true);
+  assert.equal(rule(dev, 'pull_request')?.required_approving_review_count, 0, 'a single maintainer cannot approve their own PR');
+  assert.equal(rule(dev, 'pull_request')?.dismiss_stale_reviews_on_push, false);
 
   assert.deepEqual(Object.keys(policy.on), ['pull_request_target']);
   assert.deepEqual(policy.on.pull_request_target.types, ['opened', 'reopened', 'edited', 'synchronize', 'ready_for_review']);

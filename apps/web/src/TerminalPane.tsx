@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { SearchAddon } from '@xterm/addon-search';
-import { Columns2, Rows2, Maximize2, Minimize2, X, Search, Copy, ClipboardPaste, RotateCcw, Pencil, Keyboard, Eye, SquareTerminal, GripVertical, Plus, ShieldCheck } from 'lucide-react';
+import { Columns2, Rows2, Maximize2, Minimize2, X, Search, Copy, ClipboardPaste, RotateCcw, Pencil, Keyboard, Eye, SquareTerminal, GripVertical, Plus, ShieldCheck, Paperclip } from 'lucide-react';
 import { BrowserPresentationAdapter } from '../../../packages/terminal/browser';
 import { DEFAULT_TOUCH_SCROLL_SPEED } from '../../../packages/terminal/touch-scrollback';
 import type { AppClient } from '../../../packages/client/index';
@@ -16,6 +16,8 @@ import { terminalLabel, outsideWorktree } from './worktree-labels';
 import { useTerminalWorktree, type TerminalWorktreeActions } from './use-terminal-worktree';
 import { TerminalInputQueue } from './terminal-input-queue';
 import type { PresentedNotification } from './use-terminal-notifications';
+import { attachTerminalPathLinks } from './terminal-file-links';
+import { pathForShell, UPLOAD_LIMIT_BYTES, uploadToTerminal } from './terminal-upload';
 
 export interface PaneActions { key(data:string):void; paste(text:string):void; focus():void; search():void; }
 export interface PaneProps {
@@ -26,6 +28,8 @@ export interface PaneProps {
   onSelect():void; onSplit(axis:'horizontal'|'vertical'):void; onMaximize():void; onClose():void; onRename():void; onRestart():void; onMove():void; onClearHistory():void; onTerminate():void;
   dragEnabled?:boolean;dropPreview?:PaneDropPreview;onPaneDragStart?(event:DragEvent<HTMLElement>):void;onPaneDragEnd?():void;onPaneDragOver?(event:DragEvent<HTMLElement>):void;onPaneDrop?(event:DragEvent<HTMLElement>):void;onPanePointerStart?():void;dragClickAllowed?():boolean;
   onError(message:string):void; confirmPaste(text:string):Promise<boolean>; register(id:string, actions:PaneActions|null):void;
+  /** Ctrl+click on a path printed in this terminal; the path is as printed (not yet resolved). */
+  onOpenPath?(info:TerminalInfo, path:string):void;
 }
 // Keep uncertainty across pane remounts (group changes/maximize/reconnect) for
 // this client and exact live session. A new shell generation has a new latch.
@@ -39,6 +43,7 @@ export function TerminalPane(props:PaneProps) {
   const displayedCwd = info.currentCwd || info.cwd;
   const worktree=state.worktrees?.find(item=>item.id===info.worktreeId);
   const label=terminalLabel(info,state.worktrees);
+  const canUpload=state.capabilities?.includes('files.upload')===true;
   const mount = useRef<HTMLDivElement>(null);
   const toolbarDrag = useRef(false);
   const contextPointer = useRef('mouse');
@@ -66,6 +71,11 @@ export function TerminalPane(props:PaneProps) {
   const [historyTruncated,setHistoryTruncated] = useState(false);
   const [clipboardMenu,setClipboardMenu] = useState<{x:number;y:number}|null>(null);
   const [copied,setCopied] = useState(false);
+  const [upload,setUpload] = useState<{name:string;percent:number;index:number;count:number}|null>(null);
+  const [uploadNotice,setUploadNotice] = useState('');
+  const uploadAbort = useRef<AbortController|undefined>(undefined);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const sendFilesRef = useRef<(files:File[])=>Promise<void>>(async()=>{});
   // A slower earlier copy must not overwrite the latest attempt's feedback.
   const copyRequest = useRef(0);
   const connectionId = useRef<string | undefined>(undefined);
@@ -74,7 +84,7 @@ export function TerminalPane(props:PaneProps) {
   const applyFrame = useRef<(event:SnapshotEvent, lease?:number, wait?:boolean)=>Promise<boolean>>(async()=>false);
   const acquireRef = useRef<(focus?:boolean,mode?:AcquireMode)=>Promise<number|undefined>>(async()=>undefined);
   const startInputRef = useRef<()=>void>(()=>{});
-  const pasteInputRef = useRef<(text:string)=>Promise<boolean>>(async()=>false);
+  const pasteInputRef = useRef<(text:string,allowed?:()=>boolean)=>Promise<boolean>>(async()=>false);
   const resizeRef = useRef<()=>Promise<void>>(async()=>{});
   const dimensions = () => { const dims = fitRef.current?.proposeDimensions(); return {cols:Math.max(20,Math.min(400,dims?.cols || info.cols)),rows:Math.max(5,Math.min(200,dims?.rows || info.rows))}; };
 
@@ -97,6 +107,8 @@ export function TerminalPane(props:PaneProps) {
     termRef.current = terminal;
     const fit = new FitAddon(); const search = new SearchAddon(); terminal.loadAddon(fit); terminal.loadAddon(search); fitRef.current = fit; searchRef.current = search;
     terminal.open(mount.current);
+    // Paths in the output open with Ctrl+click, ahead of every other mouse handler on this mount.
+    const removePathLinks=attachTerminalPathLinks(terminal,mount.current,path=>{const handler=current.current.onOpenPath;if(!handler)return false;handler(current.current.info,path);return true;});
     terminal.textarea?.setAttribute('autocapitalize','off'); terminal.textarea?.setAttribute('autocomplete','off'); terminal.textarea?.setAttribute('autocorrect','off'); terminal.textarea?.setAttribute('spellcheck','false'); terminal.textarea?.setAttribute('aria-label',`${info.title} 터미널 입력`);
     // Terminal-generated clipboard writes are never applied to the system clipboard.
     const osc52 = terminal.parser.registerOscHandler(52,() => true);
@@ -157,7 +169,7 @@ export function TerminalPane(props:PaneProps) {
     // Capture its start so release still performs the promised automatic copy.
     mount.current.addEventListener('mousedown',beginSelection,true);
     window.addEventListener('mouseup',finishSelection);
-    const handlePaste=(event:ClipboardEvent)=>{const text=event.clipboardData?.getData('text/plain');if(text===undefined)return;event.preventDefault();event.stopImmediatePropagation();void current.current.confirmPaste(text).then(approved=>{if(approved&&!disposed)void runInputIntent(()=>adapter.paste(text));});};
+    const handlePaste=(event:ClipboardEvent)=>{const text=event.clipboardData?.getData('text/plain');const files=[...(event.clipboardData?.files??[])];if(!text&&files.length){event.preventDefault();event.stopImmediatePropagation();void sendFilesRef.current(files);return;}if(text===undefined)return;event.preventDefault();event.stopImmediatePropagation();void current.current.confirmPaste(text).then(approved=>{if(approved&&!disposed)void runInputIntent(()=>adapter.paste(text));});};
     mount.current.addEventListener('paste',handlePaste,true);
     terminal.attachCustomKeyEventHandler(event => {
       if (event.type !== 'keydown') return adapter.handleKeyEvent(event);
@@ -261,7 +273,7 @@ export function TerminalPane(props:PaneProps) {
       if(lease===undefined||!leaseActive(lease)||(!ready.current&&resizeInput.current?.epoch!==lease))return false;
       action();return true;
     }
-    pasteInputRef.current=text=>runInputIntent(()=>adapter.paste(text));
+    pasteInputRef.current=(text,allowed)=>runInputIntent(()=>{if(allowed&&!allowed())return;adapter.paste(text);});
     const removeTap=attachTerminalTap(mount.current,()=>terminal.hasSelection()||Boolean(window.getSelection()?.toString()),()=>startInputRef.current());
     const unsubscribe = client.subscribe(event => {
       if(event.type === 'snapshot' && event.terminalId === info.id)void applyFrame.current(event);
@@ -307,10 +319,10 @@ export function TerminalPane(props:PaneProps) {
     };
     let resizeTimer:ReturnType<typeof setTimeout>;
     const observer = new ResizeObserver(()=>{setNarrow((mount.current?.closest('.pane')?.getBoundingClientRect().width||0)<=600);clearTimeout(resizeTimer);resizeTimer=setTimeout(()=>void resizeRef.current(),120);});observer.observe(mount.current);
-    const keyMap:Record<string,'ArrowUp'|'ArrowDown'|'ArrowLeft'|'ArrowRight'>={'\x1b[A':'ArrowUp','\x1b[B':'ArrowDown','\x1b[C':'ArrowRight','\x1b[D':'ArrowLeft'};
+    const keyMap:Record<string,'ArrowUp'|'ArrowDown'|'ArrowLeft'|'ArrowRight'|'Home'|'End'>={'\x1b[A':'ArrowUp','\x1b[B':'ArrowDown','\x1b[C':'ArrowRight','\x1b[D':'ArrowLeft','\x1b[H':'Home','\x1b[F':'End'};
     current.current.register(info.id,{key:data=>{void runInputIntent(()=>keyMap[data]?adapter.sendKey(keyMap[data]):adapter.sendInput(data));},paste:text=>{void current.current.confirmPaste(text).then(approved=>{if(approved&&!disposed)void runInputIntent(()=>adapter.paste(text));});},focus:()=>startInputRef.current(),search:()=>setSearchOpen(true)});
     const pasteTarget=mount.current;
-    return()=>{disposed=true;invalidatePresentation();stopInput(true);removeTap();resizeInput.current=undefined;ready.current=false;epoch.current=undefined;connectionId.current=undefined;pendingFrame?.waiters.forEach(resolve=>resolve(false));pendingFrame=undefined;unsubscribe();observer.disconnect();clearTimeout(resizeTimer);pasteTarget?.removeEventListener('paste',handlePaste,true);pasteTarget?.removeEventListener('mousedown',beginSelection,true);window.removeEventListener('mouseup',finishSelection);osc52.dispose();adapter.dispose();terminal.dispose();current.current.register(info.id,null);void client.request('terminals.detach',{id:info.id}).catch(()=>{});};
+    return()=>{disposed=true;invalidatePresentation();stopInput(true);removeTap();removePathLinks();resizeInput.current=undefined;ready.current=false;epoch.current=undefined;connectionId.current=undefined;pendingFrame?.waiters.forEach(resolve=>resolve(false));pendingFrame=undefined;unsubscribe();observer.disconnect();clearTimeout(resizeTimer);pasteTarget?.removeEventListener('paste',handlePaste,true);pasteTarget?.removeEventListener('mousedown',beginSelection,true);window.removeEventListener('mouseup',finishSelection);osc52.dispose();adapter.dispose();terminal.dispose();current.current.register(info.id,null);void client.request('terminals.detach',{id:info.id}).catch(()=>{});};
   },[client,info.id,info.generation,state.hostId,state.bootId,props.connected]);
 
   useEffect(()=>{if(termRef.current){termRef.current.options.fontSize=props.fontSize;termRef.current.options.theme=themes[props.theme];}const frame=requestAnimationFrame(()=>void resizeRef.current());return()=>cancelAnimationFrame(frame);},[props.fontSize,props.theme]);
@@ -322,6 +334,8 @@ export function TerminalPane(props:PaneProps) {
   },[info.status,props.connected]);
   useEffect(()=>{adapterRef.current?.setFocused(props.selected);},[props.selected]);
   useEffect(()=>{if(!copied)return;const timer=setTimeout(()=>setCopied(false),2000);return()=>clearTimeout(timer);},[copied]);
+  useEffect(()=>{if(!uploadNotice)return;const timer=setTimeout(()=>setUploadNotice(''),2500);return()=>clearTimeout(timer);},[uploadNotice]);
+  useEffect(()=>()=>uploadAbort.current?.abort(),[]);
   useEffect(()=>{
     if(!clipboardMenu)return;
     const dismiss=(event:PointerEvent)=>{if(!(event.target as Element).closest('.terminal-clipboard-menu'))setClipboardMenu(null);};
@@ -331,6 +345,39 @@ export function TerminalPane(props:PaneProps) {
     return()=>{document.removeEventListener('pointerdown',dismiss);document.removeEventListener('keydown',escape,true);window.removeEventListener('blur',close);window.removeEventListener('resize',close);};
   },[clipboardMenu]);
   async function copy(){const request=++copyRequest.current;setCopied(false);const text=termRef.current?.getSelection();setClipboardMenu(null);if(!text){current.current.onError('복사할 내용을 먼저 드래그로 선택해 주세요.');return;}try{if(window.mongle?.writeClipboard)await window.mongle.writeClipboard(text);else await navigator.clipboard.writeText(text);if(request===copyRequest.current)setCopied(true);}catch{if(request===copyRequest.current){setCopied(false);current.current.onError('복사하지 못했습니다. 내용을 선택한 뒤 Ctrl+C를 사용해 주세요.');}}}
+  /** Saves files on the terminal's PC (uploads.ts) and types their paths into the input line, without Enter. */
+  async function sendFiles(files:File[]){
+    if(!files.length)return;
+    if(!state.capabilities?.includes('files.upload')){current.current.onError('이 컴퓨터의 몽글터미널을 업데이트하면 파일을 보낼 수 있습니다.');return;}
+    if(uploadAbort.current){current.current.onError('파일을 보내는 중입니다. 끝난 뒤 다시 시도해 주세요.');return;}
+    const tooLarge=files.find(file=>file.size>UPLOAD_LIMIT_BYTES);if(tooLarge){current.current.onError(tooLarge.name+': 10 MiB 이하 파일만 보낼 수 있습니다.');return;}
+    const empty=files.find(file=>file.size===0);if(empty){current.current.onError((empty.name||'파일')+': 빈 파일은 보낼 수 없습니다.');return;}
+    const abort=new AbortController();uploadAbort.current=abort;
+    const target={id:info.id,hostId:state.hostId,bootId:state.bootId,generation:info.generation,root:info.currentCwd||info.cwd};
+    const kind=state.profiles.find(profile=>profile.id===info.profileId)?.kind;
+    const saved:string[]=[],paths:string[]=[];
+    const savedNote=()=>saved.length?' PC에 이미 저장된 파일: '+saved.join(', '):'';
+    try{
+      for(const file of files){
+        setUpload({name:file.name||'파일',percent:0,count:files.length,index:paths.length+1});
+        const result=await uploadToTerminal(client,target,file,(sent,total)=>setUpload(value=>value&&{...value,percent:Math.floor(sent*100/total)}),abort.signal);
+        saved.push(result.path);paths.push(pathForShell(result.path,kind));
+      }
+      // A cancel pressed after the last answer still means: type nothing.
+      if(abort.signal.aborted)throw new DOMException('취소했습니다.','AbortError');
+      // Taking control may wait for the PC; a cancel pressed meanwhile is checked again right before typing.
+      const typed=await pasteInputRef.current(paths.join(' ')+' ',()=>!abort.signal.aborted);
+      if(abort.signal.aborted)throw new DOMException('취소했습니다.','AbortError');
+      setUploadNotice(typed?(paths.length>1?'파일 '+paths.length+'개를 PC에 저장하고 경로를 입력 줄에 넣었습니다.':'파일을 PC에 저장하고 경로를 입력 줄에 넣었습니다.'):'');
+      if(!typed)current.current.onError('파일은 PC에 저장했지만 입력 줄에 넣지 못했습니다.'+savedNote());
+      else termRef.current?.focus();
+    }catch(error){
+      const late=(error as {saved?:{path:string}}).saved;if(late)saved.push(late.path);
+      if(error instanceof DOMException&&error.name==='AbortError'){if(saved.length)current.current.onError('보내기를 취소해 입력 줄에는 넣지 않았습니다.'+savedNote());}
+      else current.current.onError((error instanceof Error?error.message:'파일을 보내지 못했습니다.')+savedNote());
+    }finally{if(uploadAbort.current===abort)uploadAbort.current=undefined;setUpload(null);}
+  }
+  sendFilesRef.current=sendFiles;
   async function paste(){const input=pasteInputRef.current;setClipboardMenu(null);try{const text=window.mongle?.readClipboard?await window.mongle.readClipboard():await navigator.clipboard.readText();if(await current.current.confirmPaste(text)&&input===pasteInputRef.current&&await input(text))termRef.current?.focus();}catch{current.current.onError('클립보드를 읽을 수 없습니다. 터미널을 선택한 뒤 Ctrl+V를 사용해 주세요.');}}
   function doSearch(backward=false){if(!query){searchRef.current?.clearDecorations();setSearchMatch(true);return;}setSearchMatch(Boolean(backward ? searchRef.current?.findPrevious(query) : searchRef.current?.findNext(query)));}
   function focusTitle(){if(props.dragClickAllowed?.()===false)return;props.onSelect();startInputRef.current();}
@@ -351,6 +398,7 @@ export function TerminalPane(props:PaneProps) {
           <button className="menu-item" onClick={props.onMove}>다른 그룹으로 이동</button>
           <button className="menu-item" title="드래그로 선택한 뒤 Ctrl+C · Ctrl+Shift+C" onClick={()=>void copy()}><Copy size={14}/>선택 내용 복사 <kbd className="shortcut-key">Ctrl+C</kbd></button>
           <button className="menu-item" title="Ctrl+V · Ctrl+Shift+V" disabled={!props.connected||info.status!=='running'||inputUncertain||controlError} onClick={()=>void paste()}><ClipboardPaste size={14}/>붙여넣기 <kbd className="shortcut-key">Ctrl+V</kbd></button>
+          <button className="menu-item" title={canUpload?'사진이나 파일을 이 터미널의 PC에 저장하고 경로를 입력 줄에 넣습니다':'이 컴퓨터를 업데이트하면 사용할 수 있습니다'} disabled={!props.connected||info.status!=='running'||inputUncertain||controlError||!canUpload||Boolean(upload)} onClick={event=>{event.currentTarget.closest('details')?.removeAttribute('open');fileInput.current?.click();}}><Paperclip size={14}/>파일 첨부…</button>
           <button className="menu-item" onClick={props.onRestart}><RotateCcw size={14}/>새 셸로 다시 열기</button>
           <button className="menu-item" onClick={props.onClearHistory}>저장된 출력 지우기</button>
           {info.status==='running'&&<button className="menu-item danger" onClick={props.onTerminate}>작업 종료 · 기록 유지</button>}
@@ -360,6 +408,7 @@ export function TerminalPane(props:PaneProps) {
       </div>
     </header>
     {worktreeLauncher.dialog}
+    <input ref={fileInput} type="file" multiple hidden aria-label="첨부할 파일" onChange={event=>{const files=[...(event.target.files??[])];event.target.value='';void sendFiles(files);}}/>
     {searchOpen&&<form className="searchbar" onSubmit={e=>{e.preventDefault();doSearch();}}><Search size={14}/><input autoFocus className="input" placeholder="출력에서 찾기" aria-label="출력 검색" value={query} onChange={e=>setQuery(e.target.value)} onKeyDown={e=>{if(e.key==='Escape'){setSearchOpen(false);termRef.current?.focus();}if(e.key==='Enter'&&e.shiftKey){e.preventDefault();doSearch(true);}}}/><span>{!searchMatch?'결과 없음':''}</span><button className="button subtle" type="button" onClick={()=>doSearch(true)}>이전</button><button className="button subtle">다음</button><button className="icon-button" type="button" aria-label="검색 닫기" onClick={()=>setSearchOpen(false)}><X size={14}/></button></form>}
     <div className="pane-body"><div className="terminal-canvas" ref={mount} onContextMenuCapture={event=>{
       if(termRef.current?.modes.mouseTrackingMode!=='none'&&!event.shiftKey)return;
@@ -373,6 +422,8 @@ export function TerminalPane(props:PaneProps) {
       <button className="menu-item" disabled={!props.connected||info.status!=='running'||inputUncertain||controlError} onClick={()=>void paste()}><ClipboardPaste size={14}/>붙여넣기 <kbd className="shortcut-key">Ctrl+V</kbd></button>
     </div>,document.body)}
     {copied&&<div className="clipboard-feedback" role="status">선택한 내용을 복사했습니다.</div>}
+    {uploadNotice&&<div className="clipboard-feedback" role="status">{uploadNotice}</div>}
+    {upload&&<div className="connection-banner upload-banner" role="status"><span>{upload.count>1?`(${upload.index}/${upload.count}) `:''}{upload.name} 보내는 중 {upload.percent}%</span><button type="button" className="button subtle" onClick={()=>uploadAbort.current?.abort()}>취소</button></div>}
     {props.dropPreview&&<div className="pane-drop-preview" data-drop-position={props.dropPreview.position} aria-live="polite"><span>{props.dropPreview.label}</span></div>}
     {(frameError||inputUncertain)&&<div className="connection-banner warning">{inputUncertain?'마지막 입력의 전달 여부를 확인해 주세요. 확인 후 제어권을 다시 가져올 수 있습니다.':frameError}</div>}
     {info.restoreError&&<div className="connection-banner warning">{info.restoreError}{info.historyAvailable?' 이전 기록은 그대로 남아 있습니다.':''}</div>}

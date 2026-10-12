@@ -7,6 +7,9 @@ import { RemoteAccessQr } from './RemoteAccessQr';
 import { PushSettings } from './PushSettings';
 import { hostClockOffset } from './host-clock';
 import { TOUCH_SCROLL_SPEEDS, touchScrollSpeed } from '../../../packages/terminal/touch-scrollback';
+import { KeyBarSettings } from './KeyBarSettings';
+import { DEFAULT_KEY_BAR } from './key-bar';
+import { screenWakeLockSupported } from './use-screen-wake-lock';
 
 type Tab = 'appearance' | 'host' | 'remote' | 'updates' | 'help';
 export type SettingsTab = Tab;
@@ -37,6 +40,12 @@ export interface SettingsProps {
   fontSize: number;
   scrollSpeed: number;
   onScrollSpeed: (value: number) => void;
+  /** The phone key bar; its editor shows only when onKeyBar is given. */
+  keyBar?: readonly string[];
+  onKeyBar?: (ids: string[]) => void;
+  /** Keep the screen on while this device shows the app; its control shows only when onKeepScreenOn is given. */
+  keepScreenOn?: boolean;
+  onKeepScreenOn?: (value: boolean) => void;
   refreshBlocked?: boolean;
   /** Tab shown first, e.g. 'updates' when opened from the sidebar update notice. */
   initialTab?: Tab;
@@ -68,8 +77,9 @@ function remainingLabel(value: string | number, now: number) {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')} 남음`;
 }
 
-export function Settings({ client, state, owner, theme, fontSize, scrollSpeed, onScrollSpeed, refreshBlocked = false, initialTab = 'appearance', onTheme, onFontSize, onClose, onError }: SettingsProps) {
+export function Settings({ client, state, owner, theme, fontSize, scrollSpeed, onScrollSpeed, keyBar, onKeyBar, keepScreenOn, onKeepScreenOn, refreshBlocked = false, initialTab = 'appearance', onTheme, onFontSize, onClose, onError }: SettingsProps) {
   const [tab, setTab] = useState<Tab>(initialTab);
+  const wakeLockAvailable = screenWakeLockSupported();
   const [name, setName] = useState(state.settings.name);
   const [recordHistory, setRecordHistory] = useState(state.settings.recordHistory);
   const [busy, setBusy] = useState<string | null>(null);
@@ -236,6 +246,8 @@ export function Settings({ client, state, owner, theme, fontSize, scrollSpeed, o
               <div className="setting-row"><label className="setting-label" htmlFor={`${id}-scroll`}>모바일 스크롤 속도</label><select id={`${id}-scroll`} className="input" aria-describedby={`${id}-scroll-help`} value={scrollSpeed} onChange={event => onScrollSpeed(touchScrollSpeed(Number(event.target.value)))}>{TOUCH_SCROLL_SPEEDS.map(value => <option key={value} value={value}>{value}배{value === 0.5 ? ' (기본)' : ''}</option>)}</select></div>
               <p className="hint">천천히 밀면 손가락을 따라가고, 빠르게 넘기면 짧게 감속합니다. 다시 터치하면 멈춥니다. Claude·Codex에서는 프로그램에 따라 이동하는 줄 수가 다를 수 있습니다.</p>
             </div>
+            {onKeyBar && <KeyBarSettings ids={keyBar ?? DEFAULT_KEY_BAR} onChange={onKeyBar}/>}
+            {onKeepScreenOn && <div className="settings-section"><h3 className="settings-title">화면 켜 두기</h3><p className="settings-description">휴대폰으로 Claude·Codex의 작업을 지켜볼 때 화면이 저절로 꺼지지 않게 합니다. 이 기기에 저장됩니다.</p><div className="setting-row"><label className="setting-label" htmlFor={`${id}-awake`}>몽글터미널을 보는 동안 화면 켜 두기<p className="hint">{wakeLockAvailable ? '이 화면을 보고 있고 컴퓨터에 연결되어 있을 때만 켜 둡니다. 다른 앱으로 가거나 화면을 직접 끄면 평소처럼 꺼지고, 배터리를 더 씁니다.' : '이 브라우저에서는 사용할 수 없습니다. HTTPS 주소(원격 연결의 접속 주소)로 연 최신 브라우저가 필요합니다.'}</p></label><input id={`${id}-awake`} type="checkbox" checked={keepScreenOn ?? false} disabled={!wakeLockAvailable} onChange={event => onKeepScreenOn(event.target.checked)} /></div></div>}
           </>}
           {tab === 'host' && <div className="settings-section"><h3 className="settings-title">{state.name}</h3><p className="settings-description">이 컴퓨터의 이름과 기록 보관 방식을 설정합니다.</p>
             {!owner && <p className="hint">컴퓨터 설정은 해당 컴퓨터의 몽글터미널 앱에서 변경할 수 있습니다.</p>}
