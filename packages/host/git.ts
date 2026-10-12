@@ -299,6 +299,8 @@ export async function readGitReview(root: string, dataDir: string, mode: GitRevi
       else files.push({ path: file, status: 'modified' });
     }
     const unchanged = new Set<string>();
+    // On POSIX Git also records the executable bit unless core.fileMode is off; Windows reports no such bit.
+    const fileMode = process.platform !== 'win32' && recheck.length > 0 && (await attempt(['config', '--bool', 'core.fileMode'])).trim() !== 'false';
     if (GIT_COMMIT_PATTERN.test(baseCommit)) for (let start = 0; start < recheck.length; start += 100) {
       const part = recheck.slice(start, start + 100);
       const stored = new Map<string, { mode: string; blob: string }>();
@@ -309,12 +311,13 @@ export async function readGitReview(root: string, dataDir: string, mode: GitRevi
       }
       const repositoryPath = (file: string) => path.relative(listing.repositoryRoot, path.resolve(base, file)).split(path.sep).join('/');
       // A symbolic link is stored as its target text; hash-object would hash the file it points to.
-      const actual = new Map<string, string>(), regular: string[] = [], links = new Set<string>();
+      const actual = new Map<string, string>(), regular: string[] = [], links = new Set<string>(), executable = new Set<string>();
       for (const file of part) {
         const target = path.resolve(base, file);
-        const link = await lstat(target).then(info => info.isSymbolicLink() ? readlink(target) : undefined, () => undefined);
+        const info = await lstat(target).catch(() => undefined);
+        const link = info?.isSymbolicLink() ? await readlink(target).catch(() => undefined) : undefined;
         const want = stored.get(repositoryPath(file))?.blob;
-        if (link === undefined) { regular.push(file); continue; }
+        if (link === undefined) { regular.push(file); if (info && (info.mode & 0o100)) executable.add(file); continue; }
         links.add(file);
         if (!want) continue;
         const value = Buffer.from(link.split(path.sep).join('/'));
@@ -322,8 +325,11 @@ export async function readGitReview(root: string, dataDir: string, mode: GitRevi
       }
       const hashes = regular.length ? (await attempt(['hash-object', '--no-filters', '--', ...regular])).split(/\r?\n/) : [];
       if (hashes.length === regular.length) regular.forEach((file, index) => actual.set(file, hashes[index]));
-      // Same content is not enough: a link turned into a regular file (or back) is a change Git reports too.
-      for (const file of part) { const want = stored.get(repositoryPath(file)); if (want && actual.get(file) === want.blob && (want.mode === '120000') === links.has(file)) unchanged.add(file); }
+      // Same content is not enough: a link turned into a regular file (or back), or a changed executable bit, is a change Git reports too.
+      for (const file of part) {
+        const want = stored.get(repositoryPath(file));
+        if (want && actual.get(file) === want.blob && (want.mode === '120000') === links.has(file) && (!fileMode || links.has(file) || (want.mode === '100755') === executable.has(file))) unchanged.add(file);
+      }
     }
     for (const file of recheck) if (!unchanged.has(file)) files.push({ path: file, status: 'modified' });
     files.sort((a, b) => a.path.localeCompare(b.path, 'en'));

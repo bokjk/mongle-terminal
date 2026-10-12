@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile, realpath, rm, symlink, unlink, writeFile } from 'node:fs/promises';
+import { chmod, readFile, realpath, rm, symlink, unlink, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import path from 'node:path';
@@ -179,6 +179,21 @@ test('Git diff compares a symbolic link as its target text, as Git stores it', a
   catch (error) { if (['EPERM', 'EACCES'].includes((error as NodeJS.ErrnoException).code || '')) { t.skip('creating a symbolic link needs Developer Mode on this Windows'); return; } throw error; }
   const diff = await readGitDiff(repository, data, { path: 'link', base: 'INDEX', target: 'WORKTREE' });
   assert.deepEqual([diff.original, diff.modified], [null, 'first.txt']);
+});
+
+test('Git review keeps a file whose executable bit differs from the base on POSIX', async t => {
+  // PR #74 review: chmod alone is a mode change Git reports while core.fileMode is on.
+  if (process.platform === 'win32') { t.skip('Windows has no executable bit; Git sets core.fileMode off there'); return; }
+  const { repository, data } = await fixture(t);
+  await git(repository, 'update-ref', 'refs/remotes/origin/main', 'HEAD'); await git(repository, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+  await git(repository, 'checkout', '-qb', 'feature');
+  await writeFile(path.join(repository, 'staged.txt'), 'changed on the branch\n'); await git(repository, 'commit', '-qam', 'feature work');
+  await writeFile(path.join(repository, 'staged.txt'), 'before\n'); await chmod(path.join(repository, 'staged.txt'), 0o755);
+  const executable = await readGitReview(repository, data, 'branch');
+  assert.deepEqual(executable.state === 'repository' && executable.files, [{ path: 'staged.txt', status: 'modified' }], 'same content, new executable bit');
+  await chmod(path.join(repository, 'staged.txt'), 0o644);
+  const restored = await readGitReview(repository, data, 'branch');
+  assert.deepEqual(restored.state === 'repository' && restored.files, [], 'content and mode are back at the base');
 });
 
 test('Git review keeps a staged deletion, and a symbolic link restored to the base drops out', async t => {

@@ -1,7 +1,7 @@
 import { randomUUID, randomBytes, createHash, timingSafeEqual } from 'node:crypto';
 import { hostname, homedir } from 'node:os';
 import { readFile, realpath, stat, unlink } from 'node:fs/promises';
-import { join, dirname, basename, resolve } from 'node:path';
+import { join, dirname, basename } from 'node:path';
 import * as pty from 'node-pty';
 import { z } from 'zod';
 import { APP_VERSION, PROTOCOL_VERSION, AppError, GIT_COMMIT_PATTERN, appendTab, dimensionSchema, groupRepositoryIds, idSchema, leafIds, removeLeaf, splitLeaf } from '../protocol/index.js';
@@ -386,9 +386,9 @@ export class HostCore {
   /** The base branch remembered by the project whose main checkout or worktree is this repository. */
   private reviewBase(repositoryRoot: string) {
     // Only a project whose checkout is this repository; a terminal may have changed into another one.
-    const key = (value: string) => resolve(value).replace(/[\\/]+$/, '').toLowerCase();
-    const worktree = this.worktrees.find(item => key(item.path) === key(repositoryRoot));
-    const repository = worktree ? this.repositories.find(item => item.id === worktree.repositoryId) : this.repositories.find(item => key(item.root) === key(repositoryRoot));
+    // samePath keeps the platform's case rule: Foo and foo are one folder on Windows, two on Linux.
+    const worktree = this.worktrees.find(item => samePath(item.path, repositoryRoot));
+    const repository = worktree ? this.repositories.find(item => item.id === worktree.repositoryId) : this.repositories.find(item => samePath(item.root, repositoryRoot));
     return repository?.baseRef;
   }
   private async editFile(method: string, params: unknown, ctx: ConnectionContext) {
