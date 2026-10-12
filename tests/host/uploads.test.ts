@@ -178,6 +178,19 @@ test('Git itself decides: an existing ignore is enough, and a rule that brings t
   const once = await readFile(path.join(root, 'negated-exclude', '.git', 'info', 'exclude'), 'utf8');
   await assert.rejects(uploads.begin('phone', path.join(root, 'negated-exclude'), 'a.png', 3), { code: 'UPLOAD_GIT_EXCLUDE' });
   assert.equal(await readFile(path.join(root, 'negated-exclude', '.git', 'info', 'exclude'), 'utf8'), once, 'a refused folder does not collect more lines');
+  // Only some files brought back (".mongle-attachments/*" then "!.mongle-attachments/*.png"): the name this upload will
+  // really have is asked of Git, so the PNG is seen as not ignored and the folder rule is added. Git never
+  // re-includes a file whose folder is excluded, so after that the PNG is ignored too.
+  const partial = path.join(root, 'partial'); await mkdir(partial); git(partial, 'init', '-q');
+  await writeFile(path.join(partial, '.gitignore'), '.mongle-attachments/*\n!.mongle-attachments/*.png\n');
+  await writeFile(path.join(partial, '.git', 'info', 'exclude'), '');
+  for (const name of ['shot.png', 'notes.txt']) {
+    const begun = await uploads.begin('phone', partial, name, 3);
+    await uploads.chunk('phone', begun.uploadId, 0, Buffer.from('abc'));
+    await uploads.finish('phone', begun.uploadId);
+  }
+  assert.equal(await readFile(path.join(partial, '.git', 'info', 'exclude'), 'utf8'), '# Mongle Terminal attachments\n.mongle-attachments/\n');
+  assert.equal(git(partial, 'status', '--porcelain', '--untracked-files=all'), '?? .gitignore\n', 'neither saved file is in Git');
 });
 
 

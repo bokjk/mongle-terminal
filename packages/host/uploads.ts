@@ -41,9 +41,7 @@ export async function attachmentDirectory(base: string, protectedRoot: string): 
 }
 
 const GIT_EXCLUDE_FAILED = '이 폴더의 Git 저장소 제외 목록(.git/info/exclude)에 첨부 폴더를 추가하지 못해 파일을 저장하지 않았습니다. 저장소 설정을 확인하거나 Git 저장소가 아닌 폴더에서 다시 보내 주세요.';
-const GIT_EXCLUDE_REINCLUDED = '이 저장소의 Git 규칙(예: !.mongle-attachments/)이 첨부 폴더를 다시 포함해 Git에서 제외할 수 없으므로 파일을 저장하지 않았습니다. 그 규칙을 정리한 뒤 다시 보내 주세요.';
-/** A path inside the attachment folder, asked of Git to learn whether the folder is really ignored. */
-const PROBE = ATTACHMENT_FOLDER + '/probe';
+const GIT_EXCLUDE_REINCLUDED = '이 저장소의 Git 규칙(예: !.mongle-attachments/, !.mongle-attachments/*.png)이 첨부 파일을 다시 포함해 Git에서 제외할 수 없으므로 파일을 저장하지 않았습니다. 그 규칙을 정리한 뒤 다시 보내 주세요.';
 /** Lines that leave .mongle-attachments out at every depth; an anchored "/.mongle-attachments/" covers only the root. */
 const COVERS_EVERY_DEPTH = /^(?:\*\*\/)?\.mongle-attachments\/?$/;
 
@@ -65,11 +63,14 @@ async function ownedEntry(entry: string, parent: string, protectedRoot: string, 
  * that already ignores it needs no line, and a "!" rule that brings it back stops the upload. Any failure
  * throws, so no file is saved where Git would pick it up.
  */
-export async function excludeFromGit(base: string, protectedRoot: string): Promise<string | undefined> {
+/** files: the names this upload will have inside the attachment folder (its .part and its final name). Git is asked about each. */
+export async function excludeFromGit(base: string, protectedRoot: string, files: readonly string[]): Promise<string | undefined> {
+  const probes = files.map(name => ATTACHMENT_FOLDER + '/' + name);
+  const allIgnored = async () => { for (const probe of probes) if (!(await gitIgnores(base, probe))) return false; return true; };
   try {
     const repository = await repositoryAt(base, protectedRoot);
     if (!repository) return undefined;
-    if (await gitIgnores(base, PROBE)) return undefined;
+    if (await allIgnored()) return undefined;
     const marker = path.join(repository, '.git');
     let metadata: string;
     if ((await lstat(marker)).isFile()) {
@@ -89,7 +90,7 @@ export async function excludeFromGit(base: string, protectedRoot: string): Promi
     if (current.split(/\r?\n/).some(line => COVERS_EVERY_DEPTH.test(line.trim()))) throw new AppError('UPLOAD_GIT_EXCLUDE', GIT_EXCLUDE_REINCLUDED);
     await appendFile(exclude, (current && !current.endsWith('\n') ? '\n' : '') + '# Mongle Terminal attachments\n' + ATTACHMENT_FOLDER + '/\n', { flag: exists ? 'a' : 'wx' });
     await ownedEntry(exclude, info, protectedRoot, 'file');
-    if (!(await gitIgnores(base, PROBE))) throw new AppError('UPLOAD_GIT_EXCLUDE', GIT_EXCLUDE_REINCLUDED);
+    if (!(await allIgnored())) throw new AppError('UPLOAD_GIT_EXCLUDE', GIT_EXCLUDE_REINCLUDED);
     return exclude;
   } catch (error) {
     if (error instanceof AppError && error.code === 'UPLOAD_GIT_EXCLUDE') throw error;
@@ -119,14 +120,15 @@ export class Uploads {
     let handle: FileHandle | undefined, part: string | undefined;
     try {
       const { base, protectedRoot } = await resolveFileRoot(root, this.dataDir);
-      await excludeFromGit(base, protectedRoot);
+      // The exact names this upload will use are asked of Git, so a rule like "!.mongle-attachments/*.png" is caught.
+      const uploadId = randomUUID(), name = attachmentName(originalName), partName = '.' + uploadId + '.part';
+      await excludeFromGit(base, protectedRoot, [partName, name]);
       const directory = await attachmentDirectory(base, protectedRoot);
       await removeStaleParts(directory);
-      const uploadId = randomUUID();
-      part = path.join(directory, '.' + uploadId + '.part');
+      part = path.join(directory, partName);
       handle = await open(part, 'wx', 0o600);
       if (slot.cancelled || this.closed) throw new AppError('UPLOAD_EXPIRED', '연결이 끊겨 파일 보내기를 중단했습니다. 다시 보내 주세요.');
-      const upload: Upload = { owner, directory, part, name: attachmentName(originalName), size, received: 0, handle, busy: false, timer: setTimeout(() => void this.discard(uploadId), this.idleMs) };
+      const upload: Upload = { owner, directory, part, name, size, received: 0, handle, busy: false, timer: setTimeout(() => void this.discard(uploadId), this.idleMs) };
       this.uploads.set(uploadId, upload);
       return { uploadId, chunkBytes: UPLOAD_CHUNK_BYTES, name: upload.name };
     } catch (error) {
