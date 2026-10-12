@@ -72,6 +72,9 @@
 * { box-sizing: border-box; }
 html, body, #root { width: 100%; height: 100%; margin: 0; }
 body { color: var(--text); background: var(--bg); font-size: 13px; line-height: 1.5; overflow: hidden; }
+/* Diff colors follow VS Code's defaults, which Orca's diff tab also uses. */
+:root { --diff-added-line: rgba(155, 185, 85, .32); --diff-added-text: rgba(156, 204, 44, .38); --diff-removed-line: rgba(255, 70, 70, .2); --diff-removed-text: rgba(255, 70, 70, .38); --diff-added-mark: #87a238; --diff-removed-mark: #d1504b; --diff-modified-mark: #87a238; }
+[data-theme='light'] { --diff-added-line: rgba(155, 185, 85, .3); --diff-added-text: rgba(120, 170, 30, .32); --diff-removed-line: rgba(255, 0, 0, .12); --diff-removed-text: rgba(255, 0, 0, .25); --diff-added-mark: #6e8f24; --diff-removed-mark: #c8423c; --diff-modified-mark: #6e8f24; }
 :root { --editor-keyword: #c9b3ed; --editor-string: #b2cdb6; --editor-number: #e3bd88; --editor-selection: #45644c80; }
 [data-theme='light'] { --editor-keyword: #74459a; --editor-string: #386540; --editor-number: #885817; --editor-selection: #bfd7c280; }
 button, input, select, textarea { font: inherit; }
@@ -905,15 +908,21 @@ details.command-menu { flex: 0 0 auto; width: auto; max-height: none; overflow: 
 .diff-sides { display: grid; grid-template-columns: 1fr 1fr; border-bottom: 1px solid var(--border-subtle); background: var(--sidebar); color: var(--text-secondary); font-size: 11px; }
 .diff-sides span { padding: 5px 12px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .diff-sides span + span { border-left: 1px solid var(--border); }
+.diff-main { display: flex; flex: 1; min-width: 0; min-height: 0; }
 .diff-body { display: flex; flex: 1; min-width: 0; min-height: 0; overflow: hidden; }
+.diff-overview { position: relative; flex: 0 0 12px; border-left: 1px solid var(--border-subtle); background: var(--sidebar); }
+.diff-overview-mark { position: absolute; left: 2px; right: 2px; min-height: 3px; padding: 0; border: 0; border-radius: 1px; cursor: pointer; }
+.diff-overview-mark.added { background: var(--diff-added-mark); }
+.diff-overview-mark.removed { background: var(--diff-removed-mark); }
+.diff-overview-mark.modified { background: var(--diff-modified-mark); }
 .diff-body > .cm-editor { flex: 1; min-width: 0; }
 .diff-body > .cm-mergeView { flex: 1; min-width: 0; height: 100%; overflow: auto; overscroll-behavior: contain; }
 .diff-body .cm-mergeViewEditors { min-height: 100%; }
 .diff-body .cm-mergeViewEditor + .cm-mergeViewEditor { border-left: 1px solid var(--border); }
-.file-editor-panel :is(.diff-body, .review-diff) .cm-editor.cm-merge-a .cm-changedLine, .file-editor-panel :is(.diff-body, .review-diff) .cm-editor .cm-deletedChunk { background: color-mix(in srgb, var(--git-deleted) 20%, transparent); }
-.file-editor-panel :is(.diff-body, .review-diff) .cm-editor.cm-merge-b .cm-changedLine, .file-editor-panel :is(.diff-body, .review-diff) .cm-editor .cm-inlineChangedLine { background: color-mix(in srgb, var(--git-added) 20%, transparent); }
-.file-editor-panel :is(.diff-body, .review-diff) .cm-editor.cm-merge-a .cm-changedText, .file-editor-panel :is(.diff-body, .review-diff) .cm-editor .cm-deletedChunk .cm-deletedText { background: color-mix(in srgb, var(--git-deleted) 45%, transparent); border-radius: 2px; }
-.file-editor-panel :is(.diff-body, .review-diff) .cm-editor.cm-merge-b .cm-changedText { background: color-mix(in srgb, var(--git-added) 45%, transparent); border-radius: 2px; }
+.file-editor-panel :is(.diff-body, .review-diff) .cm-editor.cm-merge-a .cm-changedLine, .file-editor-panel :is(.diff-body, .review-diff) .cm-editor .cm-deletedChunk { background: var(--diff-removed-line); }
+.file-editor-panel :is(.diff-body, .review-diff) .cm-editor.cm-merge-b .cm-changedLine, .file-editor-panel :is(.diff-body, .review-diff) .cm-editor .cm-inlineChangedLine { background: var(--diff-added-line); }
+.file-editor-panel :is(.diff-body, .review-diff) .cm-editor.cm-merge-a .cm-changedText, .file-editor-panel :is(.diff-body, .review-diff) .cm-editor .cm-deletedChunk .cm-deletedText { background: var(--diff-removed-text); border-radius: 2px; }
+.file-editor-panel :is(.diff-body, .review-diff) .cm-editor.cm-merge-b .cm-changedText { background: var(--diff-added-text); border-radius: 2px; }
 .file-editor-panel :is(.diff-body, .review-diff) .cm-editor.cm-merge-a .cm-changedLineGutter, .file-editor-panel :is(.diff-body, .review-diff) .cm-editor .cm-deletedLineGutter { background: var(--git-deleted); }
 .file-editor-panel :is(.diff-body, .review-diff) .cm-editor.cm-merge-b .cm-changedLineGutter { background: var(--git-added); }
 .file-editor-panel :is(.diff-body, .review-diff) .cm-editor .cm-collapsedLines { padding: 3px 12px; border-block: 1px solid var(--border-subtle); background: var(--surface-raised); color: var(--text-secondary); font-size: 11px; }
@@ -928,11 +937,12 @@ details.command-menu { flex: 0 0 auto; width: auto; max-height: none; overflow: 
 }
 
 /* GitHub/Orca-style inline diff: a +/− column and solid line colors. */
-.file-editor-panel :is(.review-diff, .layout-unified .diff-body) .cm-line, .file-editor-panel :is(.review-diff, .layout-unified .diff-body) .cm-deletedLine { position: relative; padding-left: 24px; padding-right: 16px; }
+.file-editor-panel :is(.review-diff, .layout-unified .diff-body) .cm-line, .file-editor-panel :is(.review-diff, .layout-unified .diff-body) .cm-deletedLine { position: relative; padding-left: 16px; padding-right: 16px; }
+.file-editor-panel :is(.review-diff, .layout-unified .diff-body) .cm-gutters { padding-right: 0; }
 .file-editor-panel :is(.review-diff, .layout-unified .diff-body) .cm-deletedChunk { padding-left: 0; }
-.file-editor-panel :is(.review-diff, .layout-unified .diff-body) .cm-changedLine::before, .file-editor-panel :is(.review-diff, .layout-unified .diff-body) .cm-deletedChunk .cm-deletedLine::before { position: absolute; left: 8px; font-weight: 700; user-select: none; pointer-events: none; }
-.file-editor-panel :is(.review-diff, .layout-unified .diff-body) .cm-changedLine::before { content: '+'; color: var(--git-added); }
-.file-editor-panel :is(.review-diff, .layout-unified .diff-body) .cm-deletedChunk .cm-deletedLine::before { content: '−'; color: var(--git-deleted); }
+.file-editor-panel :is(.review-diff, .layout-unified .diff-body) .cm-changedLine::before, .file-editor-panel :is(.review-diff, .layout-unified .diff-body) .cm-deletedChunk .cm-deletedLine::before { position: absolute; left: 1px; color: var(--text-secondary); user-select: none; pointer-events: none; }
+.file-editor-panel :is(.review-diff, .layout-unified .diff-body) .cm-changedLine::before { content: '+'; }
+.file-editor-panel :is(.review-diff, .layout-unified .diff-body) .cm-deletedChunk .cm-deletedLine::before { content: '−'; }
 /* Review tab: every change in one scrolling page, like a pull request. */
 .git-review { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; container-type: inline-size; }
 .review-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding: 6px 10px; border-bottom: 1px solid var(--border-subtle); font-size: 11px; }

@@ -7,7 +7,7 @@ import { CodeEditor } from './CodeEditor';
 import { MarkdownPreview } from './MarkdownPreview';
 import { GitDiffView } from './GitDiffView';
 import { GitReview } from './GitReview';
-import { diffLabel, lineEndingsOnly } from './diff-layout';
+import { diffLabel, lineEndingsOnly, rememberCollapse } from './diff-layout';
 const PdfPreview = lazy(() => import('./PdfPreview'));
 
 type Props = { files: FileDocuments; treeOpen: boolean; onToggleTree(): void; maximized: boolean; onMaximize(): void; onError(message: string): void };
@@ -66,7 +66,7 @@ export function FileEditorPanel({ files, treeOpen, onToggleTree, maximized, onMa
         {item.file && <CodeEditor path={item.path} value={item.text} session={item.editorSession} active={item.key === doc.key && item.mode !== 'preview'} readOnly={!item.file.documentId || Boolean(item.file.readOnlyReason) || item.busy} onChange={text => files.patch(item.key, { text })} onSave={() => void files.save(item.key)}/>}
       </div>
       {item.key === doc.key && isMarkdown(item.path) && item.mode !== 'edit' && <MarkdownPreview text={item.text} onCopyLink={copyLink}/>}
-      {item.key === doc.key && item.diff?.data && !item.diff.data.unavailable && <GitDiffView path={item.path} diff={item.diff.data} layout={item.diff.layout} collapse={item.diff.collapse} active={files.visible} onLayout={layout => files.patch(item.key, { diff: { ...item.diff!, layout } })} onCollapse={collapse => files.patch(item.key, { diff: { ...item.diff!, collapse } })}/>}
+      {item.key === doc.key && item.diff?.data && !item.diff.data.unavailable && <GitDiffView path={item.path} diff={item.diff.data} layout={item.diff.layout} collapse={item.diff.collapse} active={files.visible} onLayout={layout => files.patch(item.key, { diff: { ...item.diff!, layout } })} onCollapse={collapse => { rememberCollapse('diff', collapse); files.patch(item.key, { diff: { ...item.diff!, collapse } }); }}/>}
       {item.key === doc.key && item.review?.data && <GitReview review={item.review.data} mode={item.review.mode} reference={item.reference} request={files.request} active={files.visible} focus={item.review.focus} onMode={mode => files.setReviewMode(item.key, mode)} onSplit={(file, base) => void files.openDiff(item.reference, file.path, base, 'WORKTREE', file.originalPath)} onOpenFile={file => void files.open(item.reference, file.path)}/>}
       {item.key === doc.key && item.pdf && <Suspense fallback={<p className="file-message" role="status">PDF 뷰어를 여는 중…</p>}><PdfPreview pdf={item.pdf} page={item.pdfPage || 1} zoom={item.pdfZoom || 0} onView={(pdfPage, pdfZoom) => files.patch(item.key, { pdfPage, pdfZoom })}/></Suspense>}
     </div>)}</div>

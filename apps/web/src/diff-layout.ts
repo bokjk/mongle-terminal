@@ -4,9 +4,12 @@ import type { GitDiff, GitDiffBase, GitDiffTarget } from '../../../packages/prot
 export type DiffLayout = 'split' | 'unified';
 export function preferredLayout(): DiffLayout {
   try { const saved = localStorage.getItem('mongle.diff.layout'); if (saved === 'split' || saved === 'unified') return saved; } catch {}
-  return window.innerWidth < 900 ? 'unified' : 'split';
+  return 'unified';
 }
 export function rememberLayout(layout: DiffLayout) { try { localStorage.setItem('mongle.diff.layout', layout); } catch {} }
+/** One-file diff tabs show the whole file like Orca; the many-file review folds unchanged runs by default. */
+export function preferredCollapse(scope: 'diff' | 'review') { try { const saved = localStorage.getItem('mongle.' + scope + '.collapse'); if (saved) return saved === 'on'; } catch {} return scope === 'review'; }
+export function rememberCollapse(scope: 'diff' | 'review', collapse: boolean) { try { localStorage.setItem('mongle.' + scope + '.collapse', collapse ? 'on' : 'off'); } catch {} }
 /** Short tab suffix that tells staged and unstaged comparisons of the same file apart. */
 export function diffLabel(base: GitDiffBase, target: GitDiffTarget) {
   return base === 'HEAD' && target === 'INDEX' ? '스테이징' : base === 'HEAD' ? 'HEAD 비교' : base === 'INDEX' ? '작업 중' : '기준';

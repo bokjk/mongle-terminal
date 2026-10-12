@@ -3,11 +3,11 @@ import { EditorView, drawSelection, highlightSpecialChars, lineNumbers } from '@
 import { EditorState, Text } from '@codemirror/state';
 import { syntaxHighlighting } from '@codemirror/language';
 import { Chunk, getChunks, unifiedMergeView } from '@codemirror/merge';
-import { ChevronDown, ChevronRight, ChevronUp, Columns2, FileText, FoldVertical, ListTree, UnfoldVertical } from 'lucide-react';
+import { ChevronDown, ChevronRight, ChevronUp, FileText, GitCompareArrows, FoldVertical, ListTree, UnfoldVertical } from 'lucide-react';
 import type { GitDiff, GitReview as Review, GitReviewFile, GitReviewMode } from '../../../packages/protocol/index';
 import { editorThemeSpec, highlighting, language } from './CodeEditor';
 import { GitMarker, type GitKind } from './GitChanges';
-import { lineEndingsOnly } from './diff-layout';
+import { lineEndingsOnly, preferredCollapse, rememberCollapse } from './diff-layout';
 
 type Request = <T>(method: string, params: unknown, signal?: AbortSignal) => Promise<T>;
 type Reference = { id: string; hostId: string; bootId: string; generation: string; root: string };
@@ -36,6 +36,7 @@ export function GitReview({ review, mode, reference, request, active, focus, onM
   const base = review.state === 'repository' ? review.base : '';
   const [contents, setContents] = useState(() => new Map<string, Content>());
   const [collapsed, setCollapsed] = useState(() => new Set<string>());
+  const [folding, setFolding] = useState(() => preferredCollapse('review'));
   const [seen, setSeen] = useState(() => new Set<string>());
   const [listOpen, setListOpen] = useState(() => { try { return localStorage.getItem('mongle.review.list') !== 'closed'; } catch { return true; } });
   const [current, setCurrent] = useState({ path: '', chunk: -1 });
@@ -164,6 +165,7 @@ export function GitReview({ review, mode, reference, request, active, focus, onM
         <button aria-pressed={mode === 'branch'} title="이 브랜치가 기준 브랜치에서 갈라진 뒤 바뀐 전부(커밋한 것 포함)" onClick={() => onMode('branch')}>브랜치 전체</button>
         <button aria-pressed={mode === 'head'} title="마지막 커밋 이후 바뀐 것(스테이징 포함)" onClick={() => onMode('head')}>커밋 안 한 변경</button>
       </div>
+      <button className="diff-toggle" aria-pressed={folding} title="바뀌지 않은 줄을 접어 변경 부분만 보기" onClick={() => { rememberCollapse('review', !folding); setFolding(!folding); }}><FoldVertical size={13}/>변경 부분만</button>
       <span className="review-base" title={review.base}>{review.mode === 'branch' ? review.baseLabel + ' 이후' : 'HEAD 이후'} · {review.base.slice(0, 7)}</span>
       <span className="review-summary">파일 {files.length}{review.truncated && '+'}개{totals.loaded > 0 && <> · <span className="diff-added">+{totals.added}</span> <span className="diff-removed">−{totals.removed}</span>{totals.loaded < files.length && <span className="review-partial" title="아직 읽지 않은 파일은 합계에 포함되지 않습니다"> (읽는 중)</span>}</>}</span>
       <span className="diff-nav">
@@ -193,7 +195,7 @@ export function GitReview({ review, mode, reference, request, active, focus, onM
               <GitMarker kind={kinds[file.status]}/>
               <span className="review-path" title={file.path}>{file.originalPath ? <><span className="review-original">{file.originalPath}</span> → </> : null}{file.path}</span>
               {content?.diff && !content.diff.unavailable && <span className="review-count"><span className="diff-added">+{content.added}</span> <span className="diff-removed">−{content.removed}</span></span>}
-              <button className="icon-button" aria-label={file.path + ' 나란히 비교'} title="나란히 비교" onClick={() => onSplit(file, base)}><Columns2 size={14}/></button>
+              <button className="icon-button" aria-label={file.path + ' 비교 탭 열기'} title="이 파일만 비교" onClick={() => onSplit(file, base)}><GitCompareArrows size={14}/></button>
               {file.status !== 'deleted' && <button className="icon-button" aria-label={file.path + ' 파일 열기'} title="파일 열기" onClick={() => onOpenFile(file)}><FileText size={14}/></button>}
             </header>
             {open && (content?.error ? <p className="review-message" role="alert">{content.error}</p>
@@ -201,7 +203,7 @@ export function GitReview({ review, mode, reference, request, active, focus, onM
               : content.diff.unavailable ? <p className="review-message">{content.diff.unavailable}</p>
               : lineEndingsOnly(content.diff) ? <p className="review-message">줄 끝 문자(CRLF/LF)만 바뀌었습니다.</p>
               : !content.chunks ? <p className="review-message">내용 차이가 없습니다.</p>
-              : seen.has(file.path) ? <UnifiedDiff path={file.path} diff={content.diff} onView={view => {
+              : seen.has(file.path) ? <UnifiedDiff path={file.path} diff={content.diff} folding={folding} onView={view => {
                   if (view) { views.current.set(file.path, view); if (pending.current?.path === file.path) { const target = pending.current; pending.current = undefined; requestAnimationFrame(() => show(target.path, target.chunk)); } }
                   else views.current.delete(file.path);
                 }} onSelect={chunk => setCurrent({ path: file.path, chunk })}/>
@@ -213,7 +215,7 @@ export function GitReview({ review, mode, reference, request, active, focus, onM
   </div>;
 }
 
-function UnifiedDiff({ path, diff, onView, onSelect }: { path: string; diff: GitDiff; onView(view: EditorView | undefined): void; onSelect(chunk: number): void }) {
+function UnifiedDiff({ path, diff, folding, onView, onSelect }: { path: string; diff: GitDiff; folding: boolean; onView(view: EditorView | undefined): void; onSelect(chunk: number): void }) {
   const parent = useRef<HTMLDivElement>(null);
   const callbacks = useRef({ onView, onSelect }); callbacks.current = { onView, onSelect };
   useEffect(() => {
@@ -227,11 +229,11 @@ function UnifiedDiff({ path, diff, onView, onSelect }: { path: string; diff: Git
         const index = chunks.findIndex(chunk => head >= chunk.fromB && head <= Math.max(chunk.fromB, chunk.endB));
         if (index >= 0) callbacks.current.onSelect(index);
       }),
-      unifiedMergeView({ original: diff.original ?? '', mergeControls: false, gutter: true, highlightChanges: true, syntaxHighlightDeletions: true, collapseUnchanged: { margin: 3, minSize: 4 } }),
+      unifiedMergeView({ original: diff.original ?? '', mergeControls: false, gutter: false, highlightChanges: true, syntaxHighlightDeletions: true, ...(folding ? { collapseUnchanged: { margin: 3, minSize: 4 } } : {}) }),
     ] }) });
     callbacks.current.onView(view);
     return () => { callbacks.current.onView(undefined); view.destroy(); };
-  }, [path, diff.original, diff.modified]);
+  }, [path, diff.original, diff.modified, folding]);
   return <div className="review-diff" ref={parent}/>;
 }
 

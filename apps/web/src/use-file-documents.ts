@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { FILE_EDIT_BYTES, type FileDocument, type GitDiff, type GitDiffBase, type GitDiffTarget, type GitReview, type GitReviewMode, type HostState, type Transport } from '../../../packages/protocol';
 import type { EditorSession } from './CodeEditor';
-import { preferredLayout, type DiffLayout } from './diff-layout';
+import { preferredCollapse, preferredLayout, type DiffLayout } from './diff-layout';
 import { loadPdfDocument, type PdfDocument } from './pdf-document';
 import type { ExplorerClient } from './explorer-queue';
 
@@ -145,7 +145,7 @@ export function useFileDocuments(client: Transport, state: HostState | undefined
     setActiveKey(key); setVisible(true);
     if (current.current.some(doc => doc.key === key)) { void load(key); return; }
     if (current.current.length >= 24) { const last = current.current.at(-1)!; setActiveKey(last.key); patch(last.key, { error: '파일은 최대 24개까지 열 수 있습니다. 사용하지 않는 파일 탭을 닫아 주세요.' }); return; }
-    update(docs => [...docs, { key, name: path.split(/[\\/]/).at(-1) || path, path, reference, text: '', baseline: '', busy: false, saving: false, mode: 'edit', loadId: 0, editorSession: {}, diff: { base, target, ...(originalPath ? { originalPath } : {}), layout: preferredLayout(), collapse: true } }]);
+    update(docs => [...docs, { key, name: path.split(/[\\/]/).at(-1) || path, path, reference, text: '', baseline: '', busy: false, saving: false, mode: 'edit', loadId: 0, editorSession: {}, diff: { base, target, ...(originalPath ? { originalPath } : {}), layout: preferredLayout(), collapse: preferredCollapse('diff') } }]);
     await load(key);
   }
   async function openReview(reference: FileReference, focusPath?: string) {

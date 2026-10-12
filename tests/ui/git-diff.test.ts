@@ -90,15 +90,23 @@ test('Git review shows every branch change on one page, moves by file and change
     await page.keyboard.press('p'); await expect(position).toHaveText(new RegExp('^' + first + ' / '));
     await page.keyboard.press('j'); await expect(review.locator('.review-section.current')).toHaveAttribute('data-path', 'staged.txt');
     await page.keyboard.press('k'); await expect(review.locator('.review-section.current')).toHaveAttribute('data-path', 'src/long.ts');
+    await review.getByRole('button', { name: '변경 부분만' }).click(); await expect(section('src/long.ts').locator('.cm-collapsedLines')).toHaveCount(0);
+    await review.getByRole('button', { name: '변경 부분만' }).click(); await expect(section('src/long.ts').locator('.cm-collapsedLines').first()).toBeVisible();
     await review.getByRole('button', { name: '모든 파일 접기' }).click(); await expect(review.locator('.review-diff')).toHaveCount(0);
     await review.getByRole('button', { name: '모든 파일 펼치기' }).click(); await expect(section('src/long.ts').locator('.review-diff')).toBeVisible();
 
     // A file opens side by side against the same base, or as an editable file.
-    await section('src/long.ts').getByRole('button', { name: 'src/long.ts 나란히 비교' }).click();
+    await section('src/long.ts').getByRole('button', { name: 'src/long.ts 비교 탭 열기' }).click();
     await expect(editor.getByRole('tab', { name: 'long.ts · 기준 비교' })).toHaveAttribute('aria-selected', 'true');
     const split = editor.locator('.document-body:not([hidden]) .diff-view');
+    // Like Orca's diff tab: inline, whole file, an overview strip of change positions.
+    await expect(split.getByRole('button', { name: '한 화면' })).toHaveAttribute('aria-pressed', 'true'); await expect(split.locator('.cm-deletedChunk').first()).toContainText('export const line10 = 10;');
+    await expect(split.locator('.cm-collapsedLines')).toHaveCount(0); await expect(split.locator('.diff-overview-mark')).toHaveCount(2);
+    await page.screenshot({ path: 'test-results/git-diff/inline-dark.png' });
+    await split.locator('.diff-overview-mark').nth(1).click(); await expect(split.locator('.diff-position')).toHaveText('2 / 2');
+    await split.getByRole('button', { name: '나란히' }).click();
     await expect(split.locator('.cm-mergeView')).toBeVisible(); await expect(split.locator('.diff-sides')).toContainText('기준 커밋');
-    await expect(split.locator('.cm-merge-a .cm-content')).toContainText('export const line45 = 45;'); await expect(split.locator('.cm-merge-b .cm-content')).toContainText('line45 = "committed"');
+    await expect(split.locator('.cm-merge-a .cm-content')).toContainText('export const line10 = 10;'); await expect(split.locator('.cm-merge-b .cm-content')).toContainText('line10 = "changed"');
     await page.keyboard.press('F7'); await expect(split.locator('.diff-position')).toHaveText(/^\d \/ 2$/);
     await page.screenshot({ path: `${output}/split-dark.png` });
     await editor.getByRole('tab', { name: /^변경 검토/ }).click();
