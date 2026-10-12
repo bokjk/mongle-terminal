@@ -15,6 +15,7 @@ import { shellIntegration } from '../shell-profiles/integration.js';
 import { inspectFiles, within } from './files.js';
 import { openFileDocument, saveFileDocument } from './file-editor.js';
 import { readPdfChunk } from './pdf-files.js';
+import { Uploads, UPLOAD_CHUNK_BYTES, UPLOAD_MAX_BYTES } from './uploads.js';
 import { inspectGit, readGitDiff, readGitReview } from './git.js';
 import { inspectProject, inspectKnownRepository, validateWorktree, prepareWorktree, addWorktree, removeWorktree, samePath, worktreeSlug } from './worktrees.js';
 
@@ -66,8 +67,10 @@ export class HostCore {
   private storageError?: string;
   private fileReads = new Map<string, number>();
   private fileDocuments = new Map<string, { client: Client; root: string; path: string; absolutePath: string }>();
+  private uploads: Uploads;
 
   constructor(private options: { dataDir: string; name?: string; claudeIntegration?: import('../protocol/index.js').ClaudeIntegration; codexIntegration?: { status: 'installed' | 'unavailable'; message: string } }) {
+    this.uploads = new Uploads(options.dataDir);
     this.settings = {name: options.name || hostname(), recordHistory: true, scrollback: 5000};
   }
   async init(): Promise<void> {
@@ -125,7 +128,7 @@ export class HostCore {
     return result;
   }
   getState(): HostState {
-    return structuredClone({ hostId:this.hostId, bootId:this.bootId, name:this.settings.name, version:APP_VERSION, protocolVersion:PROTOCOL_VERSION, capabilities:['control.acquire-if-free','files.read','files.edit','files.pdf','git.read','git.diff','git.review','layout.tabs','notifications.push','pairing.remote-approve','worktrees.manage','worktrees.terminal-context'], groups:this.groups, terminals:this.terminals, repositories:this.repositories,worktrees:this.worktrees,worktreeOperations:this.worktreeOperations,profiles:this.profiles, settings:this.settings, ...(this.options.claudeIntegration ? {claudeIntegration:this.options.claudeIntegration} : {}), ...(this.options.codexIntegration ? {codexIntegration:this.options.codexIntegration} : {}), ...(this.storageError ? {storageError:this.storageError} : {}) });
+    return structuredClone({ hostId:this.hostId, bootId:this.bootId, name:this.settings.name, version:APP_VERSION, protocolVersion:PROTOCOL_VERSION, capabilities:['control.acquire-if-free','files.read','files.edit','files.pdf','files.upload','git.read','git.diff','git.review','layout.tabs','notifications.push','pairing.remote-approve','worktrees.manage','worktrees.terminal-context'], groups:this.groups, terminals:this.terminals, repositories:this.repositories,worktrees:this.worktrees,worktreeOperations:this.worktreeOperations,profiles:this.profiles, settings:this.settings, ...(this.options.claudeIntegration ? {claudeIntegration:this.options.claudeIntegration} : {}), ...(this.options.codexIntegration ? {codexIntegration:this.options.codexIntegration} : {}), ...(this.storageError ? {storageError:this.storageError} : {}) });
   }
   connect(ctx: ConnectionContext, send: Send): void {
     if (!this.initialized || this.closing || this.shutdownPrepared) throw new AppError('HOST_UNAVAILABLE','호스트가 준비되지 않았습니다.');
@@ -137,6 +140,7 @@ export class HostCore {
   disconnect(id: string): void {
     this.clients.delete(id);
     for (const [token, document] of this.fileDocuments) if (document.client.ctx.id === id) this.fileDocuments.delete(token);
+    void this.uploads.dropOwner(id);
     let changed = false;
     for (const runtime of this.runtimes.values()) if (runtime.lease?.connectionId === id) {this.revoke(runtime); changed = true;}
     if (changed) this.broadcastState();
@@ -147,6 +151,7 @@ export class HostCore {
     // Filesystem latency must not block heartbeat, terminal input or shutdown.
     if (method === 'files.list' || method === 'files.preview' || method === 'files.open' || method === 'files.pdf' || method === 'git.status' || method === 'git.diff' || method === 'git.review') return this.readFiles(method, params, ctx);
     if (method === 'files.save' || method === 'files.close' || method === 'files.reload') return this.editFile(method, params, ctx);
+    if (method.startsWith('files.upload.')) return this.uploadFile(method, params, ctx);
     if (method.startsWith('projects.') || method.startsWith('worktrees.')) return this.projectRequest(method,params,ctx);
     if(method==='terminals.create'||method==='terminals.restart') {
       const client=this.connectedClient(ctx);
@@ -345,6 +350,29 @@ export class HostCore {
       });
     }
     throw new AppError('UNKNOWN_METHOD','지원하지 않는 프로젝트 요청입니다.');
+  }
+  /** A file a device sends into the selected terminal's folder (see uploads.ts). Writes no terminal input. */
+  private async uploadFile(method: string, params: unknown, ctx: ConnectionContext) {
+    const client = this.clients.get(ctx.id);
+    if (this.closing || this.shutdownPrepared) throw new AppError('HOST_UNAVAILABLE', '호스트가 종료 중입니다.');
+    if (!client || client.ctx.deviceId !== ctx.deviceId) throw new AppError('NOT_CONNECTED', '컴퓨터에 다시 연결해 주세요.');
+    if (method === 'files.upload.begin') {
+      const p = terminalRef.extend({ root: cwdSchema, name: z.string().min(1).max(255), size: z.number().int().min(0).max(UPLOAD_MAX_BYTES * 2) }).strict().parse(params);
+      const info = this.target(p);
+      if ((info.currentCwd || info.cwd) !== p.root) throw new AppError('FILES_ROOT_CHANGED', '터미널의 현재 폴더가 바뀌었습니다. 다시 시도해 주세요.');
+      return this.uploads.begin(ctx.id, p.root, p.name, p.size);
+    }
+    const reference = hostRef.extend({ uploadId: idSchema });
+    if (method === 'files.upload.chunk') {
+      const chunk = reference.extend({ offset: z.number().int().min(0).max(UPLOAD_MAX_BYTES), dataBase64: z.string().min(1).max(Math.ceil(UPLOAD_CHUNK_BYTES / 3) * 4) }).strict().parse(params);
+      if (chunk.hostId !== this.hostId || chunk.bootId !== this.bootId) throw new AppError('HOST_CHANGED', '접속한 컴퓨터가 바뀌었습니다.');
+      return this.uploads.chunk(ctx.id, chunk.uploadId, chunk.offset, Buffer.from(chunk.dataBase64, 'base64'));
+    }
+    const p = reference.strict().parse(params);
+    if (p.hostId !== this.hostId || p.bootId !== this.bootId) throw new AppError('HOST_CHANGED', '접속한 컴퓨터가 바뀌었습니다.');
+    if (method === 'files.upload.finish') return this.uploads.finish(ctx.id, p.uploadId);
+    if (method === 'files.upload.cancel') { await this.uploads.cancel(ctx.id, p.uploadId); return { ok: true }; }
+    throw new AppError('UNKNOWN_METHOD', '지원하지 않는 파일 요청입니다.');
   }
   private async readFiles(method: string, params: unknown, ctx: ConnectionContext) {
     const schema = terminalRef.extend({ root: cwdSchema, path: z.string().max(4096).default('') });
@@ -908,7 +936,7 @@ export class HostCore {
   private async disposeRuntime(id:string){const r=this.runtimes.get(id);if(!r)return;r.stopping=true;if(r.timer)clearTimeout(r.timer);this.cancelResume(r);if(r.pty)await r.stopPty?.();r.disposed=true;await r.engine.dispose();this.runtimes.delete(id);}
   private async removeTerminal(info:TerminalInfo){this.agentSessions.delete(info.id);await this.disposeRuntime(info.id);for(const c of this.clients.values())c.attached.delete(info.id);const group=this.group(info.groupId);group.layout=removeLeaf(group.layout,info.id);group.revision++;this.terminals=this.terminals.filter(t=>t.id!==info.id);this.archivedFrames.delete(info.id);this.archivedSequences.delete(info.id);this.store.clearSnapshot(info.id);}
   async close():Promise<void>{
-    if(this.closing)return;this.closing=true;if(this.leaseTimer)clearInterval(this.leaseTimer);await this.queue;await Promise.allSettled([...this.projectTasks.values()]);await this.queue;
+    if(this.closing)return;this.closing=true;if(this.leaseTimer)clearInterval(this.leaseTimer);await this.uploads.close();await this.queue;await Promise.allSettled([...this.projectTasks.values()]);await this.queue;
     for(const info of this.terminals)if(info.status==='running')info.resumeOnBoot=true;
     this.persist();
     for(const info of this.terminals){const runtime=this.runtimes.get(info.id);if(runtime){try{await this.stopTerminal(info,true);}catch{}await this.disposeRuntime(info.id);}}
