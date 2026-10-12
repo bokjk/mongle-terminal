@@ -86,7 +86,7 @@ export class HostCore {
       this.repositories = saved.repositories || [];
       this.worktrees = (saved.worktrees || []).map(item=>item.status==='removing'?{...item,status:'missing',reason:'삭제 결과를 확인하려면 목록을 새로고침해 주세요.'}:item);
       this.worktreeOperations = (saved.worktreeOperations || []).map(item=>item.status==='pending'||item.status==='running'?{...item,status:'attention',message:'호스트가 재시작되었습니다. 목록을 새로고침해 작업 결과를 확인해 주세요.'}:item);
-      this.terminals = saved.terminals.map(({controller, pid, agentStatus, agentProvider, agentNotificationCount, ...info}) => ({...info, status: info.status === 'running' ? 'interrupted' : info.status, resumeOnBoot: info.status === 'running' || info.resumeOnBoot === true || legacyResume.has(info.id), historyAvailable: Boolean(this.settings.recordHistory && this.store.getSnapshot(info.id, info.generation))}));
+      this.terminals = saved.terminals.map(({controller, pid, agentStatus, agentProvider, agentNotificationCount, codexHooksReview, ...info}) => ({...info, status: info.status === 'running' ? 'interrupted' : info.status, resumeOnBoot: info.status === 'running' || info.resumeOnBoot === true || legacyResume.has(info.id), historyAvailable: Boolean(this.settings.recordHistory && this.store.getSnapshot(info.id, info.generation))}));
       // Only an exact, validated conversation bound to the saved generation of a
       // terminal that will be restored survives; anything else is dropped.
       for (const [id, record] of Object.entries(saved.agentSessions || {})) {
@@ -689,7 +689,7 @@ export class HostCore {
     const runtime={} as Runtime;
     Object.assign(runtime,{info,seq:0,epoch:0,checkpointAt:0,disposed:false,pendingBytes:0});
     info.notificationCount=0;
-    delete info.agentStatus; delete info.agentProvider; delete info.agentNotificationCount;
+    delete info.agentStatus; delete info.agentProvider; delete info.agentNotificationCount; delete info.codexHooksReview;
     // Every non-WSL shell gets a per-shell secret: its prompt marker authenticates
     // "back at the shell" for status and agent resume, independent of Claude setup.
     const agentToken = profile.kind !== 'wsl' ? randomBytes(32).toString('hex') : undefined;
@@ -701,6 +701,7 @@ export class HostCore {
       onNotification:count=>{info.notificationCount=count;runtime.notificationChanged=true;},
       agentToken,
       onAgentStatus:(status,count,provider='claude')=>{info.agentStatus=status;info.agentProvider=provider;if(count!==undefined)info.agentNotificationCount=count;runtime.notificationChanged=true;},
+      onCodexHooksReview:visible=>{if(visible)info.codexHooksReview=true;else delete info.codexHooksReview;runtime.notificationChanged=true;},
       onAgentSession:session=>{if(current())this.recordAgentSession(info,session);},
       // The first prompt after a restore types the resume line and keeps the intent until
       // the CLI reports itself or exits; any other prompt means no agent is running.
@@ -729,7 +730,7 @@ export class HostCore {
     });
     runtime.pty.onExit(({exitCode})=>{
       if(runtime.disposed || this.runtimes.get(info.id)!==runtime)return;
-      info.status='exited';info.exitCode=exitCode;delete info.pid;delete info.agentStatus;delete info.agentProvider;delete info.agentNotificationCount;runtime.pty=undefined;this.revoke(runtime);this.cancelResume(runtime);
+      info.status='exited';info.exitCode=exitCode;delete info.pid;delete info.agentStatus;delete info.agentProvider;delete info.agentNotificationCount;delete info.codexHooksReview;runtime.pty=undefined;this.revoke(runtime);this.cancelResume(runtime);
       // A shell that ended by itself has no conversation to reopen. Shutdown keeps the saved one.
       if(!this.closing && !this.shutdownPrepared){info.resumeOnBoot=false;this.agentSessions.delete(info.id);}
       this.persist();this.broadcastState();

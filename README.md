@@ -62,7 +62,7 @@ PowerShell·명령 프롬프트와 설치된 Git Bash·WSL을 사용합니다. C
 
 **0.3.16 수정:** 여러 줄 붙여넣기 확인창에서 Enter로 승인할 수 있도록 붙여넣기 버튼에 처음 포커스를 줍니다. Git Bash에서 파일 탐색기가 현재 Windows 폴더를 정확히 읽도록 경로 보고를 수정했습니다. [제보 수정·검증 범위](docs/validation/pdf-bug-report.md)
 
-Codex 등 다른 CLI가 보낸 알림도 목록·탭·그룹·모바일 전환 목록에 표시합니다. 읽음 처리는 기기별로 저장되며, Claude·Codex 연동 밖의 CLI는 해당 프로그램의 알림 설정을 따릅니다. **Codex 작업 상태(0.3.21):** PowerShell에서 `codex`로 시작한 Codex도 작업 중·확인 요청·응답 완료를 Claude처럼 표시합니다. Codex CLI 0.162.0 이상에서, 업데이트 뒤 Codex의 `/hooks`에서 새 몽글터미널 훅을 신뢰하면 동작합니다. [알림 사용법](docs/USER-GUIDE.md#작업-알림--0316) · [Codex 작업 상태](docs/USER-GUIDE.md#codex-작업-상태--0321)
+Codex 등 다른 CLI가 보낸 알림도 목록·탭·그룹·모바일 전환 목록에 표시합니다. 읽음 처리는 기기별로 저장되며, Claude·Codex 연동 밖의 CLI는 해당 프로그램의 알림 설정을 따릅니다. **Codex 작업 상태(0.3.21):** PowerShell에서 `codex`로 시작한 Codex도 작업 중·확인 요청·응답 완료를 Claude처럼 표시합니다. **다음 버전(미배포):** 확인 요청은 Codex가 사람에게 승인 창을 띄울 때만 표시하고, 자동 검토(auto-review)가 처리하는 승인은 표시하거나 알리지 않습니다. 여러 작업을 동시에 실행할 때 확인 요청이 일찍 사라지던 문제도 고쳤고, Codex가 훅 확인 창(`Hooks need review`)을 띄우면 그 터미널 아래에 한국어 안내를 보여 줍니다. Codex CLI 0.162.0 이상에서, 업데이트 뒤 Codex를 처음 켤 때 뜨는 `Hooks need review` 창에서 `2. Trust all and continue`를 고르면 동작합니다. 창을 건너뛰었다면 Codex의 `/hooks`에서 몽글터미널 훅을 신뢰합니다. [알림 사용법](docs/USER-GUIDE.md#작업-알림--0316) · [Codex 작업 상태](docs/USER-GUIDE.md#codex-작업-상태--0321)
 
 **휴대폰 알림(0.3.21):** 휴대폰에서 **설정 → 원격 연결 → 이 기기로 알림 받기**를 켜면, PC 앞에 없을 때(잠금 또는 5분 동안 입력 없음) Claude·Codex의 확인 요청과 새 기기 연결 요청을 휴대폰 알림으로 받습니다. 어느 기기에서든 그 PC의 몽글터미널 화면을 보고 있으면 보내지 않고, 알림에는 이름만 담습니다. [사용법](docs/USER-GUIDE.md#휴대폰-알림--0321) · [보안과 검증](docs/validation/phone-notifications.md)
 

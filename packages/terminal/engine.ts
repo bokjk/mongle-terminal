@@ -2,7 +2,7 @@ import Headless from '@xterm/headless';
 import type { Terminal } from '@xterm/headless';
 import { SerializeAddon } from '@xterm/addon-serialize';
 import { reportedDirectory } from '../shell-profiles/integration.js';
-import { ClaudeTaskState, CodexTaskState, type AgentProvider, type AgentStatusUpdate, type CodexAgentEvent } from './agent-status.js';
+import { ClaudeTaskState, CodexTaskState, type AgentProvider, type AgentStatusUpdate, type CodexAgentEvent, type CodexScreen } from './agent-status.js';
 import { clearScrollback, isPresentationPending, presentationExtras } from './pinned-xterm.js';
 import { assertGeometry, PRESENTATION_VERSION } from './types.js';
 import type { PresentationSnapshot, TerminalEngineOptions, TerminalModes } from './types.js';
@@ -25,6 +25,9 @@ export class TerminalEngine {
   private win32InputMode = false;
   private observeAgentInput: (data:string)=>boolean = ()=>false;
   private acceptCodex: (event:CodexAgentEvent)=>boolean = ()=>false;
+  /** Runs inside the queue after each parsed output batch. */
+  private afterOutput: ()=>unknown = ()=>undefined;
+  private stopCodexWait: ()=>void = ()=>{};
 
   constructor(options: TerminalEngineOptions) {
     assertGeometry(options.cols, options.rows);
@@ -98,20 +101,62 @@ export class TerminalEngine {
       options.onAgentStatus?.(update.status, notified ? this.notificationCount : undefined, provider);
       return true;
     };
+    const live = () => !this.closing && !this.restoringHistory && options.notificationsEnabled?.() !== false;
+    // Codex reports a permission request before it decides whether the user or its automatic review
+    // answers it. The screen tells which (CodexTaskState.observeScreen), or the wait ends.
+    let codexWait: ReturnType<typeof setTimeout> | undefined;
+    const waitForCodexPrompt = () => {
+      if (codexWait) clearTimeout(codexWait);
+      codexWait = undefined;
+      const wait = this.closing ? undefined : codex.promptWait();
+      if (wait === undefined) return;
+      codexWait = setTimeout(() => {
+        codexWait = undefined;
+        this.enqueue(() => { if (live()) report(codex.showOverdue(), 'codex'); waitForCodexPrompt(); }).catch(() => {});
+      }, wait);
+      codexWait.unref?.();
+    };
+    const readCodexScreen = (drawnSince: boolean) => {
+      if (!codex.awaitingPrompt || !live()) return false;
+      const screen = codexScreen(this.terminal);
+      // Until Codex draws again, the review status on screen may belong to an earlier request.
+      const changed = report(codex.observeScreen(drawnSince ? screen : {...screen, review:false}), 'codex');
+      waitForCodexPrompt();
+      return changed;
+    };
+    // Codex asks in English whether to trust new or changed hooks; the app explains the question.
+    let hooksReview = false;
+    const readHooksReview = () => {
+      if (this.closing || this.restoringHistory) return;
+      const visible = this.terminal.buffer.active.type === 'alternate' && CODEX_HOOKS_REVIEW.test(screenText(this.terminal));
+      if (visible === hooksReview) return;
+      hooksReview = visible;
+      options.onCodexHooksReview?.(visible);
+    };
+    this.afterOutput = () => { readCodexScreen(true); readHooksReview(); };
+    this.stopCodexWait = () => { if (codexWait) clearTimeout(codexWait); codexWait = undefined; };
     this.observeAgentInput = data => {
       if(this.closing || options.notificationsEnabled?.() === false)return false;
       // A key never notifies; each CLI's state decides what it means for that CLI.
       let changed = false;
       for (const [update, provider] of [[agent.observeInput(data), 'claude'], [codex.observeInput(data), 'codex']] as const)
         if (update) { options.onAgentStatus?.(update.status, undefined, provider); changed = true; }
+      waitForCodexPrompt();
       return changed;
     };
-    this.acceptCodex = event => !this.closing && !this.restoringHistory && options.notificationsEnabled?.() !== false && report(codex.accept(event), 'codex');
+    this.acceptCodex = event => {
+      if (!live()) return false;
+      const changed = report(codex.accept(event), 'codex');
+      // Codex may have drawn its prompt before the report arrived.
+      const shown = readCodexScreen(false);
+      waitForCodexPrompt();
+      return changed || shown;
+    };
     this.terminal.parser.registerOscHandler(777, data => {
       if (!this.closing && !this.restoringHistory && options.notificationsEnabled?.() !== false) {
         report(agent.accept(data), 'claude');
         // Back at the authenticated shell prompt: no Codex of this shell runs any more either.
-        if (options.agentToken && data === 'mongle-shell;' + options.agentToken) report(codex.reset(), 'codex');
+        if (options.agentToken && data === 'mongle-shell;' + options.agentToken) { report(codex.reset(), 'codex'); waitForCodexPrompt(); }
       }
       // rxvt-compatible notification. Payload is never retained or executed.
       if (data.startsWith('notify;')) {
@@ -159,7 +204,7 @@ export class TerminalEngine {
       for (let index = 0; index < batch.length; index += 1) {
         this.terminal.write(batch[index], () => {
           this.revision += 1;
-          if (index === batch.length - 1) resolve();
+          if (index === batch.length - 1) { try { this.afterOutput(); } finally { resolve(); } }
         });
       }
     }));
@@ -285,6 +330,7 @@ export class TerminalEngine {
   dispose(): Promise<void> {
     if (this.closing) return this.tail.then(() => undefined);
     this.closing = true;
+    this.stopCodexWait();
     this.pendingWrites = undefined;
     this.tail = this.tail.then(() => this.terminal.dispose());
     return this.tail.then(() => undefined);
@@ -313,6 +359,32 @@ export class TerminalEngine {
     // Clipboard escape sequences must never become browser clipboard actions.
     this.terminal.parser.registerOscHandler(52, () => true);
   }
+}
+
+/** Titles and footer of Codex's approval prompt (codex-rs/tui approval_overlay.rs). */
+const CODEX_PROMPT = /Would you like to (?:run the following command|make the following edits|grant these permissions|send input to)|Do you want to approve network access|needs your approval\.|Press \S+ to confirm or \S+ to cancel/;
+/** Codex's status while its automatic approval review decides a request. */
+const CODEX_REVIEW = /Reviewing approval request/;
+/** Codex's startup question whether to trust new or changed hooks (codex-rs/tui startup_hooks_review.rs). */
+const CODEX_HOOKS_REVIEW = /Hooks need review.*Trust all and continue/;
+/**
+ * The visible screen as one line of text. Rows a program wrapped itself are joined with a space and rows
+ * the terminal wrapped as they are, so a title is found at any width.
+ */
+function screenText(terminal: Terminal): string {
+  const buffer = terminal.buffer.active;
+  let text = '';
+  for (let y = buffer.baseY; y < buffer.baseY + terminal.rows; y += 1) {
+    const line = buffer.getLine(y);
+    if (!line) continue;
+    const wraps = buffer.getLine(y + 1)?.isWrapped === true;
+    text += line.translateToString(!wraps) + (wraps ? '' : ' ');
+  }
+  return text.replace(/\s+/g, ' ');
+}
+function codexScreen(terminal: Terminal): CodexScreen {
+  const text = screenText(terminal);
+  return {prompt:CODEX_PROMPT.test(text), review:CODEX_REVIEW.test(text)};
 }
 
 /** Read cells through public APIs; only our own CRLF can become control input. */
