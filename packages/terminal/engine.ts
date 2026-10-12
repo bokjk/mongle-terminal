@@ -366,7 +366,7 @@ const CODEX_PROMPT = /Would you like to (?:run the following command|make the fo
 /** Codex's status while its automatic approval review decides a request. */
 const CODEX_REVIEW = /Reviewing approval request/;
 /** Codex's startup question whether to trust new or changed hooks (codex-rs/tui startup_hooks_review.rs). */
-const CODEX_HOOKS_REVIEW = /Hooks need review .*Trust all and continue/;
+const CODEX_HOOKS_REVIEW = /Hooks need review.*Trust all and continue/;
 /**
  * The visible screen as one line of text. Rows a program wrapped itself are joined with a space and rows
  * the terminal wrapped as they are, so a title is found at any width.
