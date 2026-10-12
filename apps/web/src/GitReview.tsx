@@ -51,11 +51,15 @@ export function GitReview({ review, mode, reference, request, active, focus, onM
   const views = useRef(new Map<string, EditorView>());
   const pending = useRef<{ path: string; chunk: number } | undefined>(undefined);
   const visible = useRef(new Set<string>());
-  const queue = useRef<{ keys: string[]; running: boolean; generation: number }>({ keys: [], running: false, generation: 0 });
+  // Each queue owns an AbortController, so a closed tab or a new base cancels its reads.
+  const queue = useRef<{ keys: string[]; running: boolean; generation: number; abort: AbortController }>({ keys: [], running: false, generation: 0, abort: new AbortController() });
   const live = useRef({ files, base, reference, request }); live.current = { files, base, reference, request };
 
   // A different base or folder invalidates every loaded comparison.
-  useEffect(() => { queue.current = { keys: [], running: false, generation: queue.current.generation + 1 }; setContents(new Map()); setSeen(new Set()); }, [base, reference.root, reference.hostId]);
+  const restart = () => { queue.current.abort.abort(); queue.current = { keys: [], running: false, generation: queue.current.generation + 1, abort: new AbortController() }; };
+  useEffect(() => { restart(); setContents(new Map()); setSeen(new Set()); }, [base, reference.root, reference.hostId]);
+  // Unmounting (closed tab, hidden editor) drops queued reads and cancels the waiting ones.
+  useEffect(() => () => restart(), []);
   function want(keys: string[], front = false) {
     const q = queue.current;
     for (const key of keys) { const at = q.keys.indexOf(key); if (at >= 0) q.keys.splice(at, 1); if (front) q.keys.unshift(key); else q.keys.push(key); }
@@ -69,7 +73,7 @@ export function GitReview({ review, mode, reference, request, active, focus, onM
         const key = q.keys.shift()!, file = live.current.files.find(item => contentKey(live.current.base, item) === key);
         if (!file) continue;
         try {
-          const diff = await live.current.request<GitDiff>('git.diff', { ...live.current.reference, path: file.path, ...(file.originalPath ? { originalPath: file.originalPath } : {}), base: live.current.base, target: 'WORKTREE' });
+          const diff = await live.current.request<GitDiff>('git.diff', { ...live.current.reference, path: file.path, ...(file.originalPath ? { originalPath: file.originalPath } : {}), base: live.current.base, target: 'WORKTREE' }, q.abort.signal);
           if (queue.current !== q) return;
           setContents(map => { const previous = map.get(key); if (previous?.diff && JSON.stringify(previous.diff) === JSON.stringify(diff)) return map; const next = new Map(map); next.set(key, count(diff)); return next; });
         } catch (error) {
