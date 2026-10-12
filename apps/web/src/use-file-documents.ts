@@ -19,9 +19,8 @@ export type OpenDocument = {
   diff?: DiffDocument;
   review?: ReviewDocument;
 };
-const normalize = (value: string) => value.replaceAll('\\', '/').replace(/\/+$/, '').toLowerCase();
-/** Git reports one exact spelling per path; Foo.ts and foo.ts are two files on a case-sensitive host. */
-const exact = (value: string) => value.replaceAll('\\', '/').replace(/\/+$/, '');
+/** Windows paths (drive letter or UNC) ignore case; a POSIX host may hold /work/Foo and /work/foo side by side. */
+const normalize = (value: string) => { const slashes = value.replaceAll('\\', '/').replace(/\/+$/, ''); return /^(?:[A-Za-z]:|\/\/)/.test(slashes) ? slashes.toLowerCase() : slashes; };
 export const isMarkdown = (path: string) => /\.(md|markdown|mdown)$/i.test(path);
 export const isPdf = (path: string) => /\.pdf$/i.test(path);
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : '파일 작업을 완료하지 못했습니다.';
@@ -143,7 +142,7 @@ export function useFileDocuments(client: Transport, state: HostState | undefined
     await load(key);
   }
   async function openDiff(reference: FileReference, path: string, base: GitDiffBase, target: GitDiffTarget, originalPath?: string) {
-    const key = `${reference.hostId}:diff:${base}:${target}:${normalize(reference.root)}/${exact(path)}`;
+    const key = `${reference.hostId}:diff:${base}:${target}:${normalize(reference.root + '/' + path)}`;
     setActiveKey(key); setVisible(true);
     const existing = current.current.find(doc => doc.key === key);
     if (existing) {

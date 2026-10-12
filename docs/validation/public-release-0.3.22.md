@@ -10,7 +10,7 @@
 
 ## 개발 단계 근거
 
-Git 변경 보기는 실제 Git 호스트 시험 10/10과 HostCore·cmd·Chrome 화면 시험 2/2를, Codex 정리는 [Codex 상태 기록](codex-status.md#동시-실행과-자동-검토)의 시험과 아스트라 실제 확인을 따른다. 두 브랜치를 합친 상태에서 타입 검사·빌드와 관련 시험 34/34를 통과했다. Git 변경 보기는 실제 Electron 앱·패키지에서 아직 조작하지 않았다.
+Git 변경 보기는 실제 Git 호스트 시험(`git-diff` 10개 중 이 PC 7 통과·3 건너뜀, 건너뛴 링크 시험은 GitHub Windows CI·POSIX 시험은 WSL Ubuntu에서 확인, 기존 Git 6/6)과 HostCore·cmd·Chrome 화면 시험 2/2를, Codex 정리는 [Codex 상태 기록](codex-status.md#동시-실행과-자동-검토)의 시험과 아스트라 실제 확인을 따른다. 두 브랜치를 합친 상태에서 타입 검사·빌드와 관련 시험 34/34를 통과했다. Git 변경 보기는 실제 Electron 앱·패키지에서 조작하지 않았고(저장소 규칙상 아스트라 모델 담당) Mobbin 사례도 확인하지 못했다. 독립 코드 검토는 GitHub Codex 자동 검토를 아홉 번 돌렸다. [Git 변경 보기 검증](git-diff.md#pr-74-검토-반영)
 
 ## 배포 안내에 넣을 내용
 
