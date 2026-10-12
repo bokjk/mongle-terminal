@@ -77,6 +77,7 @@ test('Git review shows every branch change on one page, moves by file and change
     await expect(section('src/long.ts').locator('.cm-collapsedLines').first()).toContainText('바뀌지 않은 줄');
     await expect(section('committed.txt').locator('.cm-content')).toContainText('committed on the branch');
     await expect(section('deleted.txt').locator('.cm-deletedChunk')).toContainText('delete me');
+    await expect(section('deleted.txt').locator('.review-count')).toHaveText('+0 −1'); await expect(section('새 파일.txt').locator('.review-count')).toHaveText('+2 −0');
     await expect(section('새 이름.txt').locator('.review-path')).toContainText('이전 이름.txt → 새 이름.txt');
     await expect(section('image.bin').locator('.review-message')).toContainText('바이너리');
     await expect(section('새 파일.txt').locator('.cm-content')).toContainText('안녕하세요');

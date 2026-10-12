@@ -305,6 +305,8 @@ export class CodexTaskState {
   private requests: CodexRequest[] = [];
   /** No key reached the shown approval since it appeared, so its preselected answer holds. */
   private untouched = false;
+  /** When the last shown request was answered: the next one gets the full wait from then. */
+  private freedAt = 0;
   private paste = {active:false};
   constructor(private readonly now: () => number = Date.now) {}
   private move(next: AgentStatus, finishedTurn = false): AgentStatusUpdate | undefined {
@@ -325,10 +327,12 @@ export class CodexTaskState {
   reset(): AgentStatusUpdate | undefined { this.turn = ''; this.clear(); return this.move('idle'); }
   /** A permission request waits for the screen to tell whether the user or Codex's review answers it. */
   get awaitingPrompt(): boolean { return this.requests.some(request => !request.shown); }
-  /** Milliseconds until the oldest unshown request is shown anyway, or undefined when none waits. */
+  private due(request: CodexRequest) { return Math.max(request.since, this.freedAt) + CODEX_PROMPT_WAIT_MS; }
+  /** Milliseconds until the oldest unshown request is shown anyway, or undefined when none waits.
+   * Codex shows one approval at a time, so nothing times out while another request is shown. */
   promptWait(): number | undefined {
     const waiting = this.requests.find(request => !request.shown);
-    return waiting ? Math.max(0, waiting.since + CODEX_PROMPT_WAIT_MS - this.now()) : undefined;
+    return waiting && !this.anyShown() ? Math.max(0, this.due(waiting) - this.now()) : undefined;
   }
 
   accept(event: CodexAgentEvent): AgentStatusUpdate | undefined {
@@ -355,7 +359,7 @@ export class CodexTaskState {
         // script) answers the oldest request of its thread as before. The thread goes on, also after a
         // key here lowered the status.
         const index = this.requests.findIndex(waiting => waiting.thread === thread && (!tool || !waiting.tool || waiting.tool === tool));
-        if (index >= 0) this.requests.splice(index, 1);
+        if (index >= 0 && this.requests.splice(index, 1)[0].shown) this.freedAt = this.now();
         if (this.anyShown()) return this.move('attention');
         this.untouched = false;
         return this.move('working');
@@ -383,7 +387,7 @@ export class CodexTaskState {
   /** Neither Codex's prompt nor its review was recognized in time: show the request as Codex asks. */
   showOverdue(): AgentStatusUpdate | undefined {
     const waiting = this.requests.find(request => !request.shown);
-    if (!waiting || waiting.since + CODEX_PROMPT_WAIT_MS > this.now()) return;
+    if (!waiting || this.anyShown() || this.due(waiting) > this.now()) return;
     return this.show(waiting);
   }
 
@@ -409,6 +413,7 @@ export class CodexTaskState {
     this.untouched = false;
     const index = this.requests.findIndex(request => request.shown);
     const answered = index >= 0 ? this.requests.splice(index, 1)[0] : undefined;
+    if (answered) this.freedAt = this.now();
     // Another shown request comes next, with a selection nobody knows.
     if (this.anyShown()) return;
     return this.move(preselected && answered?.kind === 'permission' ? 'working' : 'idle');

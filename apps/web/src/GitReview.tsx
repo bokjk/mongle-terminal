@@ -7,7 +7,7 @@ import { ChevronDown, ChevronRight, ChevronUp, FileText, GitCompareArrows, FoldV
 import type { GitDiff, GitReview as Review, GitReviewFile, GitReviewMode } from '../../../packages/protocol/index';
 import { editorThemeSpec, highlighting, language } from './CodeEditor';
 import { GitMarker, type GitKind } from './GitChanges';
-import { lineEndingsOnly, preferredCollapse, rememberCollapse } from './diff-layout';
+import { countLines, lineEndingsOnly, preferredCollapse, rememberCollapse } from './diff-layout';
 
 type Request = <T>(method: string, params: unknown, signal?: AbortSignal) => Promise<T>;
 type Reference = { id: string; hostId: string; bootId: string; generation: string; root: string };
@@ -20,6 +20,7 @@ const PRELOAD = 150;
 
 function count(diff: GitDiff): Content {
   if (diff.unavailable) return { diff, added: 0, removed: 0, chunks: 0 };
+  if (diff.original === null || diff.modified === null) { const added = countLines(diff.modified), removed = countLines(diff.original); return { diff, added, removed, chunks: added || removed ? 1 : 0 }; }
   const a = Text.of((diff.original ?? '').split(/\r\n?|\n/)), b = Text.of((diff.modified ?? '').split(/\r\n?|\n/));
   let added = 0, removed = 0;
   const chunks = diff.original === null ? (diff.modified ? [new Chunk([], 0, 0, 0, b.length)] : []) : diff.modified === null ? (diff.original ? [new Chunk([], 0, a.length, 0, 0)] : []) : Chunk.build(a, b);

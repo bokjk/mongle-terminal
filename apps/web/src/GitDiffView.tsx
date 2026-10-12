@@ -7,7 +7,7 @@ import { getChunks, goToNextChunk, goToPreviousChunk, MergeView, unifiedMergeVie
 import { ChevronDown, ChevronUp, Columns2, FoldVertical, Rows2 } from 'lucide-react';
 import type { GitDiff } from '../../../packages/protocol/index';
 import { editorThemeSpec, highlighting, language } from './CodeEditor';
-import { lineEndingsOnly, rememberLayout, sideName, type DiffLayout } from './diff-layout';
+import { countLines, lineEndingsOnly, rememberLayout, sideName, type DiffLayout } from './diff-layout';
 
 const lineEnding = (text: string | null) => !text ? '' : text.includes('\r\n') ? 'CRLF' : 'LF';
 const phrases = EditorState.phrases.of({ '$ unchanged lines': '바뀌지 않은 줄 $개' });
@@ -83,7 +83,9 @@ export function GitDiffView({ path, diff, layout, collapse, active, onLayout, on
       destroy = () => view.destroy();
     }
     const first = chunks[0], view = navigation.current;
-    setPosition({ current: first ? 1 : 0, total: chunks.length, ...summarize(chunks, a, b) });
+    // A whole added or removed file counts its lines without the empty line after the final break.
+    const counts = diff.original === null || diff.modified === null ? { added: countLines(diff.modified), removed: countLines(diff.original) } : summarize(chunks, a, b);
+    setPosition({ current: first ? 1 : 0, total: chunks.length, ...counts });
     if (first) view.dispatch({ selection: { anchor: first.fromB }, effects: EditorView.scrollIntoView(first.fromB, { y: 'center' }) });
     schedule();
     return () => { cancelAnimationFrame(frame); navigation.current = undefined; destroy(); };

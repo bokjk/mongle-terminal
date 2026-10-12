@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { lstat, open, readFile, readlink, realpath } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import path from 'node:path';
@@ -306,9 +307,21 @@ export async function readGitReview(root: string, dataDir: string, mode: GitRevi
         const match = /^\d+ blob ([0-9a-f]+)\t(.+)$/.exec(record);
         if (match) stored.set(match[2], match[1]);
       }
-      const hashes = (await attempt(['hash-object', '--no-filters', '--', ...part])).split(/\r?\n/);
-      if (hashes.length !== part.length) continue;
-      part.forEach((file, index) => { if (stored.get(path.relative(listing.repositoryRoot, path.resolve(base, file)).split(path.sep).join('/')) === hashes[index]) unchanged.add(file); });
+      const repositoryPath = (file: string) => path.relative(listing.repositoryRoot, path.resolve(base, file)).split(path.sep).join('/');
+      // A symbolic link is stored as its target text; hash-object would hash the file it points to.
+      const actual = new Map<string, string>(), regular: string[] = [];
+      for (const file of part) {
+        const target = path.resolve(base, file);
+        const link = await lstat(target).then(info => info.isSymbolicLink() ? readlink(target) : undefined, () => undefined);
+        const want = stored.get(repositoryPath(file));
+        if (link === undefined) { regular.push(file); continue; }
+        if (!want) continue;
+        const value = Buffer.from(link.split(path.sep).join('/'));
+        actual.set(file, createHash(want.length === 64 ? 'sha256' : 'sha1').update('blob ' + value.length + '\0').update(value).digest('hex'));
+      }
+      const hashes = regular.length ? (await attempt(['hash-object', '--no-filters', '--', ...regular])).split(/\r?\n/) : [];
+      if (hashes.length === regular.length) regular.forEach((file, index) => actual.set(file, hashes[index]));
+      for (const file of part) if (actual.has(file) && stored.get(repositoryPath(file)) === actual.get(file)) unchanged.add(file);
     }
     for (const file of recheck) if (!unchanged.has(file)) files.push({ path: file, status: 'modified' });
     files.sort((a, b) => a.path.localeCompare(b.path, 'en'));

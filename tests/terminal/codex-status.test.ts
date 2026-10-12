@@ -160,6 +160,24 @@ test('a prompt still on screen never shows the next request, so its automatic re
   assert.equal(state.accept(turn('PostToolUse', T1, {tool:RUN})), undefined, 'the approved tool finishes while work goes on');
 });
 
+test('a request behind a shown approval does not time out; it waits from the moment the first is answered', () => {
+  // PR #74 review: the wait must not show a second request while the first approval is open.
+  let now = 1_000;
+  const state = new CodexTaskState(() => now);
+  state.accept(turn('UserPromptSubmit'));
+  ask(state, turn('PermissionRequest', T1, {tool:RUN}));
+  state.accept(turn('PermissionRequest', T1, {tool:READ}));
+  assert.equal(state.promptWait(), undefined, 'no timer while the first is shown');
+  now += CODEX_PROMPT_WAIT_MS * 3;
+  assert.equal(state.showOverdue(), undefined);
+  assert.deepEqual(state.observeInput('\r'), {status:'working', notify:false}, 'the first is answered');
+  assert.equal(state.promptWait(), CODEX_PROMPT_WAIT_MS, 'the second gets the full wait from now');
+  assert.equal(state.observeScreen(REVIEW), undefined, 'and Codex reviews it itself');
+  assert.equal(state.awaitingPrompt, false);
+  now += CODEX_PROMPT_WAIT_MS;
+  assert.equal(state.showOverdue(), undefined, 'nothing is left to show');
+});
+
 test('only the shapes the managed hook sends are accepted', () => {
   assert.deepEqual(validCodexEvent({event:'SessionStart', source:'resume', token:'x'}), {event:'SessionStart', source:'resume'});
   assert.deepEqual(validCodexEvent({event:'SessionStart', source:'other'}), {event:'SessionStart'});

@@ -18,6 +18,8 @@ export function diffLabel(base: GitDiffBase, target: GitDiffTarget) {
 export function sideName(side: GitDiffBase | GitDiffTarget) {
   return side === 'HEAD' ? 'HEAD · 마지막 커밋' : side === 'INDEX' ? '스테이징' : side === 'WORKTREE' ? '작업 폴더 · 현재 파일' : '기준 커밋 · ' + side.slice(0, 7);
 }
+/** Lines of a whole file; a final line break does not start another line. */
+export function countLines(text: string | null) { return text ? text.split(/\r\n?|\n/).length - (/(?:\r\n?|\n)$/.test(text) ? 1 : 0) : 0; }
 /** Line endings are normalized by the editor, so a CRLF-only change would otherwise look empty. */
 export function lineEndingsOnly(diff: GitDiff) {
   return diff.original !== null && diff.modified !== null && diff.original !== diff.modified && diff.original.replace(/\r\n?/g, '\n') === diff.modified.replace(/\r\n?/g, '\n');

@@ -179,3 +179,22 @@ test('Git diff compares a symbolic link as its target text, as Git stores it', a
   const diff = await readGitDiff(repository, data, { path: 'link', base: 'INDEX', target: 'WORKTREE' });
   assert.deepEqual([diff.original, diff.modified], [null, 'first.txt']);
 });
+
+test('Git review keeps a staged deletion, and a symbolic link restored to the base drops out', async t => {
+  // PR #74 review: a git rm is a path that existed at HEAD; a restored link equals its base blob.
+  const { repository, data } = await fixture(t);
+  await git(repository, 'rm', '-q', '--', 'deleted.txt');
+  const staged = await readGitReview(repository, data, 'head');
+  assert.deepEqual(staged.state === 'repository' && staged.files, [{ path: 'deleted.txt', status: 'deleted' }]);
+  try { await symlink('first.txt', path.join(repository, 'link'), 'file'); }
+  catch (error) { if (['EPERM', 'EACCES'].includes((error as NodeJS.ErrnoException).code || '')) { t.skip('creating a symbolic link needs Developer Mode on this Windows'); return; } throw error; }
+  await writeFile(path.join(repository, 'first.txt'), 'first\n'); await writeFile(path.join(repository, 'second.txt'), 'second\n');
+  await git(repository, '-c', 'core.symlinks=true', 'add', '--', 'link', 'first.txt', 'second.txt'); await git(repository, 'commit', '-qm', 'link');
+  await git(repository, 'update-ref', 'refs/remotes/origin/main', 'HEAD'); await git(repository, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+  await git(repository, 'checkout', '-qb', 'feature');
+  await unlink(path.join(repository, 'link')); await symlink('second.txt', path.join(repository, 'link'), 'file');
+  await git(repository, '-c', 'core.symlinks=true', 'add', '--', 'link'); await git(repository, 'commit', '-qm', 'point elsewhere');
+  await unlink(path.join(repository, 'link')); await symlink('first.txt', path.join(repository, 'link'), 'file');
+  const restored = await readGitReview(repository, data, 'branch');
+  assert.deepEqual(restored.state === 'repository' && restored.files.map(file => file.path), [], 'the link is back at its base target');
+});
