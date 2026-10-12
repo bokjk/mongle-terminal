@@ -1,12 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { link, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { link, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { ATTACHMENT_FOLDER, attachmentName, Uploads, UPLOAD_CHUNK_BYTES, UPLOAD_MAX_BYTES } from '../../packages/host/uploads';
 import type { ConnectionContext, TerminalInfo } from '../../packages/protocol';
 import { HostCore } from '../../packages/host/core';
+import { findPaths, resolveTerminalPath } from '../../apps/web/src/terminal-file-links';
 
 async function fixture(t: test.TestContext, cleanup = true) {
   const root = await mkdtemp(path.join(tmpdir(), 'mongle-upload-'));
@@ -40,13 +41,32 @@ test('a file arrives in order and lands complete under a unique name; mistakes a
   await send(uploads, 'phone', begun.uploadId, bytes);
   await assert.rejects(uploads.chunk('phone', begun.uploadId, bytes.length, Buffer.from('x')), { code: 'UPLOAD_OFFSET' }, 'nothing past the declared size');
   const done = await uploads.finish('phone', begun.uploadId);
+  // The path is spelled from the terminal folder as given, even when that is an 8.3 short name such as RUNNER~1.
   assert.equal(path.dirname(done.path), folder);
+  assert.equal(path.dirname(await realpath(done.path)), await realpath(folder));
+  // Ctrl+click on the typed path finds a link and opens it inside the terminal folder.
+  assert.deepEqual(findPaths(done.path).map(match => match.path), [done.path]);
+  assert.deepEqual(resolveTerminalPath(root, done.path), { ok: true, path: ATTACHMENT_FOLDER + '\\' + done.name });
   assert.match(done.name, /^\d{8}-\d{6}-[0-9a-f]{8}-shot\.png$/);
   assert.deepEqual(await readFile(done.path), bytes);
   assert.deepEqual(await readdir(folder), [done.name], 'no .part file is left');
   await assert.rejects(uploads.finish('phone', begun.uploadId), { code: 'UPLOAD_EXPIRED' });
   await assert.rejects(uploads.begin('phone', root, 'big.bin', UPLOAD_MAX_BYTES + 1), { code: 'UPLOAD_TOO_LARGE' });
   await assert.rejects(uploads.begin('phone', root, 'empty.txt', 0), { code: 'UPLOAD_EMPTY' });
+});
+
+test('a terminal folder re-pointed during an upload gets back the real saved path, never a missing one', async t => {
+  const { root, data } = await fixture(t);
+  const first = path.join(root, 'first'), second = path.join(root, 'second'), alias = path.join(root, 'alias');
+  await mkdir(first); await mkdir(second); await symlink(first, alias, 'junction');
+  const uploads = new Uploads(data); t.after(() => uploads.close());
+  const begun = await uploads.begin('phone', alias, 'shot.png', 3);
+  await unlink(alias); await symlink(second, alias, 'junction');
+  await uploads.chunk('phone', begun.uploadId, 0, Buffer.from('PNG'));
+  const done = await uploads.finish('phone', begun.uploadId);
+  assert.equal(done.path, path.join(await realpath(first), ATTACHMENT_FOLDER, done.name));
+  assert.equal(await readFile(done.path, 'utf8'), 'PNG');
+  assert.deepEqual(await readdir(second), [], 'nothing lands where the alias points now');
 });
 
 test('unfinished uploads are removed on cancel, disconnect and silence, and each connection gets two at a time', async t => {

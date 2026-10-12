@@ -16,6 +16,9 @@ test('terminal output paths are found in Windows, relative and agent forms witho
   assert.deepEqual(paths('console.log(x) v1.2.3 example.com node/v24.1 https://github.com/a/b.md ..\\up\\a.ts'), []);
   // A Unix home or absolute path never becomes a partial Windows link.
   assert.deepEqual(paths('~/notes/a.md /usr/lib/x.so \\\\server\\share\\a.txt'), []);
+  // Windows 8.3 short names (a TEMP folder such as RUNNER~1) are paths too.
+  assert.deepEqual(paths('saved C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\LONGFI~1.PNG'), ['C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\LONGFI~1.PNG']);
+  assert.deepEqual(paths('see MONGLE~1\\a.ts'), ['MONGLE~1\\a.ts']);
 });
 
 test('a path with spaces is one link from its drive or quote, never a misleading tail', () => {

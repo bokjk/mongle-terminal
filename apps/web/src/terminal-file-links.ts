@@ -9,9 +9,11 @@ export interface PathMatch { start: number; end: number; text: string; path: str
 
 const NAME = '\\p{L}\\p{N}\\p{M}_@+\\-';
 const SEP = '[\\\\/]';
+/** A folder or file name; "~" may sit inside it (Windows 8.3 names such as RUNNER~1) but never begin it, so ~/notes stays text. */
+const PART = '[' + NAME + '.][' + NAME + '.~]*';
 const PATH = new RegExp(
   '(?<![' + NAME + '.\\\\/:~])'
-  + '((?:[A-Za-z]:' + SEP + '|\\.' + SEP + ')?(?:[' + NAME + '.]+' + SEP + ')*[' + NAME + '.]*[' + NAME + ']\\.[A-Za-z0-9]{1,10})'
+  + '((?:[A-Za-z]:' + SEP + '|\\.' + SEP + ')?(?:' + PART + SEP + ')*(?:' + PART + ')?[' + NAME + ']\\.[A-Za-z0-9]{1,10})'
   + '(?::(\\d{1,7})(?::(\\d{1,5}))?|\\((\\d{1,7})(?:,(\\d{1,5}))?\\))?'
   + '(?![' + NAME + '\\\\/])',
   'gu',

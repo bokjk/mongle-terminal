@@ -98,7 +98,8 @@ export async function excludeFromGit(base: string, protectedRoot: string, files:
   }
 }
 
-type Upload = { owner: string; directory: string; part: string; name: string; size: number; received: number; handle: FileHandle; busy: boolean; timer: ReturnType<typeof setTimeout> };
+/** shown: the attachment folder spelled from the terminal's own folder, for the path typed back into it. */
+type Upload = { owner: string; directory: string; shown: string; part: string; name: string; size: number; received: number; handle: FileHandle; busy: boolean; timer: ReturnType<typeof setTimeout> };
 /** A begin still resolving folders: it holds its slot, and a disconnect or shutdown meanwhile cancels it. */
 type Starting = { owner: string; cancelled: boolean };
 
@@ -128,7 +129,11 @@ export class Uploads {
       part = path.join(directory, partName);
       handle = await open(part, 'wx', 0o600);
       if (slot.cancelled || this.closed) throw new AppError('UPLOAD_EXPIRED', '연결이 끊겨 파일 보내기를 중단했습니다. 다시 보내 주세요.');
-      const upload: Upload = { owner, directory, part, name, size, received: 0, handle, busy: false, timer: setTimeout(() => void this.discard(uploadId), this.idleMs) };
+      // Checks use the real path; the path typed back keeps the folder as the terminal knows it (an 8.3 name
+      // such as RUNNER~1 or a junction), so it reads like the shell's own paths and opens with Ctrl+click.
+      // Both name the same file: the attachment folder was just checked to be a real folder inside base.
+      const shown = path.join(path.resolve(root), ATTACHMENT_FOLDER);
+      const upload: Upload = { owner, directory, shown, part, name, size, received: 0, handle, busy: false, timer: setTimeout(() => void this.discard(uploadId), this.idleMs) };
       this.uploads.set(uploadId, upload);
       return { uploadId, chunkBytes: UPLOAD_CHUNK_BYTES, name: upload.name };
     } catch (error) {
@@ -161,7 +166,10 @@ export class Uploads {
       if (await stat(target).then(() => true, () => false)) throw new AppError('UPLOAD_EXISTS', '같은 이름의 파일이 있습니다. 다시 보내 주세요.');
       await rename(upload.part, target);
     } catch (error) { await unlink(upload.part).catch(() => {}); throw error; }
-    return { path: target, name: upload.name };
+    // The terminal's spelling names the saved file unless its folder was re-pointed meanwhile; then the real path is the truth.
+    const shown = path.join(upload.shown, upload.name);
+    const same = await Promise.all([realpath(shown), realpath(target)]).then(([alias, real]) => alias === real, () => false);
+    return { path: same ? shown : target, name: upload.name };
   }
 
   async cancel(owner: string, uploadId: string): Promise<void> { this.own(owner, uploadId); await this.discard(uploadId); }
