@@ -142,6 +142,8 @@ Codex 등 다른 CLI가 보낸 알림도 목록·탭·그룹·모바일 전환 �
 
 **파일 탐색기**는 마지막으로 선택한 터미널의 현재 폴더를 따라갑니다. **파일 / Git**을 전환하면 폴더 트리와 변경 목록을 확인할 수 있습니다. 원격 터미널에서는 해당 PC의 파일을 보여 줍니다.
 
+**파일 첨부(미배포):** 휴대폰에서 터미널 `···` → **파일 첨부…**로 사진을 고르면 그 터미널의 PC 작업 폴더(`.mongle-attachments`)에 저장하고 경로를 입력 줄에 넣습니다. PC에서는 클립보드의 화면 캡처를 `Ctrl+V`로 보냅니다. Enter는 보내지 않습니다. [사용법](docs/USER-GUIDE.md#파일-첨부--미배포)
+
 <table><tr>
 <td align="center"><img src="docs/assets/git-files.png" width="260" alt="파일 트리의 Git 상태 색·문자와 폴더 변경 표시" /><br /><sub>파일 트리와 변경 상태</sub></td>
 <td align="center"><img src="docs/assets/git-changes.png" width="260" alt="스테이징됨·작업 폴더 변경·새 파일을 구분한 Git 목록" /><br /><sub>상태별 Git 변경 목록</sub></td>

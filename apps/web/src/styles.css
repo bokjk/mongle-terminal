@@ -418,6 +418,7 @@ button.pane-title { background: transparent; border: 0; text-align: left; paddin
 .connection-banner.codex-hooks-notice { justify-content: flex-start; align-items: flex-start; color: var(--text); line-height: 1.5; border-color: color-mix(in srgb, var(--accent) 28%, var(--border)); background: var(--accent-dim); }
 .codex-hooks-notice > svg { flex: 0 0 auto; margin-top: 1px; color: var(--accent-strong); }
 .codex-hooks-notice strong { font-weight: 600; }
+.upload-banner > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .command-menu { position: relative; }
 .command-menu > summary { list-style: none; cursor: pointer; }
 .command-menu > summary::-webkit-details-marker { display: none; }
