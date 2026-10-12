@@ -67,7 +67,7 @@ export function GitChanges({ listing, error, selected, diff, onFile, onReview, o
       {untracked.length > 0 && <ChangeGroup name="새 파일" group="untracked" changes={untracked} selected={selected} onFile={onFile}/>}
     </>}
     {listing.truncated && <p className="file-message">변경이 많아 처음 1,000개만 표시합니다. 더 작은 폴더에서 확인해 주세요.</p>}
-    <p className="git-footnote">현재 폴더 기준 · 읽기 전용<br/>{diff ? '파일을 누르면 변경 검토에서 그 파일로 이동합니다.' : '파일을 누르면 작업 폴더의 현재 내용을 봅니다.'}</p>
+    <p className="git-footnote">현재 폴더 기준 · 읽기 전용<br/>{diff ? '파일을 누르면 그 파일의 바뀐 내용을 비교합니다.' : '파일을 누르면 작업 폴더의 현재 내용을 봅니다.'}</p>
   </>;
 }
 

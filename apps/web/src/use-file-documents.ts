@@ -158,6 +158,16 @@ export function useFileDocuments(client: Transport, state: HostState | undefined
     update(docs => [...docs, { key, name: '변경 검토', path: '', reference, text: '', baseline: '', busy: false, saving: false, mode: 'edit', loadId: 0, editorSession: {}, review: { mode: preferredReviewMode(), ...(focus ? { focus } : {}) } }]);
     await load(key);
   }
+  /** A Git row opens that one file against the review's base, like a file diff tab in Orca or VS Code. */
+  async function openChangeDiff(reference: FileReference, path: string) {
+    setVisible(true);
+    let base: GitDiffBase = 'HEAD', originalPath: string | undefined;
+    try {
+      const review = await client.request<GitReview>('git.review', { ...reference, mode: preferredReviewMode() });
+      if (review.state === 'repository') { base = review.base; originalPath = review.files.find(file => file.path === path)?.originalPath; }
+    } catch { /* The HEAD comparison still opens; the tab reports read errors itself. */ }
+    await openDiff(reference, path, base, 'WORKTREE', originalPath);
+  }
   function setReviewMode(key: string, mode: GitReviewMode) {
     const doc = current.current.find(item => item.key === key); if (!doc?.review || doc.review.mode === mode) return;
     try { localStorage.setItem('mongle.review.mode', mode); } catch {}
@@ -199,6 +209,6 @@ export function useFileDocuments(client: Transport, state: HostState | undefined
     window.addEventListener('focus', refresh);
     return () => { clearInterval(timer); window.removeEventListener('focus', refresh); };
   }, [visible, activeKey, active?.file?.documentId, Boolean(active?.diff || active?.review), connected, connectionId]);
-  return { documents, active, activeKey, visible, unsaved, open, openDiff, openReview, setReviewMode, request, load, save, close, patch, setVisible, setActiveKey, available };
+  return { documents, active, activeKey, visible, unsaved, open, openDiff, openChangeDiff, openReview, setReviewMode, request, load, save, close, patch, setVisible, setActiveKey, available };
 }
 export type FileDocuments = ReturnType<typeof useFileDocuments>;

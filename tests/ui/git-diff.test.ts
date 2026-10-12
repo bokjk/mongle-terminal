@@ -51,13 +51,13 @@ test('Git review shows every branch change on one page, moves by file and change
     await page.locator(`[data-terminal-id="${terminal.id}"] textarea`).focus(); await page.getByRole('button', { name: '파일 탐색기', exact: true }).click();
     const explorer = page.getByRole('complementary', { name: '파일 탐색기' }), editor = page.getByRole('region', { name: '파일 편집기', exact: true });
     await explorer.getByRole('tab', { name: /^Git/ }).click();
-    await expect(explorer.locator('.git-footnote')).toContainText('변경 검토');
+    await expect(explorer.locator('.git-footnote')).toContainText('그 파일의 바뀐 내용');
     const working = explorer.getByRole('region', { name: '작업 폴더 변경', exact: true });
     const review = editor.locator('.document-body:not([hidden]) .git-review'), position = review.locator('.diff-position');
     const section = (file: string) => review.locator(`.review-section[data-path="${file}"]`);
 
-    // Clicking a Git row opens the review on that file; the default base is where the branch left origin/main.
-    await working.getByRole('button', { name: 'src/long.ts · 수정됨' }).click();
+    // The review button opens every change; the default base is where the branch left origin/main.
+    await explorer.getByRole('button', { name: '변경 검토 열기' }).click();
     await expect(editor.getByRole('tab', { name: /^변경 검토 · 작업 프로젝트/ })).toHaveAttribute('aria-selected', 'true');
     await expect(review.getByRole('button', { name: '브랜치 전체' })).toHaveAttribute('aria-pressed', 'true');
     await expect(review.locator('.review-base')).toContainText('origin/main 이후');
@@ -69,7 +69,8 @@ test('Git review shows every branch change on one page, moves by file and change
     await expect(list.getByRole('button')).toHaveCount(branchFiles.length);
     await list.getByRole('button').filter({ hasText: 'committed.txt' }).click();
     await expect(review.locator('.review-section.current')).toHaveAttribute('data-path', 'committed.txt');
-    await working.getByRole('button', { name: 'src/long.ts · 수정됨' }).click(); await expect(review.locator('.review-section.current')).toHaveAttribute('data-path', 'src/long.ts');
+    if (!(await list.isVisible())) await review.getByRole('button', { name: '파일 목록 보기' }).click();
+    await list.getByRole('button').filter({ hasText: 'long.ts' }).click(); await expect(review.locator('.review-section.current')).toHaveAttribute('data-path', 'src/long.ts');
     await expect(section('src/long.ts').locator('.cm-deletedChunk').first()).toContainText('export const line10 = 10;');
     await expect(section('src/long.ts').locator('.cm-content')).toContainText('line45 = "committed"');
     await expect(section('src/long.ts').locator('.review-count')).toHaveText('+2 −2');
@@ -124,6 +125,15 @@ test('Git review shows every branch change on one page, moves by file and change
     // Background refresh follows edits to visible files.
     await writeFile(path.join(repository, 'src', 'long.ts'), lines(60, index => index === 9 ? 'export const line10 = "edited again";' : index === 44 ? 'export const line45 = "committed";' : undefined));
     await expect(section('src/long.ts').locator('.cm-content')).toContainText('edited again', { timeout: 12000 });
+
+    // A Git row opens just that file against the same base, like Orca's file diff tab.
+    await working.getByRole('button', { name: 'staged.txt · 수정됨' }).click();
+    await expect(editor.getByRole('tab', { name: 'staged.txt · 기준 비교' })).toHaveAttribute('aria-selected', 'true');
+    const fileTab = editor.locator('.document-body:not([hidden]) .diff-view');
+    // The layout chosen earlier (side by side) is remembered for new file tabs.
+    await expect(fileTab.getByRole('button', { name: '나란히' })).toHaveAttribute('aria-pressed', 'true');
+    await expect(fileTab.locator('.cm-merge-a .cm-content')).toHaveText('before'); await expect(fileTab.locator('.cm-merge-b .cm-content')).toHaveText('staged and working content');
+    await editor.getByRole('tab', { name: /^변경 검토/ }).click();
 
     // Light theme and a phone-width viewport.
     await page.getByRole('button', { name: '설정', exact: true }).first().click(); await page.getByRole('button', { name: '밝게', exact: true }).click(); await page.getByRole('button', { name: '설정 닫기' }).click();
