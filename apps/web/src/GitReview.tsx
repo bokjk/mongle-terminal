@@ -7,7 +7,7 @@ import { ChevronDown, ChevronRight, ChevronUp, FileText, GitCompareArrows, FoldV
 import type { GitDiff, GitReview as Review, GitReviewFile, GitReviewMode } from '../../../packages/protocol/index';
 import { editorThemeSpec, highlighting, language } from './CodeEditor';
 import { GitMarker, type GitKind } from './GitChanges';
-import { countLines, lineEndingsOnly, preferredCollapse, rememberCollapse } from './diff-layout';
+import { countLines, lineEndingsOnly, modeChange, preferredCollapse, rememberCollapse } from './diff-layout';
 
 type Request = <T>(method: string, params: unknown, signal?: AbortSignal) => Promise<T>;
 type Reference = { id: string; hostId: string; bootId: string; generation: string; root: string };
@@ -207,7 +207,7 @@ export function GitReview({ review, mode, reference, request, active, focus, onM
               : !content?.diff ? <p className="review-message review-placeholder">변경 내용을 읽는 중…</p>
               : content.diff.unavailable ? <p className="review-message">{content.diff.unavailable}</p>
               : lineEndingsOnly(content.diff) ? <p className="review-message">줄 끝 문자(CRLF/LF)만 바뀌었습니다.</p>
-              : !content.chunks ? <p className="review-message">내용 차이가 없습니다.</p>
+              : !content.chunks ? <p className="review-message">{modeChange(content.diff) || '내용 차이가 없습니다.'}</p>
               : seen.has(file.path) ? <UnifiedDiff path={file.path} diff={content.diff} folding={folding} onView={view => {
                   if (view) { views.current.set(file.path, view); if (pending.current?.path === file.path) { const target = pending.current; pending.current = undefined; requestAnimationFrame(() => show(target.path, target.chunk)); } }
                   else views.current.delete(file.path);

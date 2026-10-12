@@ -7,7 +7,7 @@ import { CodeEditor } from './CodeEditor';
 import { MarkdownPreview } from './MarkdownPreview';
 import { GitDiffView } from './GitDiffView';
 import { GitReview } from './GitReview';
-import { diffLabel, lineEndingsOnly, rememberCollapse } from './diff-layout';
+import { diffLabel, lineEndingsOnly, modeChange, rememberCollapse } from './diff-layout';
 const PdfPreview = lazy(() => import('./PdfPreview'));
 
 type Props = { files: FileDocuments; treeOpen: boolean; onToggleTree(): void; maximized: boolean; onMaximize(): void; onError(message: string): void };
@@ -58,6 +58,7 @@ export function FileEditorPanel({ files, treeOpen, onToggleTree, maximized, onMa
     {doc.file?.readOnlyReason && <div className="editor-notice">{doc.file.readOnlyReason}</div>}
     {diff?.data?.unavailable && <div className="editor-notice">{diff.data.unavailable}</div>}
     {diff?.data && lineEndingsOnly(diff.data) && <div className="editor-notice">줄 끝 문자(CRLF/LF)만 바뀌었습니다. 보이는 내용은 같습니다.</div>}
+    {diff?.data && modeChange(diff.data) && <div className="editor-notice">{modeChange(diff.data)}</div>}
     {doc.file?.truncated && <div className="editor-notice">처음 64 KiB만 표시합니다. 전체 파일을 편집하려면 외부 편집기를 사용해 주세요.</div>}
     {(doc.error || doc.changedOnDisk) && <div className="editor-notice warning" role="alert"><span>{doc.error || '디스크의 파일이 변경되었습니다. 내 수정 내용은 유지됩니다.'}</span>{!pdf && !diff && !review && <button className="button subtle" onClick={() => void copy(doc.text, '내 수정 내용을')}>내 내용 복사</button>}<button className="button subtle" disabled={!connected || doc.busy || doc.saving} onClick={reload}>{diff || review ? '다시 읽기' : '디스크 파일 다시 열기'}</button></div>}
     {doc.busy && <p className="file-message" role="status">{review ? '변경 목록을 읽는 중…' : diff ? '변경 내용을 읽는 중…' : pdf ? `PDF를 읽는 중… ${doc.progress || 0}%` : '파일을 읽는 중…'}</p>}

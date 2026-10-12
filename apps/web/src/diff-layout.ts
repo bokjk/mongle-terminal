@@ -20,6 +20,14 @@ export function sideName(side: GitDiffBase | GitDiffTarget) {
 }
 /** Lines of a whole file; a final line break does not start another line. */
 export function countLines(text: string | null) { return text ? text.split(/\r\n?|\n/).length - (/(?:\r\n?|\n)$/.test(text) ? 1 : 0) : 0; }
+/** A mode or type change has no changed line; say what changed instead of showing an empty comparison. */
+export function modeChange(diff: GitDiff) {
+  const { originalMode: before, modifiedMode: after } = diff;
+  if (!before || !after || before === after) return undefined;
+  const kind = (mode: string) => mode === '120000' ? '심볼릭 링크' : mode === '160000' ? '하위 모듈' : '일반 파일';
+  if (kind(before) !== kind(after)) return `파일 유형이 바뀌었습니다: ${kind(before)} → ${kind(after)}`;
+  return after === '100755' ? `실행 권한이 생겼습니다(${before} → ${after}).` : before === '100755' ? `실행 권한이 없어졌습니다(${before} → ${after}).` : `파일 모드가 바뀌었습니다(${before} → ${after}).`;
+}
 /** Line endings are normalized by the editor, so a CRLF-only change would otherwise look empty. */
 export function lineEndingsOnly(diff: GitDiff) {
   return diff.original !== null && diff.modified !== null && diff.original !== diff.modified && diff.original.replace(/\r\n?/g, '\n') === diff.modified.replace(/\r\n?/g, '\n');

@@ -25,6 +25,8 @@ test('Git review shows every branch change on one page, moves by file and change
   await unlink(path.join(repository, 'deleted.txt')); await git(repository, 'mv', '--', '이전 이름.txt', '새 이름.txt');
   await writeFile(path.join(repository, '새 파일.txt'), '<script>window.gitDiffExecuted=true</script>\n안녕하세요\n');
   await writeFile(path.join(repository, 'image.bin'), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0, 1, 2, 3]));
+  // Only the executable bit changes (staged, so it also counts on Windows where Git keeps the bit in the index).
+  await git(repository, 'update-index', '--chmod=+x', '--', 'README.md');
   const host = new HostCore({ dataDir: fixture.data, name: 'Git 비교 검증 PC' }); await host.init();
   t.after(async () => { await host.close(); assert.equal(path.dirname(fixture.root), tmpdir()); await rm(fixture.root, { recursive: true, force: true }); });
   const ctx: ConnectionContext = { id: randomUUID(), deviceId: 'git-diff-ui', deviceName: '검증 브라우저', owner: true }; host.connect(ctx, () => {});
@@ -61,7 +63,7 @@ test('Git review shows every branch change on one page, moves by file and change
     await expect(editor.getByRole('tab', { name: /^변경 검토 · 작업 프로젝트/ })).toHaveAttribute('aria-selected', 'true');
     await expect(review.getByRole('button', { name: '브랜치 전체' })).toHaveAttribute('aria-pressed', 'true');
     await expect(review.locator('.review-base')).toContainText('origin/main 이후');
-    const branchFiles = ['committed.txt', 'deleted.txt', 'image.bin', 'src/long.ts', 'staged.txt', '새 이름.txt', '새 파일.txt'];
+    const branchFiles = ['committed.txt', 'deleted.txt', 'image.bin', 'README.md', 'src/long.ts', 'staged.txt', '새 이름.txt', '새 파일.txt'];
     await expect(review.locator('.review-section')).toHaveCount(branchFiles.length);
     assert.deepEqual(await review.locator('.review-section').evaluateAll(items => items.map(item => (item as HTMLElement).dataset.path)), branchFiles);
     const list = review.getByRole('navigation', { name: '변경 파일 목록' });
@@ -80,6 +82,7 @@ test('Git review shows every branch change on one page, moves by file and change
     await expect(section('deleted.txt').locator('.review-count')).toHaveText('+0 −1'); await expect(section('새 파일.txt').locator('.review-count')).toHaveText('+2 −0');
     await expect(section('새 이름.txt').locator('.review-path')).toContainText('이전 이름.txt → 새 이름.txt');
     await expect(section('image.bin').locator('.review-message')).toContainText('바이너리');
+    await expect(section('README.md').locator('.review-message')).toHaveText('실행 권한이 생겼습니다(100644 → 100755).');
     await expect(section('새 파일.txt').locator('.cm-content')).toContainText('안녕하세요');
     assert.equal(await page.evaluate(() => (window as any).gitDiffExecuted), undefined);
     await page.screenshot({ path: `${output}/review-dark.png` });
@@ -151,7 +154,7 @@ test('Git review shows every branch change on one page, moves by file and change
     assert.ok(requests.includes('git.review') && requests.includes('git.diff'));
     assert.equal(host.getState().terminals.find(item => item.id === terminal.id)?.pid, terminal.pid);
     assert.deepEqual(errors, []);
-    await writeFile(`${output}/result.json`, JSON.stringify({ passed: true, realGit: true, realHost: true, desktopBridge: 'test binding', scenarios: ['row opens review at file', 'branch base from origin/HEAD', 'committed and uncommitted changes together', 'rename/delete/new/binary sections', 'n/p change and j/k file keys', 'collapse/expand all', 'side-by-side against same base', 'open editable file', 'uncommitted-only mode', 'background refresh', 'light theme', '390px viewport'], errors }, null, 2));
+    await writeFile(`${output}/result.json`, JSON.stringify({ passed: true, realGit: true, realHost: true, desktopBridge: 'test binding', scenarios: ['row opens review at file', 'branch base from origin/HEAD', 'committed and uncommitted changes together', 'rename/delete/new/binary sections', 'mode-only change explained', 'n/p change and j/k file keys', 'collapse/expand all', 'side-by-side against same base', 'open editable file', 'uncommitted-only mode', 'background refresh', 'light theme', '390px viewport'], errors }, null, 2));
   } finally {
     host.disconnect(ctx.id); await browser.close(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve()));
   }

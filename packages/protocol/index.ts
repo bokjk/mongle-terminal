@@ -42,7 +42,8 @@ export const GIT_DIFF_BYTES = 256 * 1024;
 export type GitDiffBase = 'HEAD' | 'INDEX' | (string & {});
 export type GitDiffTarget = 'INDEX' | 'WORKTREE';
 /** original/modified are null when the file does not exist on that side. unavailable explains why text is not shown. */
-export interface GitDiff { path: string; originalPath?: string; absolutePath: string; base: GitDiffBase; target: GitDiffTarget; original: string | null; modified: string | null; unavailable?: string; }
+/** originalMode/modifiedMode are Git modes (100644, 100755, 120000) when both sides exist, so a chmod or link change is visible. */
+export interface GitDiff { path: string; originalPath?: string; absolutePath: string; base: GitDiffBase; target: GitDiffTarget; original: string | null; modified: string | null; originalMode?: string; modifiedMode?: string; unavailable?: string; }
 export const GIT_COMMIT_PATTERN = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
 export type GitReviewMode = 'branch' | 'head';
 export type GitReviewStatus = 'added' | 'modified' | 'deleted' | 'renamed' | 'conflicted';

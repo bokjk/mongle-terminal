@@ -20,6 +20,8 @@ export type OpenDocument = {
   review?: ReviewDocument;
 };
 const normalize = (value: string) => value.replaceAll('\\', '/').replace(/\/+$/, '').toLowerCase();
+/** Git reports one exact spelling per path; Foo.ts and foo.ts are two files on a case-sensitive host. */
+const exact = (value: string) => value.replaceAll('\\', '/').replace(/\/+$/, '');
 export const isMarkdown = (path: string) => /\.(md|markdown|mdown)$/i.test(path);
 export const isPdf = (path: string) => /\.pdf$/i.test(path);
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : '파일 작업을 완료하지 못했습니다.';
@@ -141,9 +143,14 @@ export function useFileDocuments(client: Transport, state: HostState | undefined
     await load(key);
   }
   async function openDiff(reference: FileReference, path: string, base: GitDiffBase, target: GitDiffTarget, originalPath?: string) {
-    const key = `${reference.hostId}:diff:${base}:${target}:${normalize(reference.root + '/' + path)}`;
+    const key = `${reference.hostId}:diff:${base}:${target}:${normalize(reference.root)}/${exact(path)}`;
     setActiveKey(key); setVisible(true);
-    if (current.current.some(doc => doc.key === key)) { void load(key); return; }
+    const existing = current.current.find(doc => doc.key === key);
+    if (existing) {
+      // The rename source can differ between opens (A → C, then B → C) or be missing after a failed first read.
+      if (existing.diff && existing.diff.originalPath !== originalPath) { const diff = { ...existing.diff }; delete diff.originalPath; patch(key, { diff: originalPath ? { ...diff, originalPath } : diff }); }
+      void load(key); return;
+    }
     if (current.current.length >= 24) { const last = current.current.at(-1)!; setActiveKey(last.key); patch(last.key, { error: '파일은 최대 24개까지 열 수 있습니다. 사용하지 않는 파일 탭을 닫아 주세요.' }); return; }
     update(docs => [...docs, { key, name: path.split(/[\\/]/).at(-1) || path, path, reference, text: '', baseline: '', busy: false, saving: false, mode: 'edit', loadId: 0, editorSession: {}, diff: { base, target, ...(originalPath ? { originalPath } : {}), layout: preferredLayout(), collapse: preferredCollapse('diff') } }]);
     await load(key);

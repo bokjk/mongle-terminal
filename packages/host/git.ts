@@ -198,12 +198,34 @@ export async function readGitDiff(root: string, dataDir: string, request: { path
         return text === undefined ? { unavailable: notText } : { text };
       } finally { await file.close(); }
     }
+    async function storedMode(area: GitDiffBase, location: { target: string; repositoryPath: string }) {
+      const listing = area === 'INDEX' ? await run(['ls-files', '-s', '--', path.relative(base, location.target).split(path.sep).join('/')]) : await run(['ls-tree', '--full-tree', area, '--', location.repositoryPath]);
+      return /^(\d{6}) /.exec(listing.stdout)?.[1];
+    }
+    let fileMode: boolean | undefined;
+    async function workingMode(location: { target: string; repositoryPath: string }, recorded?: string) {
+      const info = await lstat(location.target);
+      if (info.isSymbolicLink()) return '120000';
+      // Windows reports no executable bit and Git turns core.fileMode off there: Git then takes the bit from the index.
+      fileMode ??= process.platform !== 'win32' && (await run(['config', '--bool', 'core.fileMode']).then(output => output.stdout.trim(), () => '')) !== 'false';
+      if (fileMode) return info.mode & 0o100 ? '100755' : '100644';
+      const indexed = await storedMode('INDEX', location);
+      return (indexed && indexed !== '120000' ? indexed : recorded) === '100755' ? '100755' : '100644';
+    }
     const original = await stored(request.base, request.base === 'INDEX' ? current : previous);
     const modified = request.target === 'WORKTREE' ? await working(current) : await stored('INDEX', current);
     const result: GitDiff = { path: request.path, ...(request.originalPath ? { originalPath: request.originalPath } : {}), absolutePath: current.target, base: request.base, target: request.target, original: null, modified: null };
     const unavailable = 'unavailable' in original ? original.unavailable : 'unavailable' in modified ? modified.unavailable : undefined;
     if (unavailable) return { ...result, unavailable };
-    return { ...result, original: (original as { text: string | null }).text, modified: (modified as { text: string | null }).text };
+    const originalText = (original as { text: string | null }).text, modifiedText = (modified as { text: string | null }).text;
+    // A mode or type change (chmod +x, a link replaced by a file) has no changed line, so both Git modes go along.
+    let modes: { originalMode?: string; modifiedMode?: string } = {};
+    if (originalText !== null && modifiedText !== null) {
+      const originalMode = await storedMode(request.base, request.base === 'INDEX' ? current : previous);
+      const modifiedMode = request.target === 'WORKTREE' ? await workingMode(current, originalMode) : await storedMode('INDEX', current);
+      if (originalMode && modifiedMode) modes = { originalMode, modifiedMode };
+    }
+    return { ...result, ...modes, original: originalText, modified: modifiedText };
   } catch (error) {
     if (error instanceof AppError) throw error;
     const failure = error as NodeJS.ErrnoException & { killed?: boolean };
@@ -299,7 +321,7 @@ export async function readGitReview(root: string, dataDir: string, mode: GitRevi
       else files.push({ path: file, status: 'modified' });
     }
     const unchanged = new Set<string>();
-    // On POSIX Git also records the executable bit unless core.fileMode is off; Windows reports no such bit.
+    // Git compares the executable bit too: from the file on POSIX, from the index when core.fileMode is off (as on Windows).
     const fileMode = process.platform !== 'win32' && recheck.length > 0 && (await attempt(['config', '--bool', 'core.fileMode'])).trim() !== 'false';
     if (GIT_COMMIT_PATTERN.test(baseCommit)) for (let start = 0; start < recheck.length; start += 100) {
       const part = recheck.slice(start, start + 100);
@@ -311,7 +333,8 @@ export async function readGitReview(root: string, dataDir: string, mode: GitRevi
       }
       const repositoryPath = (file: string) => path.relative(listing.repositoryRoot, path.resolve(base, file)).split(path.sep).join('/');
       // A symbolic link is stored as its target text; hash-object would hash the file it points to.
-      const actual = new Map<string, string>(), regular: string[] = [], links = new Set<string>(), executable = new Set<string>();
+      const actual = new Map<string, string>(), regular: string[] = [], links = new Set<string>(), executable = new Set<string>(), indexExecutable = new Set<string>();
+      if (!fileMode) for (const record of (await attempt(['ls-files', '-s', '-z', '--full-name', '--', ...part])).split('\0')) { const match = /^(\d+) [0-9a-f]+ \d\t(.+)$/.exec(record); if (match?.[1] === '100755') indexExecutable.add(match[2]); }
       for (const file of part) {
         const target = path.resolve(base, file);
         const info = await lstat(target).catch(() => undefined);
@@ -328,7 +351,7 @@ export async function readGitReview(root: string, dataDir: string, mode: GitRevi
       // Same content is not enough: a link turned into a regular file (or back), or a changed executable bit, is a change Git reports too.
       for (const file of part) {
         const want = stored.get(repositoryPath(file));
-        if (want && actual.get(file) === want.blob && (want.mode === '120000') === links.has(file) && (!fileMode || links.has(file) || (want.mode === '100755') === executable.has(file))) unchanged.add(file);
+        if (want && actual.get(file) === want.blob && (want.mode === '120000') === links.has(file) && (links.has(file) || (want.mode === '100755') === (fileMode ? executable.has(file) : indexExecutable.has(repositoryPath(file))))) unchanged.add(file);
       }
     }
     for (const file of recheck) if (!unchanged.has(file)) files.push({ path: file, status: 'modified' });

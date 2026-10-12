@@ -7,6 +7,7 @@ import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { readGitDiff, readGitReview } from '../../packages/host/git';
 import { HostCore } from '../../packages/host/core';
+import { modeChange } from '../../apps/web/src/diff-layout';
 import { GIT_DIFF_BYTES, type ConnectionContext, type GitDiff, type TerminalInfo } from '../../packages/protocol';
 import { git, gitFixture } from '../helpers/git';
 
@@ -181,6 +182,24 @@ test('Git diff compares a symbolic link as its target text, as Git stores it', a
   assert.deepEqual([diff.original, diff.modified], [null, 'first.txt']);
 });
 
+test('Git diff reports both Git modes so a chmod or link change is not an empty comparison', async t => {
+  // PR #74 review: a mode-only change has no changed line; the tab says what changed instead.
+  const { repository, data } = await fixture(t);
+  await git(repository, 'update-index', '--chmod=+x', '--', 'staged.txt');
+  const staged = await readGitDiff(repository, data, { path: 'staged.txt', base: 'HEAD', target: 'INDEX' });
+  assert.deepEqual([staged.original === staged.modified, staged.originalMode, staged.modifiedMode], [true, '100644', '100755']);
+  assert.equal(modeChange(staged), '실행 권한이 생겼습니다(100644 → 100755).');
+  assert.equal(modeChange({ ...staged, originalMode: '120000', modifiedMode: '100644' }), '파일 유형이 바뀌었습니다: 심볼릭 링크 → 일반 파일');
+  const listed = await readGitReview(repository, data, 'head');
+  assert.deepEqual(listed.state === 'repository' && listed.files, [{ path: 'staged.txt', status: 'modified' }], 'a mode-only change stays in the review list');
+  const working = await readGitDiff(repository, data, { path: 'staged.txt', base: 'INDEX', target: 'WORKTREE' });
+  // Windows has no executable bit, so the working file keeps the recorded one; POSIX reads the real bit (644 here).
+  assert.deepEqual([working.originalMode, working.modifiedMode], ['100755', process.platform === 'win32' ? '100755' : '100644']);
+  await unlink(path.join(repository, 'deleted.txt'));
+  const deleted = await readGitDiff(repository, data, { path: 'deleted.txt', base: 'HEAD', target: 'WORKTREE' });
+  assert.deepEqual([deleted.modified, deleted.originalMode, deleted.modifiedMode], [null, undefined, undefined], 'no mode when one side is missing');
+});
+
 test('Git review keeps a file whose executable bit differs from the base on POSIX', async t => {
   // PR #74 review: chmod alone is a mode change Git reports while core.fileMode is on.
   if (process.platform === 'win32') { t.skip('Windows has no executable bit; Git sets core.fileMode off there'); return; }
@@ -191,6 +210,8 @@ test('Git review keeps a file whose executable bit differs from the base on POSI
   await writeFile(path.join(repository, 'staged.txt'), 'before\n'); await chmod(path.join(repository, 'staged.txt'), 0o755);
   const executable = await readGitReview(repository, data, 'branch');
   assert.deepEqual(executable.state === 'repository' && executable.files, [{ path: 'staged.txt', status: 'modified' }], 'same content, new executable bit');
+  const diff = await readGitDiff(repository, data, { path: 'staged.txt', base: (executable as { base: string }).base, target: 'WORKTREE' });
+  assert.deepEqual([diff.originalMode, diff.modifiedMode], ['100644', '100755']);
   await chmod(path.join(repository, 'staged.txt'), 0o644);
   const restored = await readGitReview(repository, data, 'branch');
   assert.deepEqual(restored.state === 'repository' && restored.files, [], 'content and mode are back at the base');
