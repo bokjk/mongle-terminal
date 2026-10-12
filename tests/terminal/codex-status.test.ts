@@ -54,8 +54,9 @@ test('a finished tool answers only its own request; a tool that ran alongside le
   assert.deepEqual(state.accept(turn('PostToolUse', T1, {tool:RUN})), {status:'working', notify:false}, 'the approved command finished');
   ask(state, turn('PermissionRequest', T1, {tool:RUN}));
   assert.equal(state.accept(turn('PermissionRequest', T1, {tool:RUN})), undefined, 'the same command asked again alongside');
-  assert.equal(state.observeScreen(PROMPT), undefined);
-  assert.equal(state.accept(turn('PostToolUse', T1, {tool:RUN})), undefined, 'one of the two finished');
+  assert.equal(state.observeScreen(PROMPT), undefined, 'the prompt on screen is the first one');
+  assert.deepEqual(state.accept(turn('PostToolUse', T1, {tool:RUN})), {status:'working', notify:false}, 'the shown one finished; the other waits for its own prompt');
+  assert.deepEqual(state.observeScreen(PROMPT), {status:'attention', notify:true}, 'Codex shows the second');
   assert.deepEqual(state.accept(turn('PostToolUse', T1, {tool:RUN})), {status:'working', notify:false});
   ask(state, turn('PermissionRequest', T1, {tool:RUN}));
   assert.deepEqual(state.accept(turn('PostToolUse')), {status:'working', notify:false}, 'a report of an older hook script has no digest');
@@ -135,13 +136,28 @@ test('keys: the preselected approval keeps work visible; other answers and cance
   state.accept(turn('UserPromptSubmit'));
   ask(state);
   assert.equal(state.accept(turn('PermissionRequest', S, {agent:A})), undefined);
-  assert.equal(state.observeScreen(PROMPT), undefined, 'a second prompt while the first is shown');
-  assert.equal(state.observeInput('\r'), undefined, 'the second request is shown next');
+  assert.equal(state.observeScreen(PROMPT), undefined, 'the prompt on screen still belongs to the first request');
+  assert.equal(state.awaitingPrompt, true, 'the second request waits for its own prompt');
+  assert.deepEqual(state.observeInput('\r'), {status:'working', notify:false}, 'the first is answered');
+  assert.deepEqual(state.observeScreen(PROMPT), {status:'attention', notify:true}, 'Codex shows the second next');
   assert.deepEqual(state.accept(turn('PostToolUse', S, {agent:A})), {status:'working', notify:false});
   ask(state);
   assert.equal(state.observeInput('\x1b[200~a\r'), undefined, 'Enter inside a bracketed paste is text');
   assert.equal(state.observeInput('b\r\x1b[201~'), undefined, 'also when the paste spans input chunks');
   assert.deepEqual(state.observeInput('\r'), {status:'idle', notify:false}, 'the paste reached the request first');
+});
+
+test('a prompt still on screen never shows the next request, so its automatic review leaves nothing behind', () => {
+  // PR #73 review: a second request reported while the first approval is still drawn.
+  const state = new CodexTaskState();
+  state.accept(turn('UserPromptSubmit'));
+  assert.deepEqual(ask(state, turn('PermissionRequest', T1, {tool:RUN})), {status:'attention', notify:true});
+  assert.equal(state.accept(turn('PermissionRequest', T1, {tool:READ})), undefined);
+  assert.equal(state.observeScreen(PROMPT), undefined, 'the stale prompt is not the second request');
+  assert.equal(state.observeScreen(REVIEW), undefined, 'Codex reviews the second one itself');
+  assert.equal(state.awaitingPrompt, false, 'and it no longer waits');
+  assert.deepEqual(state.observeInput('\r'), {status:'working', notify:false}, 'answering the first leaves no request shown');
+  assert.equal(state.accept(turn('PostToolUse', T1, {tool:RUN})), undefined, 'the approved tool finishes while work goes on');
 });
 
 test('only the shapes the managed hook sends are accepted', () => {
