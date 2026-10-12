@@ -178,6 +178,19 @@ test('a request behind a shown approval does not time out; it waits from the mom
   assert.equal(state.showOverdue(), undefined, 'nothing is left to show');
 });
 
+test('one automatic review answers one request; the next still gets its prompt', () => {
+  // PR #74 review: two requests before the screen updates, and only the first is reviewed by Codex.
+  const state = new CodexTaskState();
+  state.accept(turn('UserPromptSubmit'));
+  state.accept(turn('PermissionRequest', T1, {tool:RUN}));
+  state.accept(turn('PermissionRequest', T1, {tool:READ}));
+  assert.equal(state.observeScreen(REVIEW), undefined, 'the review answers the first');
+  assert.equal(state.awaitingPrompt, true, 'the second still waits');
+  assert.equal(state.observeScreen(REVIEW), undefined, 'the same review on screen answers nothing more');
+  assert.equal(state.awaitingPrompt, true);
+  assert.deepEqual(state.observeScreen(PROMPT), {status:'attention', notify:true}, 'Codex asks the user about the second');
+});
+
 test('only the shapes the managed hook sends are accepted', () => {
   assert.deepEqual(validCodexEvent({event:'SessionStart', source:'resume', token:'x'}), {event:'SessionStart', source:'resume'});
   assert.deepEqual(validCodexEvent({event:'SessionStart', source:'other'}), {event:'SessionStart'});

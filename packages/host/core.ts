@@ -366,7 +366,7 @@ export class HostCore {
     if (count >= 2 || [...this.fileReads.values()].reduce((a, b) => a + b, 0) >= 8) throw new AppError('FILES_BUSY', '파일을 읽는 중입니다. 잠시 후 다시 시도해 주세요.');
     this.fileReads.set(ctx.id, count + 1);
     try {
-      const result = pdfParams ? await readPdfChunk(p.root, p.path, this.options.dataDir, pdfParams.offset, pdfParams.version) : diffParams ? await readGitDiff(p.root, this.options.dataDir, diffParams) : reviewParams ? await readGitReview(p.root, this.options.dataDir, reviewParams.mode, repositoryRoot => this.reviewBase(p, repositoryRoot)) : method === 'git.status' ? await inspectGit(p.root, this.options.dataDir) : method === 'files.open' ? await openFileDocument(p.root, p.path, this.options.dataDir) : await inspectFiles(p.root, p.path, this.options.dataDir, method === 'files.preview');
+      const result = pdfParams ? await readPdfChunk(p.root, p.path, this.options.dataDir, pdfParams.offset, pdfParams.version) : diffParams ? await readGitDiff(p.root, this.options.dataDir, diffParams) : reviewParams ? await readGitReview(p.root, this.options.dataDir, reviewParams.mode, repositoryRoot => this.reviewBase(repositoryRoot)) : method === 'git.status' ? await inspectGit(p.root, this.options.dataDir) : method === 'files.open' ? await openFileDocument(p.root, p.path, this.options.dataDir) : await inspectFiles(p.root, p.path, this.options.dataDir, method === 'files.preview');
       check();
       if (method === 'files.open' && 'version' in result && result.version && 'absolutePath' in result && !('readOnlyReason' in result && result.readOnlyReason)) {
         if ([...this.fileDocuments.values()].filter(item => item.client === originalClient).length >= 32 || this.fileDocuments.size >= 128) throw new AppError('FILES_LIMIT', '열린 파일이 많습니다. 사용하지 않는 파일 탭을 닫아 주세요.');
@@ -383,12 +383,12 @@ export class HostCore {
       if (remaining) this.fileReads.set(ctx.id, remaining); else this.fileReads.delete(ctx.id);
     }
   }
-  /** The base branch a project remembers: the terminal's worktree project, else a project opened at this repository root. */
-  private reviewBase(reference: { id: string }, repositoryRoot: string) {
-    const terminal = this.terminals.find(item => item.id === reference.id);
-    const linked = terminal?.worktreeId ? this.worktrees.find(item => item.id === terminal.worktreeId) : undefined;
+  /** The base branch remembered by the project whose main checkout or worktree is this repository. */
+  private reviewBase(repositoryRoot: string) {
+    // Only a project whose checkout is this repository; a terminal may have changed into another one.
     const key = (value: string) => resolve(value).replace(/[\\/]+$/, '').toLowerCase();
-    const repository = linked ? this.repositories.find(item => item.id === linked.repositoryId) : this.repositories.find(item => key(item.root) === key(repositoryRoot));
+    const worktree = this.worktrees.find(item => key(item.path) === key(repositoryRoot));
+    const repository = worktree ? this.repositories.find(item => item.id === worktree.repositoryId) : this.repositories.find(item => key(item.root) === key(repositoryRoot));
     return repository?.baseRef;
   }
   private async editFile(method: string, params: unknown, ctx: ConnectionContext) {

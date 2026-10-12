@@ -307,6 +307,8 @@ export class CodexTaskState {
   private untouched = false;
   /** When the last shown request was answered: the next one gets the full wait from then. */
   private freedAt = 0;
+  /** Codex's review status has stayed on screen since it answered a request; it answers one request each time it appears. */
+  private reviewing = false;
   private paste = {active:false};
   constructor(private readonly now: () => number = Date.now) {}
   private move(next: AgentStatus, finishedTurn = false): AgentStatusUpdate | undefined {
@@ -347,7 +349,7 @@ export class CodexTaskState {
     const thread = event.agent ?? '', tool = event.tool;
     const request = {thread, ...(tool ? {tool} : {}), shown:false, since:this.now()};
     // Codex has not decided yet whether it asks the user or lets its automatic review answer.
-    if (event.event === 'PermissionRequest') { this.requests.push({...request, kind:'permission'}); return; }
+    if (event.event === 'PermissionRequest') { this.requests.push({...request, kind:'permission'}); this.reviewing = false; return; }
     if (event.event === 'PreToolUse' && event.question) {
       const question: CodexRequest = {...request, kind:'question'};
       this.requests.push(question);
@@ -376,11 +378,13 @@ export class CodexTaskState {
    * denial goes back to the model.
    */
   observeScreen(screen: CodexScreen): AgentStatusUpdate | undefined {
+    if (!screen.review) this.reviewing = false;
     const waiting = this.requests.find(request => !request.shown);
     if (!waiting) return;
     // Codex shows one approval at a time: while one is shown, a prompt on screen is that one's.
     if (screen.prompt) return this.anyShown() ? undefined : this.show(waiting);
-    if (screen.review) this.requests = this.requests.filter(request => request.shown);
+    // The review answers the oldest waiting request; a later one still gets its own prompt or review.
+    if (screen.review && !this.reviewing) { this.reviewing = true; this.requests.splice(this.requests.indexOf(waiting), 1); }
     return;
   }
 

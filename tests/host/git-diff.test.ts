@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile, rm, symlink, unlink, writeFile } from 'node:fs/promises';
+import { readFile, realpath, rm, symlink, unlink, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import path from 'node:path';
@@ -36,7 +36,8 @@ test('Git diff reads HEAD, index and working copies for each kind of change with
 
   const modified = await read({ path: 'src/modified.ts', base: 'INDEX', target: 'WORKTREE' });
   assert.equal(modified.original, 'export const value = 1;\n'); assert.equal(modified.modified, 'export const value = 2;\n'); assert.equal(modified.unavailable, undefined);
-  assert.equal(modified.absolutePath, path.join(repository, 'src', 'modified.ts'));
+  // The host reports the real path; a temp folder may be reached through a Windows short name.
+  assert.equal(modified.absolutePath, path.join(await realpath(repository), 'src', 'modified.ts'));
   const staged = await read({ path: 'staged.txt', base: 'HEAD', target: 'INDEX' });
   assert.deepEqual([staged.original, staged.modified], ['before\n', 'staged\n']);
   const working = await read({ path: 'staged.txt', base: 'INDEX', target: 'WORKTREE' });
@@ -76,7 +77,7 @@ test('Git diff explains binary, oversized and CRLF-only files and refuses paths 
   await assert.rejects(read({ path: 'staged.txt', originalPath: '../README.md', base: 'HEAD', target: 'INDEX' }), { code: 'FILES_OUTSIDE_ROOT' });
   // Paths are resolved below the terminal folder, so a subfolder cannot name the repository's top-level file.
   const scoped = await read({ path: 'README.md', base: 'HEAD', target: 'INDEX' }, path.join(repository, 'src'));
-  assert.deepEqual([scoped.original, scoped.modified, scoped.absolutePath], [null, null, path.join(repository, 'src', 'README.md')]);
+  assert.deepEqual([scoped.original, scoped.modified, scoped.absolutePath], [null, null, path.join(await realpath(repository), 'src', 'README.md')]);
   await assert.rejects(read({ path: 'staged.txt', base: 'INDEX', target: 'INDEX' as never }), { code: 'INVALID_REQUEST' });
   await writeFile(path.join(data, 'secret.txt'), 'private');
   await assert.rejects(read({ path: '.app-private/secret.txt', base: 'INDEX', target: 'WORKTREE' }), { code: 'FILES_OUTSIDE_ROOT' });
@@ -197,4 +198,7 @@ test('Git review keeps a staged deletion, and a symbolic link restored to the ba
   await unlink(path.join(repository, 'link')); await symlink('first.txt', path.join(repository, 'link'), 'file');
   const restored = await readGitReview(repository, data, 'branch');
   assert.deepEqual(restored.state === 'repository' && restored.files.map(file => file.path), [], 'the link is back at its base target');
+  await unlink(path.join(repository, 'link')); await writeFile(path.join(repository, 'link'), 'first.txt');
+  const retyped = await readGitReview(repository, data, 'branch');
+  assert.deepEqual(retyped.state === 'repository' && retyped.files, [{ path: 'link', status: 'modified' }], 'a regular file with the same text is still a change');
 });
