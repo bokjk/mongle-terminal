@@ -22,7 +22,8 @@ test('Git switch, tree decorations, grouped changes, refresh, stale responses an
   await writeFile(path.join(repository, '새 파일.txt'), '<script>window.gitPreviewExecuted=true</script>\n안녕하세요');
   for (const folder of ['one', 'two', 'three']) { await mkdir(path.join(repository, folder)); await writeFile(path.join(repository, folder, 'nested.txt'), folder); }
   const host = new HostCore({ dataDir: fixture.data, name: 'Git UI 검증 PC' }); await host.init();
-  t.after(async () => { await host.close(); assert.equal(path.dirname(fixture.root), tmpdir()); await rm(fixture.root, { recursive: true, force: true }); });
+  // The closed shell can hold the folder briefly on Windows (EBUSY), so removal retries.
+  t.after(async () => { await host.close(); assert.equal(path.dirname(fixture.root), tmpdir()); await rm(fixture.root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }); });
   const ctx: ConnectionContext = { id: randomUUID(), deviceId: 'git-ui', deviceName: '검증 브라우저', owner: true }; host.connect(ctx, () => {});
   const groupId = host.getState().groups[0].id;
   const first: TerminalInfo = await host.handle('terminals.create', { groupId, profileId: 'cmd', cwd: repository }, ctx);
