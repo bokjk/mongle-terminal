@@ -910,10 +910,10 @@ details.command-menu { flex: 0 0 auto; width: auto; max-height: none; overflow: 
 .diff-body > .cm-mergeView { flex: 1; min-width: 0; height: 100%; overflow: auto; overscroll-behavior: contain; }
 .diff-body .cm-mergeViewEditors { min-height: 100%; }
 .diff-body .cm-mergeViewEditor + .cm-mergeViewEditor { border-left: 1px solid var(--border); }
-.file-editor-panel :is(.diff-body, .review-diff) .cm-editor.cm-merge-a .cm-changedLine, .file-editor-panel :is(.diff-body, .review-diff) .cm-editor .cm-deletedChunk { background: color-mix(in srgb, var(--git-deleted) 12%, transparent); }
-.file-editor-panel :is(.diff-body, .review-diff) .cm-editor.cm-merge-b .cm-changedLine, .file-editor-panel :is(.diff-body, .review-diff) .cm-editor .cm-inlineChangedLine { background: color-mix(in srgb, var(--git-added) 12%, transparent); }
-.file-editor-panel :is(.diff-body, .review-diff) .cm-editor.cm-merge-a .cm-changedText, .file-editor-panel :is(.diff-body, .review-diff) .cm-editor .cm-deletedChunk .cm-deletedText { background: color-mix(in srgb, var(--git-deleted) 34%, transparent); border-radius: 2px; }
-.file-editor-panel :is(.diff-body, .review-diff) .cm-editor.cm-merge-b .cm-changedText { background: color-mix(in srgb, var(--git-added) 34%, transparent); border-radius: 2px; }
+.file-editor-panel :is(.diff-body, .review-diff) .cm-editor.cm-merge-a .cm-changedLine, .file-editor-panel :is(.diff-body, .review-diff) .cm-editor .cm-deletedChunk { background: color-mix(in srgb, var(--git-deleted) 20%, transparent); }
+.file-editor-panel :is(.diff-body, .review-diff) .cm-editor.cm-merge-b .cm-changedLine, .file-editor-panel :is(.diff-body, .review-diff) .cm-editor .cm-inlineChangedLine { background: color-mix(in srgb, var(--git-added) 20%, transparent); }
+.file-editor-panel :is(.diff-body, .review-diff) .cm-editor.cm-merge-a .cm-changedText, .file-editor-panel :is(.diff-body, .review-diff) .cm-editor .cm-deletedChunk .cm-deletedText { background: color-mix(in srgb, var(--git-deleted) 45%, transparent); border-radius: 2px; }
+.file-editor-panel :is(.diff-body, .review-diff) .cm-editor.cm-merge-b .cm-changedText { background: color-mix(in srgb, var(--git-added) 45%, transparent); border-radius: 2px; }
 .file-editor-panel :is(.diff-body, .review-diff) .cm-editor.cm-merge-a .cm-changedLineGutter, .file-editor-panel :is(.diff-body, .review-diff) .cm-editor .cm-deletedLineGutter { background: var(--git-deleted); }
 .file-editor-panel :is(.diff-body, .review-diff) .cm-editor.cm-merge-b .cm-changedLineGutter { background: var(--git-added); }
 .file-editor-panel :is(.diff-body, .review-diff) .cm-editor .cm-collapsedLines { padding: 3px 12px; border-block: 1px solid var(--border-subtle); background: var(--surface-raised); color: var(--text-secondary); font-size: 11px; }
@@ -927,6 +927,12 @@ details.command-menu { flex: 0 0 auto; width: auto; max-height: none; overflow: 
   .diff-toolbar .icon-button { min-width: 36px; min-height: 36px; }
 }
 
+/* GitHub/Orca-style inline diff: a +/− column and solid line colors. */
+.file-editor-panel :is(.review-diff, .layout-unified .diff-body) .cm-line, .file-editor-panel :is(.review-diff, .layout-unified .diff-body) .cm-deletedLine { position: relative; padding-left: 24px; padding-right: 16px; }
+.file-editor-panel :is(.review-diff, .layout-unified .diff-body) .cm-deletedChunk { padding-left: 0; }
+.file-editor-panel :is(.review-diff, .layout-unified .diff-body) .cm-changedLine::before, .file-editor-panel :is(.review-diff, .layout-unified .diff-body) .cm-deletedChunk .cm-deletedLine::before { position: absolute; left: 8px; font-weight: 700; user-select: none; pointer-events: none; }
+.file-editor-panel :is(.review-diff, .layout-unified .diff-body) .cm-changedLine::before { content: '+'; color: var(--git-added); }
+.file-editor-panel :is(.review-diff, .layout-unified .diff-body) .cm-deletedChunk .cm-deletedLine::before { content: '−'; color: var(--git-deleted); }
 /* Review tab: every change in one scrolling page, like a pull request. */
 .git-review { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; container-type: inline-size; }
 .review-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding: 6px 10px; border-bottom: 1px solid var(--border-subtle); font-size: 11px; }
