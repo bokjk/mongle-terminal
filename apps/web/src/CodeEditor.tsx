@@ -13,7 +13,7 @@ import { css } from '@codemirror/lang-css';
 import { python } from '@codemirror/lang-python';
 import { isMarkdown } from './use-file-documents';
 
-function language(path: string) {
+export function language(path: string) {
   if (isMarkdown(path)) return markdown({ base: markdownLanguage });
   if (/\.[cm]?[jt]sx?$/i.test(path)) return javascript({ typescript: /\.tsx?$/i.test(path), jsx: /\.[jt]sx$/i.test(path) });
   if (/\.json$/i.test(path)) return json();
@@ -22,13 +22,15 @@ function language(path: string) {
   if (/\.py$/i.test(path)) return python();
   return [];
 }
-const highlighting = HighlightStyle.define([
+export const highlighting = HighlightStyle.define([
   { tag: [tags.keyword, tags.heading], color: 'var(--editor-keyword)' },
   { tag: [tags.string, tags.attributeValue, tags.url], color: 'var(--editor-string)' },
   { tag: [tags.number, tags.bool, tags.null], color: 'var(--editor-number)' },
   { tag: tags.comment, color: 'var(--text-secondary)', fontStyle: 'italic' },
   { tag: tags.strong, fontWeight: 'bold' }, { tag: tags.emphasis, fontStyle: 'italic' },
 ]);
+/** Shared colors for the editor and the read-only diff panes. Callers add their own height rule. */
+export const editorThemeSpec = { '.cm-scroller': { overflow: 'auto', fontFamily: 'var(--mono)', fontSize: '13px', lineHeight: '1.7' }, '.cm-content': { padding: '14px 0', caretColor: 'var(--text)' }, '.cm-gutters': { backgroundColor: 'var(--terminal)', color: 'var(--text-secondary)', border: 'none', paddingRight: '8px' }, '.cm-line': { padding: '0 16px 0 6px' }, '.cm-activeLine, .cm-activeLineGutter': { backgroundColor: 'var(--accent-dim)' }, '&.cm-focused': { outline: 'none' }, '.cm-cursor': { borderLeftColor: 'var(--text)' }, '.cm-selectionBackground, &.cm-focused .cm-selectionBackground': { backgroundColor: 'var(--editor-selection)' }, '.cm-panels, .cm-tooltip': { backgroundColor: 'var(--surface)', color: 'var(--text)', borderColor: 'var(--border)' }, '.cm-textfield, .cm-button': { color: 'var(--text)', background: 'var(--surface-raised)', borderColor: 'var(--border)' } };
 export type EditorSession = { json?: ReturnType<EditorState['toJSON']>; scrollTop?: number; scrollLeft?: number };
 type Props = { path: string; value: string; session: EditorSession; readOnly: boolean; active: boolean; onChange(value: string): void; onSave(): void };
 export function CodeEditor(props: Props) {
@@ -44,7 +46,7 @@ export function CodeEditor(props: Props) {
       EditorView.contentAttributes.of({ 'aria-label': `파일 내용: ${props.path}`, 'aria-multiline': 'true', spellcheck: 'false' }),
       keymap.of([{ key: 'Mod-s', run: () => { callbacks.current.onSave(); return true; } }, indentWithTab]),
       EditorView.updateListener.of(update => { if (update.docChanged && !replacing.current) callbacks.current.onChange(update.state.sliceDoc()); }),
-      EditorView.theme({ '&': { height: '100%', backgroundColor: 'var(--terminal)', color: 'var(--text)' }, '.cm-scroller': { overflow: 'auto', fontFamily: 'var(--mono)', fontSize: '13px', lineHeight: '1.7' }, '.cm-content': { padding: '14px 0', caretColor: 'var(--text)' }, '.cm-gutters': { backgroundColor: 'var(--terminal)', color: 'var(--text-secondary)', border: 'none', paddingRight: '8px' }, '.cm-line': { padding: '0 16px 0 6px' }, '.cm-activeLine, .cm-activeLineGutter': { backgroundColor: 'var(--accent-dim)' }, '&.cm-focused': { outline: 'none' }, '.cm-cursor': { borderLeftColor: 'var(--text)' }, '.cm-selectionBackground, &.cm-focused .cm-selectionBackground': { backgroundColor: 'var(--editor-selection)' }, '.cm-panels, .cm-tooltip': { backgroundColor: 'var(--surface)', color: 'var(--text)', borderColor: 'var(--border)' }, '.cm-textfield, .cm-button': { color: 'var(--text)', background: 'var(--surface-raised)', borderColor: 'var(--border)' } }),
+      EditorView.theme({ '&': { height: '100%', backgroundColor: 'var(--terminal)', color: 'var(--text)' }, ...editorThemeSpec }),
     ] };
     // Restore data only, with fresh callbacks/compartments for this mounted view.
     const saved = props.session.json;

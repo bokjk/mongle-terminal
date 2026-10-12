@@ -246,11 +246,12 @@ export type CodexTurnEvent = 'UserPromptSubmit' | 'PermissionRequest' | 'PreTool
 /**
  * A managed Codex hook event as the host accepts it: digests and flags only, never prompts or tool data.
  * turn: digest of Codex's turn id. agent: digest of the subagent that reported it, if one did.
+ * tool: digest of the tool name and its command (or input) that a request or a finished tool is about.
  */
 export type CodexAgentEvent =
   | { event: 'SessionStart'; source?: CodexSource }
   | { event: 'SessionEnd' }
-  | { event: CodexTurnEvent; turn: string; agent?: string; question?: true };
+  | { event: CodexTurnEvent; turn: string; agent?: string; tool?: string; question?: true };
 const CODEX_SOURCES: ReadonlySet<string> = new Set<CodexSource>(['startup', 'resume', 'clear', 'compact', 'fork']);
 const CODEX_TURN_EVENTS: ReadonlySet<string> = new Set<CodexTurnEvent>(['UserPromptSubmit', 'PermissionRequest', 'PreToolUse', 'PostToolUse', 'Stop', 'Interrupt']);
 /** Keeps exactly the fields the managed hook sends, in their exact shapes. */
@@ -260,14 +261,37 @@ export function validCodexEvent(value: unknown): CodexAgentEvent | undefined {
   if (v.event === 'SessionStart') return typeof v.source === 'string' && CODEX_SOURCES.has(v.source) ? {event:'SessionStart', source:v.source as CodexSource} : {event:'SessionStart'};
   if (v.event === 'SessionEnd') return {event:'SessionEnd'};
   if (typeof v.event !== 'string' || !CODEX_TURN_EVENTS.has(v.event) || typeof v.turn !== 'string' || !DIGEST.test(v.turn)) return;
-  if (v.agent !== undefined && (typeof v.agent !== 'string' || !DIGEST.test(v.agent))) return;
-  return {event:v.event as CodexTurnEvent, turn:v.turn, ...(typeof v.agent === 'string' ? {agent:v.agent} : {}), ...(v.question === true ? {question:true as const} : {})};
+  for (const digest of [v.agent, v.tool]) if (digest !== undefined && (typeof digest !== 'string' || !DIGEST.test(digest))) return;
+  return {event:v.event as CodexTurnEvent, turn:v.turn, ...(typeof v.agent === 'string' ? {agent:v.agent} : {}),
+    ...(typeof v.tool === 'string' ? {tool:v.tool} : {}), ...(v.question === true ? {question:true as const} : {})};
+}
+
+/** How long a permission request waits for Codex's prompt or its automatic review before it is shown anyway. */
+export const CODEX_PROMPT_WAIT_MS = 2500;
+/** What Codex draws on the visible screen: its approval prompt, or its automatic approval review at work. */
+export interface CodexScreen { prompt: boolean; review: boolean }
+interface CodexRequest {
+  /** The thread that asked: '' is the main thread, otherwise the subagent's digest. */
+  thread: string;
+  /** Digest of the tool the request is about, when the hook sent one. */
+  tool?: string;
+  kind: 'permission' | 'question';
+  /** Shown to the user. A permission request is not until Codex shows its prompt (or the wait ends). */
+  shown: boolean;
+  since: number;
 }
 
 /**
  * Codex states come only from the managed Codex hook through the host pipe, never titles or output.
  * Codex names every turn and reports an interrupt itself, so an event of another or a finished turn
- * changes nothing, and a tool report that arrives late (it runs in the background) cannot revive a turn.
+ * changes nothing, and a tool report that arrives late cannot revive a turn.
+ * Codex runs PermissionRequest hooks before it decides who answers: its automatic approval review may
+ * approve or deny without asking anyone. A permission request is therefore shown only once the screen
+ * shows Codex's approval prompt, dropped when the screen shows the automatic review instead, and shown
+ * anyway when neither appears in time. The screen never creates a request or a status by itself.
+ * A finished tool answers only its own request, so a tool that ran alongside a waiting one cannot hide
+ * it. A permission request names no tool id: requests and reports match by the digest of the tool name
+ * and its command (or input).
  * Delivered keys count only as Codex shows them: a cancel key interrupts the turn or declines the shown
  * request, and Enter that no other key preceded picks Codex's preselected "Yes, proceed", so the approved
  * tool runs on. Any other answer may be a rejection, which Codex does not report; an approval then proves
@@ -277,20 +301,41 @@ export class CodexTaskState {
   private status: AgentStatus = 'idle';
   /** Digest of the user's turn in progress; empty once it stopped or was interrupted. */
   private turn = '';
-  /** Requests waiting for the user, oldest first, by the thread that asked ('' is the main thread). */
-  private requests = new Map<string, 'permission' | 'question'>();
+  /** Requests of the turn in progress, oldest first. */
+  private requests: CodexRequest[] = [];
   /** No key reached the shown approval since it appeared, so its preselected answer holds. */
   private untouched = false;
+  /** When the last shown request was answered: the next one gets the full wait from then. */
+  private freedAt = 0;
+  /** Codex's review status has stayed on screen since it answered a request; it answers one request each time it appears. */
+  private reviewing = false;
   private paste = {active:false};
+  constructor(private readonly now: () => number = Date.now) {}
   private move(next: AgentStatus, finishedTurn = false): AgentStatusUpdate | undefined {
     const changed = next !== this.status;
     this.status = next;
     if (!changed && !finishedTurn) return;
     return {status:next, notify:finishedTurn || next === 'attention'};
   }
-  private clear() { this.requests.clear(); this.untouched = false; }
+  private clear() { this.requests = []; this.untouched = false; }
+  private anyShown() { return this.requests.some(request => request.shown); }
+  private show(request: CodexRequest): AgentStatusUpdate | undefined {
+    // Its preselection holds until a key reaches it, when nothing else was shown before it.
+    this.untouched = !this.anyShown() && request.kind === 'permission';
+    request.shown = true;
+    return this.move('attention');
+  }
   /** A new conversation, its end, or the shell prompt: nothing of the last turn runs any more. */
   reset(): AgentStatusUpdate | undefined { this.turn = ''; this.clear(); return this.move('idle'); }
+  /** A permission request waits for the screen to tell whether the user or Codex's review answers it. */
+  get awaitingPrompt(): boolean { return this.requests.some(request => !request.shown); }
+  private due(request: CodexRequest) { return Math.max(request.since, this.freedAt) + CODEX_PROMPT_WAIT_MS; }
+  /** Milliseconds until the oldest unshown request is shown anyway, or undefined when none waits.
+   * Codex shows one approval at a time, so nothing times out while another request is shown. */
+  promptWait(): number | undefined {
+    const waiting = this.requests.find(request => !request.shown);
+    return waiting && !this.anyShown() ? Math.max(0, this.due(waiting) - this.now()) : undefined;
+  }
 
   accept(event: CodexAgentEvent): AgentStatusUpdate | undefined {
     // Compaction continues the same conversation and turn; any other start is a new conversation.
@@ -301,24 +346,53 @@ export class CodexTaskState {
     if (event.event === 'UserPromptSubmit') { this.turn = event.turn; this.clear(); return this.move('working'); }
     // Everything else belongs to the turn in progress; a subagent's events carry the subagent's own turn ids.
     if (!this.turn || (event.agent === undefined && event.turn !== this.turn)) return;
-    const thread = event.agent ?? '';
-    if (event.event === 'PermissionRequest' || (event.event === 'PreToolUse' && event.question)) {
-      this.requests.delete(thread);
-      this.requests.set(thread, event.event === 'PermissionRequest' ? 'permission' : 'question');
-      // Shown at once only when nothing else waits; then its preselection holds until a key reaches it.
-      this.untouched = this.requests.size === 1 && event.event === 'PermissionRequest';
-      return this.move('attention');
+    const thread = event.agent ?? '', tool = event.tool;
+    const request = {thread, ...(tool ? {tool} : {}), shown:false, since:this.now()};
+    // Codex has not decided yet whether it asks the user or lets its automatic review answer.
+    if (event.event === 'PermissionRequest') { this.requests.push({...request, kind:'permission'}); this.reviewing = false; return; }
+    if (event.event === 'PreToolUse' && event.question) {
+      const question: CodexRequest = {...request, kind:'question'};
+      this.requests.push(question);
+      return this.show(question);
     }
     switch (event.event) {
-      case 'PostToolUse':
-        // A finished tool shows its thread going on, also after a key here lowered the status.
-        this.requests.delete(thread);
-        if (!this.requests.size) this.untouched = false;
-        return this.move(this.requests.size ? 'attention' : 'working');
+      case 'PostToolUse': {
+        // Only the finished tool's own request is answered. A report without a digest (an older hook
+        // script) answers the oldest request of its thread as before. The thread goes on, also after a
+        // key here lowered the status.
+        const index = this.requests.findIndex(waiting => waiting.thread === thread && (!tool || !waiting.tool || waiting.tool === tool));
+        if (index >= 0 && this.requests.splice(index, 1)[0].shown) this.freedAt = this.now();
+        if (this.anyShown()) return this.move('attention');
+        this.untouched = false;
+        return this.move('working');
+      }
       case 'Stop': this.turn = ''; this.clear(); return this.move('completed', true);
       case 'Interrupt': this.turn = ''; this.clear(); return this.move('idle');
       default: return;
     }
+  }
+
+  /**
+   * The visible screen while a permission request waits: Codex's approval prompt shows the oldest one;
+   * its automatic review answers all of them without the user. An approval then runs the tool, and a
+   * denial goes back to the model.
+   */
+  observeScreen(screen: CodexScreen): AgentStatusUpdate | undefined {
+    if (!screen.review) this.reviewing = false;
+    const waiting = this.requests.find(request => !request.shown);
+    if (!waiting) return;
+    // Codex shows one approval at a time: while one is shown, a prompt on screen is that one's.
+    if (screen.prompt) return this.anyShown() ? undefined : this.show(waiting);
+    // The review answers the oldest waiting request; a later one still gets its own prompt or review.
+    if (screen.review && !this.reviewing) { this.reviewing = true; this.requests.splice(this.requests.indexOf(waiting), 1); }
+    return;
+  }
+
+  /** Neither Codex's prompt nor its review was recognized in time: show the request as Codex asks. */
+  showOverdue(): AgentStatusUpdate | undefined {
+    const waiting = this.requests.find(request => !request.shown);
+    if (!waiting || this.anyShown() || this.due(waiting) > this.now()) return;
+    return this.show(waiting);
   }
 
   /** A delivered key is evidence about this shell's Codex, never a completion. */
@@ -331,15 +405,21 @@ export class CodexTaskState {
       this.clear();
       return this.move('idle');
     }
-    if (this.status !== 'attention') return;
+    if (this.status !== 'attention') {
+      // A prompt that was answered before its screen was recognized needs no showing any more.
+      const index = submitted ? this.requests.findIndex(request => !request.shown) : -1;
+      if (index >= 0) this.requests.splice(index, 1);
+      return;
+    }
     // Arrow keys, digits or letters may move the selection or answer through a shortcut.
     if (!submitted) { this.untouched = false; return; }
     const preselected = this.untouched && data === '\r';
     this.untouched = false;
-    const [oldest] = this.requests;
-    if (oldest) this.requests.delete(oldest[0]);
-    // Another request is shown next, with a selection nobody knows.
-    if (this.requests.size) return;
-    return this.move(preselected && oldest?.[1] === 'permission' ? 'working' : 'idle');
+    const index = this.requests.findIndex(request => request.shown);
+    const answered = index >= 0 ? this.requests.splice(index, 1)[0] : undefined;
+    if (answered) this.freedAt = this.now();
+    // Another shown request comes next, with a selection nobody knows.
+    if (this.anyShown()) return;
+    return this.move(preselected && answered?.kind === 'permission' ? 'working' : 'idle');
   }
 }

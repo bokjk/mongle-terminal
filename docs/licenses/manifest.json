@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "lockfileSha256": "81db8d307ae3150db679f808e5ddde61c0f9b002c9cd059af1b388cc46750e80",
-  "productionPackages": 161,
+  "lockfileSha256": "8b4bead2f0978d075ba5f3cce430c8194daa1ba1fbc8f6e44ff0a9b7ef2067ac",
+  "productionPackages": 162,
   "notices": [
     {
       "name": "@codemirror/autocomplete",
@@ -101,6 +101,16 @@
       "integrity": "sha512-28/+iWLYxKxsvGYhSYL7zaCZqLz5+FFFDq9tVsvGv9kv8RY4fFAchJ5WX9M3YrrRlTIsECjsXPqeNgnSmNP2dg==",
       "files": [
         "licenses/codemirror__lint6.9.7/LICENSE"
+      ]
+    },
+    {
+      "name": "@codemirror/merge",
+      "version": "6.12.2",
+      "license": "MIT",
+      "source": "git+https://code.haverbeke.berlin/codemirror/merge.git",
+      "integrity": "sha512-V8JvyAPjHbPupqP7BeMcsdsYCbyPij74jxIbaIJDORI+VZzW44zFmon8bF+oxGWvOKhcRmkiUMXd8MxHr3YA2w==",
+      "files": [
+        "licenses/codemirror__merge6.12.2/LICENSE"
       ]
     },
     {
