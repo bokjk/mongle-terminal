@@ -25,6 +25,11 @@ test('a path with spaces is one link from its drive or quote, never a misleading
   assert.deepEqual(paths('see C:\\a\\b.ts and src/c.ts'), ['C:\\a\\b.ts', 'src/c.ts'], 'separate paths stay separate');
   assert.deepEqual(paths('C:\\a\\b.ts src\\c.ts'), ['C:\\a\\b.ts', 'src\\c.ts']);
   assert.deepEqual(paths('folder\\my project\\src\\a.ts'), [], 'a tail whose start cannot be found is no link');
+  assert.deepEqual(paths('error C:\\work\\my long project\\src\\a.ts failed'), ['C:\\work\\my long project\\src\\a.ts'], 'any number of spaces');
+  assert.deepEqual(paths('saved C:\\work\\my file name.txt'), ['C:\\work\\my file name.txt'], 'spaces in the file name');
+  assert.deepEqual(paths('folder\\my long project\\src\\a.ts'), [], 'a tail several words after its start is no link either');
+  assert.deepEqual(paths('see C:\\a\\b.ts and then README.md'), ['C:\\a\\b.ts', 'README.md'], 'a found path is not the start of the next');
+  assert.deepEqual(paths('Edit the file README.md'), ['README.md']);
   const [match] = findPaths('x C:\\my dir\\a.ts y');
   assert.deepEqual([match!.start, match!.end, match!.text], [2, 16, 'C:\\my dir\\a.ts']);
 });

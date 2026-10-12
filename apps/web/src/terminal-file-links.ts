@@ -23,30 +23,30 @@ const BARE_EXTENSIONS = new Set(('md markdown txt pdf json jsonc yml yaml toml i
 const MAX_LINE = 4096;
 
 /**
- * A path with spaces ("C:\work\my project\a.ts") reaches the pattern only as its last words. When the
- * word before the match continues a path, join the match to the drive, ".\" or opening quote that began
- * it; when no such start is found, the match is only part of a path and is no link at all.
+ * A path with spaces ("C:\work\my long project\a.ts") reaches the pattern only as its last words. Join
+ * the match to the drive, ".\" or opening quote that began it, wherever the spaces are. When no start is
+ * found and the words just before look like part of a path, the match is only a tail and is no link at
+ * all. Another path already found is never used as a start, nor as such a word.
  * Answers undefined to keep the match as it is, null to drop it.
  */
 function joinSpaced(text: string, start: number, end: number, path: string, found: readonly PathMatch[]): { start: number; path: string } | null | undefined {
   if (text[start - 1] !== ' ') return undefined;
-  let tokenStart = start - 1;
-  while (tokenStart > 0 && !/\s/.test(text[tokenStart - 1]!)) tokenStart--;
-  const previous = text.slice(tokenStart, start - 1);
-  if (!previous || found.some(item => item.end === start - 1)) return undefined;
-  const from = Math.max(0, start - 260);
+  const earlier = found.reduce((last, item) => item.end <= start ? Math.max(last, item.end) : last, 0);
+  const from = Math.max(earlier, start - 260);
   const before = text.slice(from, start);
   const quote = Math.max(before.lastIndexOf('"'), before.lastIndexOf("'"), before.lastIndexOf('\x60'));
   if (quote >= 0 && text[end] === before[quote]) {
     const joined = before.slice(quote + 1) + path;
     return /["'\x60<>|?*\t]/.test(joined) ? null : { start: from + quote + 1, path: joined };
   }
-  if (!/[\\/]|^[("'\x60[]?[A-Za-z]:/.test(previous)) return undefined;
   let drive = -1;
   for (const match of before.matchAll(/(?<![\p{L}\p{N}_.])(?:[A-Za-z]:[\\/]|\.[\\/])/gu)) drive = from + match.index;
-  if (drive < 0 || found.some(item => drive >= item.start && drive < item.end)) return null;
-  const joined = text.slice(drive, start) + path;
-  return /["<>|?*\t]/.test(joined) || joined.slice(2).includes(':') ? null : { start: drive, path: joined };
+  if (drive >= 0) {
+    const joined = text.slice(drive, start) + path;
+    if (!/["<>|?*\t]/.test(joined) && !joined.slice(2).includes(':')) return { start: drive, path: joined };
+  }
+  const words = before.trimEnd().split(/\s+/).slice(-4);
+  return words.some(word => /[\\/]/.test(word)) ? null : undefined;
 }
 
 /** Every path in one line of text, with its optional :line:column. Web addresses are skipped. */
