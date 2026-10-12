@@ -116,4 +116,3 @@ test('the keep screen on setting can be turned on only where the browser can hol
     await page.getByText('이 브라우저에서는 사용할 수 없습니다.', { exact: false }).waitFor();
   });
 });
-

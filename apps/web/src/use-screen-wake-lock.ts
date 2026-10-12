@@ -38,4 +38,3 @@ export function useScreenWakeLock(active: boolean) {
     return holdScreenAwake((navigator as unknown as { wakeLock: WakeLockSource }).wakeLock);
   }, [active, visible]);
 }
-
