@@ -170,6 +170,7 @@ test('hook forwards the session and only digests of its turns over the pipe and 
     {...base, hook_event_name:'PermissionRequest', turn_id:'subagent-turn', agent_id:'agent-7', tool_name:'Bash', tool_input:{command:'secret command', description:'secret reason'}},
     {...base, hook_event_name:'PreToolUse', turn_id:'turn-1', tool_name:'request_user_input', tool_use_id:'call-1', tool_input:{questions:['secret question']}},
     {...base, hook_event_name:'PostToolUse', turn_id:'turn-1', tool_name:'Bash', tool_use_id:'call-2', tool_input:{command:'secret command'}, tool_response:output},
+    {...base, hook_event_name:'PostToolUse', turn_id:'turn-1', tool_name:'Bash', tool_use_id:'call-3', tool_input:{command:'secret other command'}, tool_response:'x'},
     {...base, hook_event_name:'Stop', turn_id:'turn-1', stop_hook_active:false, last_assistant_message:'secret answer'},
     {...base, hook_event_name:'Interrupt', turn_id:'turn-2'},
     {...base, hook_event_name:'SessionEnd', reason:'other'},
@@ -177,11 +178,16 @@ test('hook forwards the session and only digests of its turns over the pipe and 
   await settle();
   const sha = (value: string) => createHash('sha256').update(value).digest('hex');
   const head = {v:1, token:TOKEN, run:RUN, sessionId:ID};
-  assert.deepEqual(lines, [
+  const toolDigests = (lines as any[]).map(line => line.tool);
+  assert.deepEqual(toolDigests.map(tool => typeof tool === 'string' && /^[a-f0-9]{64}$/.test(tool)), [false, false, true, true, true, true, false, false, false], 'requests and tool reports name their tool by digest only');
+  assert.equal(toolDigests[4], toolDigests[2], 'a permission request and the report of its command name the same tool, description or not');
+  assert.notEqual(toolDigests[5], toolDigests[4], 'another command is another tool');
+  assert.deepEqual((lines as any[]).map(({tool, ...line}) => line), [
     {...head, event:'SessionStart', cwd:'D:\\work', source:'startup'},
     {...head, event:'UserPromptSubmit', turn:sha('turn-1')},
     {...head, event:'PermissionRequest', turn:sha('subagent-turn'), agent:sha('agent-7')},
     {...head, event:'PreToolUse', turn:sha('turn-1'), question:true},
+    {...head, event:'PostToolUse', turn:sha('turn-1')},
     {...head, event:'PostToolUse', turn:sha('turn-1')},
     {...head, event:'Stop', turn:sha('turn-1')},
     {...head, event:'Interrupt', turn:sha('turn-2')},

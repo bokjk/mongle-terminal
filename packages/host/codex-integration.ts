@@ -181,8 +181,8 @@ export async function installCodexIntegration(options: {codexHome: string; node?
       await rename(temp, file);
     }
     return {status:'installed', message:statusEvents
-      ? 'Codex 훅을 등록했습니다. Codex에서 /hooks를 열어 몽글터미널 훅을 신뢰해야 작업 상태 표시와 대화 재개가 동작합니다.'
-      : `Codex 대화 재개 훅을 등록했습니다. Codex에서 /hooks를 열어 몽글터미널 훅을 신뢰해야 동작합니다. 작업 상태 표시는 Codex CLI ${MIN_CODEX_STATUS_VERSION} 이상에서 사용할 수 있습니다.`};
+      ? 'Codex 훅을 등록했습니다. Codex를 켤 때 뜨는 Hooks need review 창이나 Codex의 /hooks에서 몽글터미널 훅을 신뢰해야 작업 상태 표시와 대화 재개가 동작합니다.'
+      : `Codex 대화 재개 훅을 등록했습니다. Codex를 켤 때 뜨는 Hooks need review 창이나 Codex의 /hooks에서 몽글터미널 훅을 신뢰해야 동작합니다. 작업 상태 표시는 Codex CLI ${MIN_CODEX_STATUS_VERSION} 이상에서 사용할 수 있습니다.`};
   } catch {
     return unavailable('Codex 자동 재개를 준비하지 못했습니다. Codex 설정 폴더의 hooks.json 형식과 접근 권한을 확인해 주세요.');
   } finally {

@@ -52,6 +52,8 @@ export interface TerminalEngineOptions {
   onAgentSession?: (session: import('./agent-status.js').AgentSessionIdentity | null) => void;
   /** The shell printed its token-authenticated prompt marker. */
   onShellPrompt?: () => void;
+  /** Codex's startup review of new or changed hooks is on screen (true) or gone again (false). */
+  onCodexHooksReview?: (visible: boolean) => void;
   /** Host lifetime gate; suppress signals without dropping final output/history. */
   notificationsEnabled?: () => boolean;
 }

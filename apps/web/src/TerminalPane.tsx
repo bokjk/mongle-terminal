@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { SearchAddon } from '@xterm/addon-search';
-import { Columns2, Rows2, Maximize2, Minimize2, X, Search, Copy, ClipboardPaste, RotateCcw, Pencil, Keyboard, Eye, SquareTerminal, GripVertical, Plus } from 'lucide-react';
+import { Columns2, Rows2, Maximize2, Minimize2, X, Search, Copy, ClipboardPaste, RotateCcw, Pencil, Keyboard, Eye, SquareTerminal, GripVertical, Plus, ShieldCheck } from 'lucide-react';
 import { BrowserPresentationAdapter } from '../../../packages/terminal/browser';
 import { DEFAULT_TOUCH_SCROLL_SPEED } from '../../../packages/terminal/touch-scrollback';
 import type { AppClient } from '../../../packages/client/index';
@@ -376,6 +376,7 @@ export function TerminalPane(props:PaneProps) {
     {props.dropPreview&&<div className="pane-drop-preview" data-drop-position={props.dropPreview.position} aria-live="polite"><span>{props.dropPreview.label}</span></div>}
     {(frameError||inputUncertain)&&<div className="connection-banner warning">{inputUncertain?'마지막 입력의 전달 여부를 확인해 주세요. 확인 후 제어권을 다시 가져올 수 있습니다.':frameError}</div>}
     {info.restoreError&&<div className="connection-banner warning">{info.restoreError}{info.historyAvailable?' 이전 기록은 그대로 남아 있습니다.':''}</div>}
+    {info.codexHooksReview&&info.status==='running'&&<div className="connection-banner codex-hooks-notice" role="status"><ShieldCheck size={15} aria-hidden="true"/><span><strong>Codex가 새 훅을 신뢰할지 묻고 있습니다.</strong> 몽글터미널의 Codex 작업 상태 표시와 대화 재개에 쓰는 훅입니다. 아래 화살표로 <strong>2. Trust all and continue</strong>를 고른 뒤 Enter를 누르세요. 다른 프로그램의 훅도 쓰고 있다면 <strong>1. Review hooks</strong>에서 하나씩 확인하세요.</span></div>}
     {historyTruncated&&<div className="history-notice">오래된 출력 일부를 생략하고 최근 기록을 표시합니다.</div>}
     <footer className="pane-footer"><span title={`${info.currentCwd?'현재 폴더':'시작 폴더 · 현재 경로 보고 없음'}: ${displayedCwd}`}>{displayedCwd}</span>{outsideWorktree(info,worktree)&&<span className="worktree-location">다른 폴더에서 작업 중</span>}{info.status==='running'?
       busy?<span className="control-chip" role="status">연결 중…</span>:
