@@ -26,6 +26,7 @@ import { ProjectOpenModal, ProjectWorktrees } from './Projects';
 import { aggregateTerminalStatus, terminalStatus, terminalStatusDescription, TerminalStatusBadge, TerminalStatusStale } from './TerminalStatus';
 import { useTerminalNotifications } from './use-terminal-notifications';
 import { useNotificationTarget, usePushPresence } from './use-push';
+import { useScreenWakeLock } from './use-screen-wake-lock';
 
 type Editor = {kind:'group';group?:Group;cwd?:string} | {kind:'terminal';terminal:TerminalInfo} | {kind:'new-terminal';splitTarget?:string;tabTarget?:string;axis?:'horizontal'|'vertical'} | {kind:'host'};
 type Dialog = {title:string;description:string;action:string;danger?:boolean;detail?:string;focusAction?:boolean;resolve:(value:boolean)=>void};
@@ -67,6 +68,8 @@ export function App(){
   useEffect(()=>savePreference('mongle.touchScrollSpeed',scrollSpeed),[scrollSpeed]);
   const [keyBar,setKeyBar] = useState(()=>sanitizeKeyBar(preference<unknown>('mongle.keyBar',undefined)));
   useEffect(()=>savePreference('mongle.keyBar',keyBar),[keyBar]);
+  const [keepScreenOn,setKeepScreenOn] = useState(()=>preference<unknown>('mongle.keepScreenOn',false)===true);
+  useEffect(()=>savePreference('mongle.keepScreenOn',keepScreenOn),[keepScreenOn]);
   const [sidebarWidth,setSidebarWidth] = useState(()=>{const width=preference<unknown>('mongle.sidebarWidth',212);return typeof width==='number'&&Number.isFinite(width)?Math.max(180,Math.min(360,width)):212;});
   const [mobile,setMobile] = useState(()=>matchMedia('(max-width:700px)').matches);
   const [ctrl,setCtrl] = useState(false);const [alt,setAlt] = useState(false);
@@ -79,6 +82,8 @@ export function App(){
   const stateRequests = useRef(0);
   const notify = useCallback((message:string)=>setToast(message),[]);
   const connected=connection.status==='connected';
+  // Opt-in, per device: a phone watching an agent work need not lock itself.
+  useScreenWakeLock(keepScreenOn&&connected&&Boolean(activeId));
   const [fileClient] = useState(() => explorerClient(client));
   const fileDocs = useFileDocuments(fileClient, state, connected, connection.connectionId);
   const [fileMaximized,setFileMaximized] = useState(false);
@@ -297,7 +302,7 @@ export function App(){
       {fileDocs.visible&&!group?.layout&&<div className="orphan-file-editor"><Suspense fallback={<p className="file-message">편집기를 여는 중…</p>}><FileEditorPanel files={fileDocs} treeOpen={false} onToggleTree={()=>setFilesOpen(true)} maximized={true} onMaximize={()=>fileDocs.setVisible(false)} onError={notify}/></Suspense></div>}
       <footer className="status-bar"><span><span className={`connection-dot ${connected?'connected':'offline'}`}/>{connected?'세션 연결됨':'오프라인'}</span><span>{state?`${state.terminals.filter(t=>t.status==='running').length}개 실행 중`:'연결 대기'}</span>{fileDocs.documents.length>0&&<button className="open-files-status" onClick={()=>fileDocs.setVisible(true)}>열린 파일 {fileDocs.documents.length}{fileDocs.unsaved?` · 수정 중 ${fileDocs.unsaved}`:''}</button>}<span className="status-right">{connection.owner?'이 컴퓨터':'원격 연결'} · {group?.cwd||'몽글터미널'}</span></footer>
     </main>
-    {settingsOpen&&state&&<Settings initialTab={settingsTab} client={client} state={state} owner={connection.owner} theme={theme} fontSize={fontSize} scrollSpeed={scrollSpeed} onScrollSpeed={setScrollSpeed} keyBar={keyBar} onKeyBar={updateKeyBar} refreshBlocked={fileDocs.unsaved > 0 || fileDocs.documents.some(doc => doc.saving)} onTheme={setTheme} onFontSize={setFontSize} onClose={()=>{setSettingsOpen(false);setSettingsTab(undefined);}} onError={notify}/>}
+    {settingsOpen&&state&&<Settings initialTab={settingsTab} client={client} state={state} owner={connection.owner} theme={theme} fontSize={fontSize} scrollSpeed={scrollSpeed} onScrollSpeed={setScrollSpeed} keyBar={keyBar} onKeyBar={updateKeyBar} keepScreenOn={keepScreenOn} onKeepScreenOn={setKeepScreenOn} refreshBlocked={fileDocs.unsaved > 0 || fileDocs.documents.some(doc => doc.saving)} onTheme={setTheme} onFontSize={setFontSize} onClose={()=>{setSettingsOpen(false);setSettingsTab(undefined);}} onError={notify}/>}
     {editor&&<EditorModal key={`${state?.hostId}:${group?.id}:${editor.kind}:${editor.kind==='group'?editor.group?.id:editor.kind==='new-terminal'?editor.tabTarget||editor.splitTarget:''}`} editor={editor} state={state} group={group} activeId={activeId} findComputers={window.mongle?.findComputers?refresh=>window.mongle!.findComputers!(refresh):undefined} pickDirectory={connected&&connection.owner&&window.mongle?.selectDirectory?path=>window.mongle!.selectDirectory!(path):undefined} onClose={()=>setEditor(undefined)} onSubmit={async values=>{
       const selection=hostSelection.current,navigation=projectNavigation.current,hostId=state?.hostId,bootId=state?.bootId;
       const sameHost=()=>selection===hostSelection.current&&layoutContext.current.hostId===hostId&&layoutContext.current.bootId===bootId;
