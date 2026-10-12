@@ -346,23 +346,28 @@ export function TerminalPane(props:PaneProps) {
     if(!state.capabilities?.includes('files.upload')){current.current.onError('이 컴퓨터의 몽글터미널을 업데이트하면 파일을 보낼 수 있습니다.');return;}
     if(uploadAbort.current){current.current.onError('파일을 보내는 중입니다. 끝난 뒤 다시 시도해 주세요.');return;}
     const tooLarge=files.find(file=>file.size>UPLOAD_LIMIT_BYTES);if(tooLarge){current.current.onError(tooLarge.name+': 10 MiB 이하 파일만 보낼 수 있습니다.');return;}
+    const empty=files.find(file=>file.size===0);if(empty){current.current.onError((empty.name||'파일')+': 빈 파일은 보낼 수 없습니다.');return;}
     const abort=new AbortController();uploadAbort.current=abort;
     const target={id:info.id,hostId:state.hostId,bootId:state.bootId,generation:info.generation,root:info.currentCwd||info.cwd};
     const kind=state.profiles.find(profile=>profile.id===info.profileId)?.kind;
-    const paths:string[]=[];
+    const saved:string[]=[],paths:string[]=[];
+    const savedNote=()=>saved.length?' PC에 이미 저장된 파일: '+saved.join(', '):'';
     try{
       for(const file of files){
         setUpload({name:file.name||'파일',percent:0,count:files.length,index:paths.length+1});
-        const saved=await uploadToTerminal(client,target,file,(sent,total)=>setUpload(value=>value&&{...value,percent:Math.floor(sent*100/total)}),abort.signal);
-        paths.push(pathForShell(saved.path,kind));
+        const result=await uploadToTerminal(client,target,file,(sent,total)=>setUpload(value=>value&&{...value,percent:Math.floor(sent*100/total)}),abort.signal);
+        saved.push(result.path);paths.push(pathForShell(result.path,kind));
       }
+      // A cancel pressed after the last answer still means: type nothing.
+      if(abort.signal.aborted)throw new DOMException('취소했습니다.','AbortError');
       const typed=await pasteInputRef.current(paths.join(' ')+' ');
       setUploadNotice(typed?(paths.length>1?'파일 '+paths.length+'개를 PC에 저장하고 경로를 입력 줄에 넣었습니다.':'파일을 PC에 저장하고 경로를 입력 줄에 넣었습니다.'):'');
-      if(!typed)current.current.onError('파일은 PC에 저장했지만 입력 줄에 넣지 못했습니다. 경로: '+paths.join(' '));
+      if(!typed)current.current.onError('파일은 PC에 저장했지만 입력 줄에 넣지 못했습니다.'+savedNote());
       else termRef.current?.focus();
     }catch(error){
-      if(!(error instanceof DOMException&&error.name==='AbortError'))current.current.onError(error instanceof Error?error.message:'파일을 보내지 못했습니다.');
-      else if(paths.length)current.current.onError('보내기를 취소했습니다. 먼저 저장된 파일: '+paths.join(' '));
+      const late=(error as {saved?:{path:string}}).saved;if(late)saved.push(late.path);
+      if(error instanceof DOMException&&error.name==='AbortError'){if(saved.length)current.current.onError('보내기를 취소해 입력 줄에는 넣지 않았습니다.'+savedNote());}
+      else current.current.onError((error instanceof Error?error.message:'파일을 보내지 못했습니다.')+savedNote());
     }finally{if(uploadAbort.current===abort)uploadAbort.current=undefined;setUpload(null);}
   }
   sendFilesRef.current=sendFiles;

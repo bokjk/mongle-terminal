@@ -40,51 +40,93 @@ export async function attachmentDirectory(base: string, protectedRoot: string): 
   return real;
 }
 
+const GIT_EXCLUDE_FAILED = '이 폴더의 Git 저장소 제외 목록(.git/info/exclude)에 첨부 폴더를 추가하지 못해 파일을 저장하지 않았습니다. 저장소 설정을 확인하거나 Git 저장소가 아닌 폴더에서 다시 보내 주세요.';
+/** Lines that leave .mongle-attachments out at every depth; an anchored "/.mongle-attachments/" covers only the root. */
+const COVERS_EVERY_DEPTH = /^(?:\*\*\/)?\.mongle-attachments\/?$/;
+
+/** A real directory or file (no link, junction or second hard link) whose resolved path stays inside parent. */
+async function ownedEntry(entry: string, parent: string, protectedRoot: string, kind: 'directory' | 'file') {
+  const info = await lstat(entry);
+  if (info.isSymbolicLink() || (kind === 'directory' ? !info.isDirectory() : !info.isFile() || info.nlink > 1)) throw new AppError('UPLOAD_GIT_EXCLUDE', GIT_EXCLUDE_FAILED);
+  const real = await realpath(entry);
+  if (!within(parent, real) || within(protectedRoot, real)) throw new AppError('UPLOAD_GIT_EXCLUDE', GIT_EXCLUDE_FAILED);
+  return real;
+}
+
 /**
  * Keeps attachments out of Git in the repository the folder belongs to, so an agent's "git add -A" does
  * not commit a phone screenshot. Only the repository's local exclude file (never committed) gets one line,
- * once. The repository is found by reading .git as the Git view does, without running Git.
+ * once. The repository is found by reading .git as the Git view does, without running Git. Every step of
+ * the path to the exclude file is checked like the attachment folder itself: a link or junction anywhere
+ * is refused. Any failure throws, so no file is saved where Git would pick it up.
  */
 export async function excludeFromGit(base: string, protectedRoot: string): Promise<string | undefined> {
-  const repository = await repositoryAt(base, protectedRoot).catch(() => undefined);
-  if (!repository) return undefined;
-  const marker = path.join(repository, '.git');
-  const info = await lstat(marker);
-  let metadata: string;
-  if (info.isFile()) {
-    const pointer = /^gitdir: (.+)\r?\n?$/.exec(await readFile(marker, 'utf8'))?.[1]?.trim();
-    if (!pointer) return undefined;
-    metadata = await safeMetadata(path.resolve(repository, pointer), protectedRoot);
-  } else metadata = await safeMetadata(marker, protectedRoot);
-  const common = await readFile(path.join(metadata, 'commondir'), 'utf8').then(pointer => safeMetadata(path.resolve(metadata, pointer.trim()), protectedRoot), () => metadata);
-  const exclude = path.join(common, 'info', 'exclude');
-  const current = await readFile(exclude, 'utf8').catch((error: NodeJS.ErrnoException) => { if (error.code === 'ENOENT') return ''; throw error; });
-  if (current.split(/\r?\n/).some(line => /^\/?\.mongle-attachments\/?$/.test(line.trim()))) return exclude;
-  await mkdir(path.dirname(exclude), { recursive: true });
-  await appendFile(exclude, (current && !current.endsWith('\n') ? '\n' : '') + '# Mongle Terminal attachments\n' + ATTACHMENT_FOLDER + '/\n');
-  return exclude;
+  try {
+    const repository = await repositoryAt(base, protectedRoot);
+    if (!repository) return undefined;
+    const marker = path.join(repository, '.git');
+    let metadata: string;
+    if ((await lstat(marker)).isFile()) {
+      const pointer = /^gitdir: (.+)\r?\n?$/.exec(await readFile(marker, 'utf8'))?.[1]?.trim();
+      if (!pointer) throw new AppError('UPLOAD_GIT_EXCLUDE', GIT_EXCLUDE_FAILED);
+      metadata = await safeMetadata(path.resolve(repository, pointer), protectedRoot);
+    } else metadata = await safeMetadata(marker, protectedRoot);
+    const common = await readFile(path.join(metadata, 'commondir'), 'utf8').then(pointer => safeMetadata(path.resolve(metadata, pointer.trim()), protectedRoot), () => metadata);
+    const infoPath = path.join(common, 'info');
+    await mkdir(infoPath).catch((error: NodeJS.ErrnoException) => { if (error.code !== 'EEXIST') throw error; });
+    const info = await ownedEntry(infoPath, common, protectedRoot, 'directory');
+    const exclude = path.join(info, 'exclude');
+    const exists = await lstat(exclude).then(() => true, (error: NodeJS.ErrnoException) => { if (error.code === 'ENOENT') return false; throw error; });
+    if (exists) await ownedEntry(exclude, info, protectedRoot, 'file');
+    const covered = (text: string) => text.split(/\r?\n/).some(line => COVERS_EVERY_DEPTH.test(line.trim()));
+    const current = exists ? await readFile(exclude, 'utf8') : '';
+    if (covered(current)) return exclude;
+    await appendFile(exclude, (current && !current.endsWith('\n') ? '\n' : '') + '# Mongle Terminal attachments\n' + ATTACHMENT_FOLDER + '/\n', { flag: exists ? 'a' : 'wx' });
+    await ownedEntry(exclude, info, protectedRoot, 'file');
+    if (!covered(await readFile(exclude, 'utf8'))) throw new AppError('UPLOAD_GIT_EXCLUDE', GIT_EXCLUDE_FAILED);
+    return exclude;
+  } catch (error) {
+    if (error instanceof AppError && error.code === 'UPLOAD_GIT_EXCLUDE') throw error;
+    throw new AppError('UPLOAD_GIT_EXCLUDE', GIT_EXCLUDE_FAILED);
+  }
 }
 
 type Upload = { owner: string; directory: string; part: string; name: string; size: number; received: number; handle: FileHandle; busy: boolean; timer: ReturnType<typeof setTimeout> };
+/** A begin still resolving folders: it holds its slot, and a disconnect or shutdown meanwhile cancels it. */
+type Starting = { owner: string; cancelled: boolean };
 
 export class Uploads {
   private uploads = new Map<string, Upload>();
+  private starting = new Set<Starting>();
+  private closed = false;
   constructor(private readonly dataDir: string, private readonly idleMs = IDLE_MS) {}
 
   async begin(owner: string, root: string, originalName: string, size: number): Promise<{ uploadId: string; chunkBytes: number; name: string }> {
+    if (this.closed) throw new AppError('HOST_UNAVAILABLE', '호스트가 종료 중입니다.');
     if (!Number.isSafeInteger(size) || size < 1) throw new AppError('UPLOAD_EMPTY', '빈 파일은 보낼 수 없습니다.');
     if (size > UPLOAD_MAX_BYTES) throw new AppError('UPLOAD_TOO_LARGE', '10 MiB 이하 파일만 보낼 수 있습니다.');
-    if ([...this.uploads.values()].filter(item => item.owner === owner).length >= PER_CONNECTION || this.uploads.size >= TOTAL) throw new AppError('UPLOAD_BUSY', '다른 파일을 보내는 중입니다. 잠시 후 다시 시도해 주세요.');
-    const { base, protectedRoot } = await resolveFileRoot(root, this.dataDir);
-    const directory = await attachmentDirectory(base, protectedRoot);
-    // Best effort: a repository Git cannot describe must not stop the file from arriving.
-    await excludeFromGit(base, protectedRoot).catch(() => undefined);
-    await removeStaleParts(directory);
-    const uploadId = randomUUID(), part = path.join(directory, '.' + uploadId + '.part');
-    const handle = await open(part, 'wx', 0o600);
-    const upload: Upload = { owner, directory, part, name: attachmentName(originalName), size, received: 0, handle, busy: false, timer: setTimeout(() => void this.discard(uploadId), this.idleMs) };
-    this.uploads.set(uploadId, upload);
-    return { uploadId, chunkBytes: UPLOAD_CHUNK_BYTES, name: upload.name };
+    // The slot is taken before the first await, so simultaneous begins cannot all pass the count.
+    const mine = [...this.uploads.values(), ...this.starting].filter(item => item.owner === owner).length;
+    if (mine >= PER_CONNECTION || this.uploads.size + this.starting.size >= TOTAL) throw new AppError('UPLOAD_BUSY', '다른 파일을 보내는 중입니다. 잠시 후 다시 시도해 주세요.');
+    const slot: Starting = { owner, cancelled: false };
+    this.starting.add(slot);
+    let handle: FileHandle | undefined, part: string | undefined;
+    try {
+      const { base, protectedRoot } = await resolveFileRoot(root, this.dataDir);
+      await excludeFromGit(base, protectedRoot);
+      const directory = await attachmentDirectory(base, protectedRoot);
+      await removeStaleParts(directory);
+      const uploadId = randomUUID();
+      part = path.join(directory, '.' + uploadId + '.part');
+      handle = await open(part, 'wx', 0o600);
+      if (slot.cancelled || this.closed) throw new AppError('UPLOAD_EXPIRED', '연결이 끊겨 파일 보내기를 중단했습니다. 다시 보내 주세요.');
+      const upload: Upload = { owner, directory, part, name: attachmentName(originalName), size, received: 0, handle, busy: false, timer: setTimeout(() => void this.discard(uploadId), this.idleMs) };
+      this.uploads.set(uploadId, upload);
+      return { uploadId, chunkBytes: UPLOAD_CHUNK_BYTES, name: upload.name };
+    } catch (error) {
+      if (handle) { await handle.close().catch(() => {}); await unlink(part!).catch(() => {}); }
+      throw error;
+    } finally { this.starting.delete(slot); }
   }
 
   async chunk(owner: string, uploadId: string, offset: number, data: Buffer): Promise<{ received: number }> {
@@ -115,10 +157,17 @@ export class Uploads {
   }
 
   async cancel(owner: string, uploadId: string): Promise<void> { this.own(owner, uploadId); await this.discard(uploadId); }
-  /** A connection that closed takes its unfinished uploads with it. */
-  async dropOwner(owner: string): Promise<void> { await Promise.all([...this.uploads].filter(([, item]) => item.owner === owner).map(([id]) => this.discard(id))); }
-  async close(): Promise<void> { await Promise.all([...this.uploads.keys()].map(id => this.discard(id))); }
-  get active(): number { return this.uploads.size; }
+  /** A connection that closed takes its unfinished uploads with it, including ones still starting. */
+  async dropOwner(owner: string): Promise<void> {
+    for (const slot of this.starting) if (slot.owner === owner) slot.cancelled = true;
+    await Promise.all([...this.uploads].filter(([, item]) => item.owner === owner).map(([id]) => this.discard(id)));
+  }
+  async close(): Promise<void> {
+    this.closed = true;
+    for (const slot of this.starting) slot.cancelled = true;
+    await Promise.all([...this.uploads.keys()].map(id => this.discard(id)));
+  }
+  get active(): number { return this.uploads.size + this.starting.size; }
 
   private own(owner: string, uploadId: string): Upload {
     const upload = this.uploads.get(uploadId);
@@ -145,4 +194,3 @@ async function removeStaleParts(directory: string) {
     if (info?.isFile() && now - info.mtimeMs > STALE_PART_MS) await unlink(file).catch(() => {});
   }
 }
-

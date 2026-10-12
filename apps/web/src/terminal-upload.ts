@@ -28,7 +28,10 @@ export async function uploadToTerminal(client: Requester, target: UploadTarget, 
       onProgress?.(Math.min(file.size, offset + bytes.length), file.size);
     }
     if (signal?.aborted) throw new DOMException('취소했습니다.', 'AbortError');
-    return await client.request<{ path: string; name: string }>('files.upload.finish', reference);
+    const saved = await client.request<{ path: string; name: string }>('files.upload.finish', reference);
+    // Cancelled while the PC was finishing: the file exists, but nothing may be typed for it.
+    if (signal?.aborted) throw Object.assign(new DOMException('취소했습니다.', 'AbortError'), { saved });
+    return saved;
   } catch (error) {
     void client.request('files.upload.cancel', reference).catch(() => {});
     throw error;
@@ -51,4 +54,3 @@ export function pathForShell(path: string, kind: ShellProfile['kind'] | undefine
   if (kind === 'cmd') return '"' + path + '"';
   return "'" + path.replaceAll("'", "''") + "'";
 }
-

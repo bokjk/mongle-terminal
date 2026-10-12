@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { link, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
@@ -106,6 +106,58 @@ test('attachments stay out of Git: one local exclude line, shared by worktrees, 
   assert.deepEqual(await readdir(plain), [ATTACHMENT_FOLDER], 'outside a repository only the attachment folder appears');
 });
 
+test('simultaneous begins cannot pass the limits, and a disconnect or shutdown during a begin leaves no file', async t => {
+  const { root, data, folder } = await fixture(t);
+  const uploads = new Uploads(data); t.after(() => uploads.close());
+  const many = await Promise.allSettled(Array.from({ length: 12 }, (_, index) => uploads.begin('device-' + index, root, 'a.txt', 3)));
+  assert.equal(many.filter(result => result.status === 'fulfilled').length, 8, 'eight in total');
+  assert.ok(many.filter(result => result.status === 'rejected').every(result => (result as PromiseRejectedResult).reason.code === 'UPLOAD_BUSY'));
+  await uploads.close();
+  const fresh = new Uploads(data); t.after(() => fresh.close());
+  const mine = await Promise.allSettled([1, 2, 3].map(() => fresh.begin('phone', root, 'b.txt', 3)));
+  assert.equal(mine.filter(result => result.status === 'fulfilled').length, 2, 'two per connection');
+  await fresh.dropOwner('phone');
+  const dropped = fresh.begin('phone', root, 'c.txt', 3);
+  await fresh.dropOwner('phone');
+  await assert.rejects(dropped, { code: 'UPLOAD_EXPIRED' });
+  const closing = fresh.begin('laptop', root, 'd.txt', 3);
+  await fresh.close();
+  await assert.rejects(closing, { code: 'UPLOAD_EXPIRED' });
+  await assert.rejects(fresh.begin('laptop', root, 'e.txt', 3), { code: 'HOST_UNAVAILABLE' });
+  assert.deepEqual((await readdir(folder)).filter(name => name.endsWith('.part')), [], 'no unfinished file is left behind');
+});
+
+test('the Git exclude file is written only where Git keeps it, and only a rule that covers every folder counts', async t => {
+  const { execFileSync } = await import('node:child_process');
+  const git = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8', windowsHide: true });
+  const { root, data } = await fixture(t);
+  const uploads = new Uploads(data); t.after(() => uploads.close());
+  // .git/info is a junction into the protected app data folder: refused before anything is saved.
+  const trap = path.join(root, 'trap'); await mkdir(trap); git(trap, 'init', '-q');
+  await rm(path.join(trap, '.git', 'info'), { recursive: true, force: true });
+  const protectedInfo = path.join(data, 'info'); await mkdir(protectedInfo); await writeFile(path.join(protectedInfo, 'exclude'), 'secret\n');
+  await symlink(protectedInfo, path.join(trap, '.git', 'info'), 'junction');
+  await assert.rejects(uploads.begin('phone', trap, 'a.png', 3), { code: 'UPLOAD_GIT_EXCLUDE' });
+  assert.equal(await readFile(path.join(protectedInfo, 'exclude'), 'utf8'), 'secret\n');
+  assert.deepEqual((await readdir(trap)).sort(), ['.git'], 'no attachment folder is made when exclusion fails');
+  // A hard-linked exclude file would write somewhere else too.
+  const linked = path.join(root, 'linked'); await mkdir(linked); git(linked, 'init', '-q');
+  const elsewhere = path.join(root, 'elsewhere.txt'); await writeFile(elsewhere, '');
+  await rm(path.join(linked, '.git', 'info', 'exclude'), { force: true });
+  await link(elsewhere, path.join(linked, '.git', 'info', 'exclude'));
+  await assert.rejects(uploads.begin('phone', linked, 'a.png', 3), { code: 'UPLOAD_GIT_EXCLUDE' });
+  assert.equal(await readFile(elsewhere, 'utf8'), '');
+  // A root-only rule does not cover a subfolder: the general rule is added and Git sees nothing.
+  const repo = path.join(root, 'repo'); await mkdir(path.join(repo, 'sub'), { recursive: true }); git(repo, 'init', '-q');
+  await writeFile(path.join(repo, '.git', 'info', 'exclude'), '/.mongle-attachments/\n');
+  const begun = await uploads.begin('phone', path.join(repo, 'sub'), 'a.png', 3);
+  await uploads.chunk('phone', begun.uploadId, 0, Buffer.from('abc'));
+  await uploads.finish('phone', begun.uploadId);
+  assert.equal(await readFile(path.join(repo, '.git', 'info', 'exclude'), 'utf8'), '/.mongle-attachments/\n# Mongle Terminal attachments\n.mongle-attachments/\n');
+  assert.equal(git(repo, 'status', '--porcelain', '--untracked-files=all'), '');
+});
+
+
 test('the host takes an upload only for a live terminal in its current folder and from the connection that began it', { skip: process.platform !== 'win32', timeout: 30000 }, async t => {
   const { root, data, folder } = await fixture(t, false);
   // The shell runs in the folder: close the host first, then remove the folder.
@@ -132,4 +184,3 @@ test('the host takes an upload only for a live terminal in its current folder an
   assert.deepEqual((await readdir(folder)).filter(name => name.endsWith('.part')), [], 'a disconnect removes the unfinished file');
   assert.ok(pending.uploadId);
 });
-

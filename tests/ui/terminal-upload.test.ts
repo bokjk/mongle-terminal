@@ -39,8 +39,12 @@ test('a file goes up in ordered chunks with progress, and any failure or abort c
   assert.deepEqual(calls.map(([method]) => method), ['files.upload.begin', 'files.upload.chunk', 'files.upload.cancel']);
 
   calls.length = 0;
+  // Cancelled while the PC was still answering finish: the saved file is reported, never returned as typed.
+  const late = new AbortController();
+  const slowFinish = { request: async (method: string) => { if (method === 'files.upload.begin') return { uploadId: 'u', chunkBytes: 16 }; if (method === 'files.upload.finish') { late.abort(); return { path: 'C:\\work\\late.png', name: 'late.png' }; } return {}; } };
+  await assert.rejects(uploadToTerminal(slowFinish as any, target, file(10), undefined, late.signal), (error: any) => error.name === 'AbortError' && error.saved?.path === 'C:\\work\\late.png');
+  calls.length = 0;
   await assert.rejects(uploadToTerminal(client as any, target, file(UPLOAD_LIMIT_BYTES + 1)), /10 MiB/);
   await assert.rejects(uploadToTerminal(client as any, target, file(0)), /빈 파일/);
   assert.deepEqual(calls, [], 'refused files never reach the PC');
 });
-

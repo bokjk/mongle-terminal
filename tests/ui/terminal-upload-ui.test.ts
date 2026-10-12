@@ -22,7 +22,7 @@ async function appSource(capabilities: string[]) {
     const state=()=>({hostId:'host',bootId:'boot',name:'테스트 PC',version:'0.1.0',protocolVersion:1,capabilities:${JSON.stringify(capabilities)},groups:[{id:'group',name:'그룹',cwd:'C:\\\\test',profileId:'pwsh',revision:1,layout:{type:'leaf',terminalId:'terminal'}}],terminals:[info],profiles:[{id:'pwsh',name:'PowerShell',executable:'pwsh.exe',args:[],kind:'powershell'}],settings:{name:'테스트 PC',recordHistory:true,scrollback:5000}});
     const frame=()=>({type:'snapshot',terminalId:info.id,generation:info.generation,bootId:'boot',seq:++seq,snapshot:{...${JSON.stringify(snapshot)},cols:info.cols,rows:info.rows}});
     const emitState=()=>listeners.forEach(fn=>fn({type:'state',state:state()}));
-    const h=window.uploadTest={calls:[],files:{},holdChunk:false,pendingChunk:null};
+    const h=window.uploadTest={calls:[],files:{},holdChunk:false,pendingChunk:null,holdFinish:false,pendingFinish:null};
     const request=async(method,params)=>{
       h.calls.push({method,params});
       if(method==='state.get')return state();
@@ -32,7 +32,7 @@ async function appSource(capabilities: string[]) {
       if(method==='terminal.ack')return {acknowledged:true};
       if(method==='files.upload.begin'){const id='00000000-0000-4000-8000-00000000000'+Object.keys(h.files).length;h.files[id]={name:params.name,size:params.size,data:''};return {uploadId:id,chunkBytes:4096,name:params.name};}
       if(method==='files.upload.chunk'){if(h.holdChunk)await new Promise(resolve=>{h.pendingChunk=resolve;});h.files[params.uploadId].data+=atob(params.dataBase64);return {received:h.files[params.uploadId].data.length};}
-      if(method==='files.upload.finish'){const file=h.files[params.uploadId];return {path:'C:\\\\test\\\\.mongle-attachments\\\\20261012-153000-abcd1234-'+file.name,name:file.name};}
+      if(method==='files.upload.finish'){if(h.holdFinish)await new Promise(resolve=>{h.pendingFinish=()=>{h.pendingFinish=null;resolve();};});const file=h.files[params.uploadId];return {path:'C:\\\\test\\\\.mongle-attachments\\\\20261012-153000-abcd1234-'+file.name,name:file.name};}
       return {ok:true};
     };
     window.mongle={request,subscribe:fn=>{listeners.add(fn);return()=>listeners.delete(fn);},onConnection:fn=>{fn({status:'connected',owner:true});return()=>{};},listHosts:async()=>[],addHost:async()=>{},removeHost:async()=>{},selectHost:async()=>{}};
@@ -101,6 +101,15 @@ test('a pasted screenshot uploads like a chosen file, and cancelling leaves noth
     await page.getByText('second.png 보내는 중', { exact: false }).waitFor({ state: 'detached' });
     assert.equal(await typed(page), 'C:\\test\\.mongle-attachments\\20261012-153000-abcd1234-clip.png ', 'a cancelled file types nothing');
     assert.equal(await calls(page, 'files.upload.finish'), 1);
+    // Cancel while the PC is still answering finish: the file is saved there, but nothing is typed.
+    await page.evaluate(() => { const h = (window as any).uploadTest; h.holdChunk = false; h.holdFinish = true; });
+    await paste('third.png');
+    await page.waitForFunction(() => Boolean((window as any).uploadTest.pendingFinish));
+    await page.getByRole('button', { name: '취소', exact: true }).click();
+    await page.evaluate(() => (window as any).uploadTest.pendingFinish());
+    await page.getByText('보내기를 취소해 입력 줄에는 넣지 않았습니다.', { exact: false }).waitFor();
+    await page.getByText('20261012-153000-abcd1234-third.png', { exact: false }).first().waitFor();
+    assert.equal(await typed(page), 'C:\\test\\.mongle-attachments\\20261012-153000-abcd1234-clip.png ', 'a cancel during finish types nothing');
     assert.deepEqual(errors, []);
   });
 });
@@ -117,4 +126,3 @@ test('a PC that cannot take files keeps the menu item disabled and a pasted imag
     assert.equal(await typed(page), '', 'no empty paste reaches the terminal either');
   });
 });
-
