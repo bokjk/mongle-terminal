@@ -66,7 +66,7 @@ test('the phone key bar keeps its default keys and fits narrow phones until some
   for (const width of [390, 320]) await withPage(source, async (page, errors) => {
     await page.goto((page as any).appUrl);
     await page.locator('.mobile-keys').waitFor();
-    assert.deepEqual(await barNames(page), ['Esc', 'Tab', 'Ctrl', 'Alt', '^C', '왼쪽', '아래', '위', '오른쪽', '키보드 열기']);
+    assert.deepEqual(await barNames(page), ['Esc', 'Tab', 'Ctrl', 'Alt', 'Ctrl+C', '왼쪽', '아래', '위', '오른쪽', '키보드 열기']);
     assert.ok(await overflow(page) <= 0, `the default bar fits at ${width}px without scrolling`);
     assert.deepEqual(errors, []);
   }, { width, height: 760 });
@@ -95,6 +95,28 @@ test('a saved key bar is shown in its order, sends each key, and scrolls sideway
     assert.ok(keyboard && keyboard.x + keyboard.width <= 390 && keyboard.width >= 30, 'the keyboard button stays on screen at its full size');
   }, { width: 390, height: 760 });
 });
+
+test('removing a latched Ctrl from the bar also turns it off, so later typing is plain', options, async () => {
+  const source = await appSource();
+  await withPage(source, async (page, errors) => {
+    await page.goto((page as any).appUrl);
+    await page.getByRole('button', { name: '키보드 열기', exact: true }).tap();
+    await page.getByText('여기서 제어 중', { exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Ctrl', exact: true }).tap();
+    assert.equal(await page.getByRole('button', { name: 'Ctrl', exact: true }).getAttribute('aria-pressed'), 'true');
+    await page.locator('button.icon-button[aria-label="설정"]').click();
+    await page.getByRole('button', { name: 'Ctrl (다음 키와 함께) 빼기', exact: true }).click();
+    await page.keyboard.press('Escape');
+    await page.getByRole('button', { name: 'Ctrl (다음 키와 함께) 빼기', exact: true }).waitFor({ state: 'detached' });
+    assert.equal(await page.getByRole('button', { name: 'Ctrl', exact: true }).count(), 0);
+    await page.getByRole('button', { name: '키보드 열기', exact: true }).tap();
+    await page.keyboard.type('c');
+    await page.waitForFunction(() => (window as any).keyBarTest.calls.some((call: any) => call.method === 'terminal.input'));
+    assert.equal(await sent(page), 'c', 'no hidden Ctrl turns c into Ctrl+C');
+    assert.deepEqual(errors, []);
+  });
+});
+
 
 test('the key bar editor adds, removes, reorders and resets keys and keeps focus on the edited row', options, async () => {
   const source = `
@@ -134,4 +156,3 @@ test('the key bar editor adds, removes, reorders and resets keys and keeps focus
     assert.deepEqual(errors, []);
   });
 });
-

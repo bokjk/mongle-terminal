@@ -49,4 +49,3 @@ export function KeyBarSettings({ ids, onChange }: { ids: readonly string[]; onCh
     <div className="form-row"><button type="button" className="button subtle" disabled={isDefaultKeyBar(ids)} onClick={() => onChange([...DEFAULT_KEY_BAR])}><RotateCcw size={15}/>기본값으로 되돌리기</button></div>
   </div>;
 }
-

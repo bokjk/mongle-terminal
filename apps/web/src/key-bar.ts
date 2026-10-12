@@ -12,11 +12,11 @@ export const KEY_BAR_KEYS: readonly KeyBarKey[] = [
   { id: 'shift-tab', label: '⇧Tab', name: 'Shift+Tab', aria: 'Shift+Tab', kind: 'key', data: '\x1b[Z' },
   { id: 'ctrl', label: 'Ctrl', name: 'Ctrl (다음 키와 함께)', kind: 'modifier', modifier: 'ctrl' },
   { id: 'alt', label: 'Alt', name: 'Alt (다음 키와 함께)', kind: 'modifier', modifier: 'alt' },
-  { id: 'ctrl-c', label: '^C', name: 'Ctrl+C', kind: 'key', data: '\x03' },
-  { id: 'ctrl-d', label: '^D', name: 'Ctrl+D', kind: 'key', data: '\x04' },
-  { id: 'ctrl-z', label: '^Z', name: 'Ctrl+Z', kind: 'key', data: '\x1a' },
-  { id: 'ctrl-l', label: '^L', name: 'Ctrl+L', kind: 'key', data: '\x0c' },
-  { id: 'ctrl-r', label: '^R', name: 'Ctrl+R', kind: 'key', data: '\x12' },
+  { id: 'ctrl-c', label: '^C', name: 'Ctrl+C', aria: 'Ctrl+C', kind: 'key', data: '\x03' },
+  { id: 'ctrl-d', label: '^D', name: 'Ctrl+D', aria: 'Ctrl+D', kind: 'key', data: '\x04' },
+  { id: 'ctrl-z', label: '^Z', name: 'Ctrl+Z', aria: 'Ctrl+Z', kind: 'key', data: '\x1a' },
+  { id: 'ctrl-l', label: '^L', name: 'Ctrl+L', aria: 'Ctrl+L', kind: 'key', data: '\x0c' },
+  { id: 'ctrl-r', label: '^R', name: 'Ctrl+R', aria: 'Ctrl+R', kind: 'key', data: '\x12' },
   { id: 'left', label: '←', name: '왼쪽', aria: '왼쪽', kind: 'key', data: '\x1b[D', arrow: 'left' },
   { id: 'down', label: '↓', name: '아래', aria: '아래', kind: 'key', data: '\x1b[B', arrow: 'down' },
   { id: 'up', label: '↑', name: '위', aria: '위', kind: 'key', data: '\x1b[A', arrow: 'up' },
@@ -60,4 +60,3 @@ export function moveKeyBarItem(ids: readonly string[], id: string, offset: -1 | 
 export function addKeyBarItem(ids: readonly string[], id: string): string[] { return sanitizeKeyBar([...ids, id]); }
 export function removeKeyBarItem(ids: readonly string[], id: string): string[] { return ids.filter(item => item !== id); }
 export function isDefaultKeyBar(ids: readonly string[]): boolean { return ids.length === DEFAULT_KEY_BAR.length && ids.every((id, index) => id === DEFAULT_KEY_BAR[index]); }
-

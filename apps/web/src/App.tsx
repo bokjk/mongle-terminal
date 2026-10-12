@@ -69,6 +69,8 @@ export function App(){
   const [sidebarWidth,setSidebarWidth] = useState(()=>{const width=preference<unknown>('mongle.sidebarWidth',212);return typeof width==='number'&&Number.isFinite(width)?Math.max(180,Math.min(360,width)):212;});
   const [mobile,setMobile] = useState(()=>matchMedia('(max-width:700px)').matches);
   const [ctrl,setCtrl] = useState(false);const [alt,setAlt] = useState(false);
+  // A latched Ctrl or Alt removed from the key bar would keep changing input with no key left to turn it off.
+  const updateKeyBar=(ids:string[])=>{setKeyBar(ids);if(!ids.includes('ctrl'))setCtrl(false);if(!ids.includes('alt'))setAlt(false);};
   const actions = useRef(new Map<string,PaneActions>());
   const layoutQueue = useRef<Promise<void>>(Promise.resolve());
   const hostSelection = useRef(0);
@@ -287,7 +289,7 @@ export function App(){
       {fileDocs.visible&&!group?.layout&&<div className="orphan-file-editor"><Suspense fallback={<p className="file-message">편집기를 여는 중…</p>}><FileEditorPanel files={fileDocs} treeOpen={false} onToggleTree={()=>setFilesOpen(true)} maximized={true} onMaximize={()=>fileDocs.setVisible(false)} onError={notify}/></Suspense></div>}
       <footer className="status-bar"><span><span className={`connection-dot ${connected?'connected':'offline'}`}/>{connected?'세션 연결됨':'오프라인'}</span><span>{state?`${state.terminals.filter(t=>t.status==='running').length}개 실행 중`:'연결 대기'}</span>{fileDocs.documents.length>0&&<button className="open-files-status" onClick={()=>fileDocs.setVisible(true)}>열린 파일 {fileDocs.documents.length}{fileDocs.unsaved?` · 수정 중 ${fileDocs.unsaved}`:''}</button>}<span className="status-right">{connection.owner?'이 컴퓨터':'원격 연결'} · {group?.cwd||'몽글터미널'}</span></footer>
     </main>
-    {settingsOpen&&state&&<Settings initialTab={settingsTab} client={client} state={state} owner={connection.owner} theme={theme} fontSize={fontSize} scrollSpeed={scrollSpeed} onScrollSpeed={setScrollSpeed} keyBar={keyBar} onKeyBar={setKeyBar} refreshBlocked={fileDocs.unsaved > 0 || fileDocs.documents.some(doc => doc.saving)} onTheme={setTheme} onFontSize={setFontSize} onClose={()=>{setSettingsOpen(false);setSettingsTab(undefined);}} onError={notify}/>}
+    {settingsOpen&&state&&<Settings initialTab={settingsTab} client={client} state={state} owner={connection.owner} theme={theme} fontSize={fontSize} scrollSpeed={scrollSpeed} onScrollSpeed={setScrollSpeed} keyBar={keyBar} onKeyBar={updateKeyBar} refreshBlocked={fileDocs.unsaved > 0 || fileDocs.documents.some(doc => doc.saving)} onTheme={setTheme} onFontSize={setFontSize} onClose={()=>{setSettingsOpen(false);setSettingsTab(undefined);}} onError={notify}/>}
     {editor&&<EditorModal key={`${state?.hostId}:${group?.id}:${editor.kind}:${editor.kind==='group'?editor.group?.id:editor.kind==='new-terminal'?editor.tabTarget||editor.splitTarget:''}`} editor={editor} state={state} group={group} activeId={activeId} findComputers={window.mongle?.findComputers?refresh=>window.mongle!.findComputers!(refresh):undefined} pickDirectory={connected&&connection.owner&&window.mongle?.selectDirectory?path=>window.mongle!.selectDirectory!(path):undefined} onClose={()=>setEditor(undefined)} onSubmit={async values=>{
       const selection=hostSelection.current,navigation=projectNavigation.current,hostId=state?.hostId,bootId=state?.bootId;
       const sameHost=()=>selection===hostSelection.current&&layoutContext.current.hostId===hostId&&layoutContext.current.bootId===bootId;

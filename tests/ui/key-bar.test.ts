@@ -26,4 +26,3 @@ test('moving, adding and removing keys never duplicates or drops another key', (
   assert.equal(isDefaultKeyBar([...DEFAULT_KEY_BAR]), true);
   assert.equal(isDefaultKeyBar(moveKeyBarItem(DEFAULT_KEY_BAR, 'tab', -1)), false);
 });
-

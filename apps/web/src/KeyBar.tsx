@@ -29,4 +29,3 @@ export function MobileKeyBar({ ids, modifiers, onKey, onModifier, onKeyboard }: 
     <button type="button" className="key-button key-keyboard" aria-label="키보드 열기" onPointerDown={hold} onClick={onKeyboard}><Keyboard size={18}/></button>
   </div>;
 }
-
