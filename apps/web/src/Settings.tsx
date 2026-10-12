@@ -7,6 +7,8 @@ import { RemoteAccessQr } from './RemoteAccessQr';
 import { PushSettings } from './PushSettings';
 import { hostClockOffset } from './host-clock';
 import { TOUCH_SCROLL_SPEEDS, touchScrollSpeed } from '../../../packages/terminal/touch-scrollback';
+import { KeyBarSettings } from './KeyBarSettings';
+import { DEFAULT_KEY_BAR } from './key-bar';
 
 type Tab = 'appearance' | 'host' | 'remote' | 'updates' | 'help';
 export type SettingsTab = Tab;
@@ -37,6 +39,9 @@ export interface SettingsProps {
   fontSize: number;
   scrollSpeed: number;
   onScrollSpeed: (value: number) => void;
+  /** The phone key bar; its editor shows only when onKeyBar is given. */
+  keyBar?: readonly string[];
+  onKeyBar?: (ids: string[]) => void;
   refreshBlocked?: boolean;
   /** Tab shown first, e.g. 'updates' when opened from the sidebar update notice. */
   initialTab?: Tab;
@@ -68,7 +73,7 @@ function remainingLabel(value: string | number, now: number) {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')} 남음`;
 }
 
-export function Settings({ client, state, owner, theme, fontSize, scrollSpeed, onScrollSpeed, refreshBlocked = false, initialTab = 'appearance', onTheme, onFontSize, onClose, onError }: SettingsProps) {
+export function Settings({ client, state, owner, theme, fontSize, scrollSpeed, onScrollSpeed, keyBar, onKeyBar, refreshBlocked = false, initialTab = 'appearance', onTheme, onFontSize, onClose, onError }: SettingsProps) {
   const [tab, setTab] = useState<Tab>(initialTab);
   const [name, setName] = useState(state.settings.name);
   const [recordHistory, setRecordHistory] = useState(state.settings.recordHistory);
@@ -236,6 +241,7 @@ export function Settings({ client, state, owner, theme, fontSize, scrollSpeed, o
               <div className="setting-row"><label className="setting-label" htmlFor={`${id}-scroll`}>모바일 스크롤 속도</label><select id={`${id}-scroll`} className="input" aria-describedby={`${id}-scroll-help`} value={scrollSpeed} onChange={event => onScrollSpeed(touchScrollSpeed(Number(event.target.value)))}>{TOUCH_SCROLL_SPEEDS.map(value => <option key={value} value={value}>{value}배{value === 0.5 ? ' (기본)' : ''}</option>)}</select></div>
               <p className="hint">천천히 밀면 손가락을 따라가고, 빠르게 넘기면 짧게 감속합니다. 다시 터치하면 멈춥니다. Claude·Codex에서는 프로그램에 따라 이동하는 줄 수가 다를 수 있습니다.</p>
             </div>
+            {onKeyBar && <KeyBarSettings ids={keyBar ?? DEFAULT_KEY_BAR} onChange={onKeyBar}/>}
           </>}
           {tab === 'host' && <div className="settings-section"><h3 className="settings-title">{state.name}</h3><p className="settings-description">이 컴퓨터의 이름과 기록 보관 방식을 설정합니다.</p>
             {!owner && <p className="hint">컴퓨터 설정은 해당 컴퓨터의 몽글터미널 앱에서 변경할 수 있습니다.</p>}
