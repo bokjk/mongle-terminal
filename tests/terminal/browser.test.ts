@@ -695,3 +695,52 @@ test('real Chrome mobile emulation: resize fences preserve the writable focused 
     assert.deepEqual(lateInput, { inputs: [['before', 'utf8'], ['after', 'utf8'], ['새', 'utf8'], ['fresh', 'utf8']],
       hardReadonly: true, disposedReadonly: true });
   }, true));
+
+test('real Chrome: Ctrl+click opens a printed path without reaching a mouse-reporting CLI, and a plain click still does',
+  browserOptions, async () => withTerminalBrowser(async (page, engine) => {
+    await engine.write('\x1b[?1006h\x1b[?1003hUpdate(src\\app.ts) done');
+    const frame = await engine.snapshot();
+    await page.evaluate(async snapshot => {
+      const h = (window as any).mongleTerminalTest;
+      await h.adapter.applySnapshot(snapshot);
+      h.adapter.setInputEnabled(true);
+    }, frame);
+    const cell = await terminalCellGeometry(page);
+    const reports = () => page.evaluate(() => (window as any).mongleTerminalTest.inputs.map(([data]: [string]) => data).filter((data: string) => data.startsWith('\x1b[<')));
+    const opened = () => page.evaluate(() => [...(window as any).mongleTerminalTest.openedPaths]);
+    // "Update(" fills columns 0-6, so column 9 is inside the path.
+    await page.keyboard.down('Control');
+    await page.mouse.click(cell.x + 9.5 * cell.width, cell.y);
+    await page.keyboard.up('Control');
+    assert.deepEqual(await opened(), ['src\\app.ts']);
+    assert.equal((await reports()).filter((data: string) => /^\x1b\[<(?:0|16|48);/.test(data)).length, 0, 'the opening press and release must not reach the CLI');
+    // A plain click on the same path belongs to the CLI, as before.
+    await page.mouse.click(cell.x + 9.5 * cell.width, cell.y);
+    assert.deepEqual(await opened(), ['src\\app.ts']);
+    assert.ok((await reports()).some((data: string) => /^\x1b\[<0;\d+;\d+M$/.test(data)), 'a plain press must reach the CLI');
+    // Ctrl+click away from any path is the CLI's too.
+    await page.keyboard.down('Control');
+    await page.mouse.click(cell.x + 2.5 * cell.width, cell.y);
+    await page.keyboard.up('Control');
+    assert.deepEqual(await opened(), ['src\\app.ts']);
+    assert.ok((await reports()).some((data: string) => /^\x1b\[<16;\d+;\d+M$/.test(data)), 'Ctrl+click outside a path keeps its CLI report');
+  }));
+
+test('real Chrome: Ctrl+click on a path in shell output reaches no later mouse handler (selection, tap control)',
+  browserOptions, async () => withTerminalBrowser(async (page, engine) => {
+    await engine.write('see C:\\work\\docs\\guide.md:12 now');
+    await page.evaluate(async snapshot => {
+      const h = (window as any).mongleTerminalTest;
+      await h.adapter.applySnapshot(snapshot);
+      // TerminalPane registers selection copy and tap-to-control on the same mount after the path links.
+      h.later = [];
+      for (const type of ['mousedown', 'mouseup', 'click']) document.querySelector('#terminal')!.addEventListener(type, () => h.later.push(type), true);
+    }, await engine.snapshot());
+    const cell = await terminalCellGeometry(page);
+    await page.keyboard.down('Control');
+    await page.mouse.click(cell.x + 8.5 * cell.width, cell.y);
+    await page.keyboard.up('Control');
+    await page.mouse.click(cell.x + 1.5 * cell.width, cell.y);
+    const result = await page.evaluate(() => { const h = (window as any).mongleTerminalTest; return { opened: [...h.openedPaths], later: h.later }; });
+    assert.deepEqual(result, { opened: ['C:\\work\\docs\\guide.md'], later: ['mousedown', 'mouseup', 'click'] }, 'only the plain click away from the path reaches later handlers');
+  }));

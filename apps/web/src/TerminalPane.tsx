@@ -16,6 +16,7 @@ import { terminalLabel, outsideWorktree } from './worktree-labels';
 import { useTerminalWorktree, type TerminalWorktreeActions } from './use-terminal-worktree';
 import { TerminalInputQueue } from './terminal-input-queue';
 import type { PresentedNotification } from './use-terminal-notifications';
+import { attachTerminalPathLinks } from './terminal-file-links';
 
 export interface PaneActions { key(data:string):void; paste(text:string):void; focus():void; search():void; }
 export interface PaneProps {
@@ -26,6 +27,8 @@ export interface PaneProps {
   onSelect():void; onSplit(axis:'horizontal'|'vertical'):void; onMaximize():void; onClose():void; onRename():void; onRestart():void; onMove():void; onClearHistory():void; onTerminate():void;
   dragEnabled?:boolean;dropPreview?:PaneDropPreview;onPaneDragStart?(event:DragEvent<HTMLElement>):void;onPaneDragEnd?():void;onPaneDragOver?(event:DragEvent<HTMLElement>):void;onPaneDrop?(event:DragEvent<HTMLElement>):void;onPanePointerStart?():void;dragClickAllowed?():boolean;
   onError(message:string):void; confirmPaste(text:string):Promise<boolean>; register(id:string, actions:PaneActions|null):void;
+  /** Ctrl+click on a path printed in this terminal; the path is as printed (not yet resolved). */
+  onOpenPath?(info:TerminalInfo, path:string):void;
 }
 // Keep uncertainty across pane remounts (group changes/maximize/reconnect) for
 // this client and exact live session. A new shell generation has a new latch.
@@ -97,6 +100,8 @@ export function TerminalPane(props:PaneProps) {
     termRef.current = terminal;
     const fit = new FitAddon(); const search = new SearchAddon(); terminal.loadAddon(fit); terminal.loadAddon(search); fitRef.current = fit; searchRef.current = search;
     terminal.open(mount.current);
+    // Paths in the output open with Ctrl+click, ahead of every other mouse handler on this mount.
+    const removePathLinks=attachTerminalPathLinks(terminal,mount.current,path=>{const handler=current.current.onOpenPath;if(!handler)return false;handler(current.current.info,path);return true;});
     terminal.textarea?.setAttribute('autocapitalize','off'); terminal.textarea?.setAttribute('autocomplete','off'); terminal.textarea?.setAttribute('autocorrect','off'); terminal.textarea?.setAttribute('spellcheck','false'); terminal.textarea?.setAttribute('aria-label',`${info.title} 터미널 입력`);
     // Terminal-generated clipboard writes are never applied to the system clipboard.
     const osc52 = terminal.parser.registerOscHandler(52,() => true);
@@ -310,7 +315,7 @@ export function TerminalPane(props:PaneProps) {
     const keyMap:Record<string,'ArrowUp'|'ArrowDown'|'ArrowLeft'|'ArrowRight'>={'\x1b[A':'ArrowUp','\x1b[B':'ArrowDown','\x1b[C':'ArrowRight','\x1b[D':'ArrowLeft'};
     current.current.register(info.id,{key:data=>{void runInputIntent(()=>keyMap[data]?adapter.sendKey(keyMap[data]):adapter.sendInput(data));},paste:text=>{void current.current.confirmPaste(text).then(approved=>{if(approved&&!disposed)void runInputIntent(()=>adapter.paste(text));});},focus:()=>startInputRef.current(),search:()=>setSearchOpen(true)});
     const pasteTarget=mount.current;
-    return()=>{disposed=true;invalidatePresentation();stopInput(true);removeTap();resizeInput.current=undefined;ready.current=false;epoch.current=undefined;connectionId.current=undefined;pendingFrame?.waiters.forEach(resolve=>resolve(false));pendingFrame=undefined;unsubscribe();observer.disconnect();clearTimeout(resizeTimer);pasteTarget?.removeEventListener('paste',handlePaste,true);pasteTarget?.removeEventListener('mousedown',beginSelection,true);window.removeEventListener('mouseup',finishSelection);osc52.dispose();adapter.dispose();terminal.dispose();current.current.register(info.id,null);void client.request('terminals.detach',{id:info.id}).catch(()=>{});};
+    return()=>{disposed=true;invalidatePresentation();stopInput(true);removeTap();removePathLinks();resizeInput.current=undefined;ready.current=false;epoch.current=undefined;connectionId.current=undefined;pendingFrame?.waiters.forEach(resolve=>resolve(false));pendingFrame=undefined;unsubscribe();observer.disconnect();clearTimeout(resizeTimer);pasteTarget?.removeEventListener('paste',handlePaste,true);pasteTarget?.removeEventListener('mousedown',beginSelection,true);window.removeEventListener('mouseup',finishSelection);osc52.dispose();adapter.dispose();terminal.dispose();current.current.register(info.id,null);void client.request('terminals.detach',{id:info.id}).catch(()=>{});};
   },[client,info.id,info.generation,state.hostId,state.bootId,props.connected]);
 
   useEffect(()=>{if(termRef.current){termRef.current.options.fontSize=props.fontSize;termRef.current.options.theme=themes[props.theme];}const frame=requestAnimationFrame(()=>void resizeRef.current());return()=>cancelAnimationFrame(frame);},[props.fontSize,props.theme]);
