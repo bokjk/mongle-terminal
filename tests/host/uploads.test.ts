@@ -158,6 +158,29 @@ test('the Git exclude file is written only where Git keeps it, and only a rule t
 });
 
 
+test('Git itself decides: an existing ignore is enough, and a rule that brings the folder back stops the upload', async t => {
+  const { execFileSync } = await import('node:child_process');
+  const git = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8', windowsHide: true });
+  const { root, data } = await fixture(t);
+  const uploads = new Uploads(data); t.after(() => uploads.close());
+  const ignored = path.join(root, 'ignored'); await mkdir(ignored); git(ignored, 'init', '-q');
+  await writeFile(path.join(ignored, '.gitignore'), '.mongle-attachments/\n');
+  await writeFile(path.join(ignored, '.git', 'info', 'exclude'), '');
+  const kept = await uploads.begin('phone', ignored, 'a.png', 3); await uploads.cancel('phone', kept.uploadId);
+  assert.equal(await readFile(path.join(ignored, '.git', 'info', 'exclude'), 'utf8'), '', 'a .gitignore that already ignores the folder needs no line');
+  for (const [name, exclude, gitignore] of [['negated-exclude', '.mongle-attachments/\n!.mongle-attachments/\n', ''], ['negated-gitignore', '', '!.mongle-attachments/\n']] as const) {
+    const repo = path.join(root, name); await mkdir(repo); git(repo, 'init', '-q');
+    await writeFile(path.join(repo, '.git', 'info', 'exclude'), exclude);
+    if (gitignore) await writeFile(path.join(repo, '.gitignore'), gitignore);
+    await assert.rejects(uploads.begin('phone', repo, 'a.png', 3), { code: 'UPLOAD_GIT_EXCLUDE', message: /다시 포함/ });
+    assert.ok(!(await readdir(repo)).includes(ATTACHMENT_FOLDER), name + ': nothing is saved where Git would see it');
+  }
+  const once = await readFile(path.join(root, 'negated-exclude', '.git', 'info', 'exclude'), 'utf8');
+  await assert.rejects(uploads.begin('phone', path.join(root, 'negated-exclude'), 'a.png', 3), { code: 'UPLOAD_GIT_EXCLUDE' });
+  assert.equal(await readFile(path.join(root, 'negated-exclude', '.git', 'info', 'exclude'), 'utf8'), once, 'a refused folder does not collect more lines');
+});
+
+
 test('the host takes an upload only for a live terminal in its current folder and from the connection that began it', { skip: process.platform !== 'win32', timeout: 30000 }, async t => {
   const { root, data, folder } = await fixture(t, false);
   // The shell runs in the folder: close the host first, then remove the folder.

@@ -3,7 +3,7 @@ import { appendFile, lstat, mkdir, open, readdir, readFile, realpath, rename, st
 import path from 'node:path';
 import { AppError } from '../protocol/index.js';
 import { resolveFileRoot, within } from './files.js';
-import { repositoryAt, safeMetadata } from './git.js';
+import { gitIgnores, repositoryAt, safeMetadata } from './git.js';
 
 /**
  * Files a phone or browser sends to a terminal's PC, so an agent there can read them by path.
@@ -41,6 +41,9 @@ export async function attachmentDirectory(base: string, protectedRoot: string): 
 }
 
 const GIT_EXCLUDE_FAILED = '이 폴더의 Git 저장소 제외 목록(.git/info/exclude)에 첨부 폴더를 추가하지 못해 파일을 저장하지 않았습니다. 저장소 설정을 확인하거나 Git 저장소가 아닌 폴더에서 다시 보내 주세요.';
+const GIT_EXCLUDE_REINCLUDED = '이 저장소의 Git 규칙(예: !.mongle-attachments/)이 첨부 폴더를 다시 포함해 Git에서 제외할 수 없으므로 파일을 저장하지 않았습니다. 그 규칙을 정리한 뒤 다시 보내 주세요.';
+/** A path inside the attachment folder, asked of Git to learn whether the folder is really ignored. */
+const PROBE = ATTACHMENT_FOLDER + '/probe';
 /** Lines that leave .mongle-attachments out at every depth; an anchored "/.mongle-attachments/" covers only the root. */
 const COVERS_EVERY_DEPTH = /^(?:\*\*\/)?\.mongle-attachments\/?$/;
 
@@ -58,12 +61,15 @@ async function ownedEntry(entry: string, parent: string, protectedRoot: string, 
  * not commit a phone screenshot. Only the repository's local exclude file (never committed) gets one line,
  * once. The repository is found by reading .git as the Git view does, without running Git. Every step of
  * the path to the exclude file is checked like the attachment folder itself: a link or junction anywhere
- * is refused. Any failure throws, so no file is saved where Git would pick it up.
+ * is refused. Whether the folder is really ignored is asked of Git itself (check-ignore), so a .gitignore
+ * that already ignores it needs no line, and a "!" rule that brings it back stops the upload. Any failure
+ * throws, so no file is saved where Git would pick it up.
  */
 export async function excludeFromGit(base: string, protectedRoot: string): Promise<string | undefined> {
   try {
     const repository = await repositoryAt(base, protectedRoot);
     if (!repository) return undefined;
+    if (await gitIgnores(base, PROBE)) return undefined;
     const marker = path.join(repository, '.git');
     let metadata: string;
     if ((await lstat(marker)).isFile()) {
@@ -78,12 +84,12 @@ export async function excludeFromGit(base: string, protectedRoot: string): Promi
     const exclude = path.join(info, 'exclude');
     const exists = await lstat(exclude).then(() => true, (error: NodeJS.ErrnoException) => { if (error.code === 'ENOENT') return false; throw error; });
     if (exists) await ownedEntry(exclude, info, protectedRoot, 'file');
-    const covered = (text: string) => text.split(/\r?\n/).some(line => COVERS_EVERY_DEPTH.test(line.trim()));
     const current = exists ? await readFile(exclude, 'utf8') : '';
-    if (covered(current)) return exclude;
+    // Our rule is there but Git still sees the folder: a later "!" rule (here or in .gitignore) brings it back.
+    if (current.split(/\r?\n/).some(line => COVERS_EVERY_DEPTH.test(line.trim()))) throw new AppError('UPLOAD_GIT_EXCLUDE', GIT_EXCLUDE_REINCLUDED);
     await appendFile(exclude, (current && !current.endsWith('\n') ? '\n' : '') + '# Mongle Terminal attachments\n' + ATTACHMENT_FOLDER + '/\n', { flag: exists ? 'a' : 'wx' });
     await ownedEntry(exclude, info, protectedRoot, 'file');
-    if (!covered(await readFile(exclude, 'utf8'))) throw new AppError('UPLOAD_GIT_EXCLUDE', GIT_EXCLUDE_FAILED);
+    if (!(await gitIgnores(base, PROBE))) throw new AppError('UPLOAD_GIT_EXCLUDE', GIT_EXCLUDE_REINCLUDED);
     return exclude;
   } catch (error) {
     if (error instanceof AppError && error.code === 'UPLOAD_GIT_EXCLUDE') throw error;

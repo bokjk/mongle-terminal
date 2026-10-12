@@ -81,7 +81,7 @@ export function TerminalPane(props:PaneProps) {
   const applyFrame = useRef<(event:SnapshotEvent, lease?:number, wait?:boolean)=>Promise<boolean>>(async()=>false);
   const acquireRef = useRef<(focus?:boolean,mode?:AcquireMode)=>Promise<number|undefined>>(async()=>undefined);
   const startInputRef = useRef<()=>void>(()=>{});
-  const pasteInputRef = useRef<(text:string)=>Promise<boolean>>(async()=>false);
+  const pasteInputRef = useRef<(text:string,allowed?:()=>boolean)=>Promise<boolean>>(async()=>false);
   const resizeRef = useRef<()=>Promise<void>>(async()=>{});
   const dimensions = () => { const dims = fitRef.current?.proposeDimensions(); return {cols:Math.max(20,Math.min(400,dims?.cols || info.cols)),rows:Math.max(5,Math.min(200,dims?.rows || info.rows))}; };
 
@@ -268,7 +268,7 @@ export function TerminalPane(props:PaneProps) {
       if(lease===undefined||!leaseActive(lease)||(!ready.current&&resizeInput.current?.epoch!==lease))return false;
       action();return true;
     }
-    pasteInputRef.current=text=>runInputIntent(()=>adapter.paste(text));
+    pasteInputRef.current=(text,allowed)=>runInputIntent(()=>{if(allowed&&!allowed())return;adapter.paste(text);});
     const removeTap=attachTerminalTap(mount.current,()=>terminal.hasSelection()||Boolean(window.getSelection()?.toString()),()=>startInputRef.current());
     const unsubscribe = client.subscribe(event => {
       if(event.type === 'snapshot' && event.terminalId === info.id)void applyFrame.current(event);
@@ -360,7 +360,9 @@ export function TerminalPane(props:PaneProps) {
       }
       // A cancel pressed after the last answer still means: type nothing.
       if(abort.signal.aborted)throw new DOMException('취소했습니다.','AbortError');
-      const typed=await pasteInputRef.current(paths.join(' ')+' ');
+      // Taking control may wait for the PC; a cancel pressed meanwhile is checked again right before typing.
+      const typed=await pasteInputRef.current(paths.join(' ')+' ',()=>!abort.signal.aborted);
+      if(abort.signal.aborted)throw new DOMException('취소했습니다.','AbortError');
       setUploadNotice(typed?(paths.length>1?'파일 '+paths.length+'개를 PC에 저장하고 경로를 입력 줄에 넣었습니다.':'파일을 PC에 저장하고 경로를 입력 줄에 넣었습니다.'):'');
       if(!typed)current.current.onError('파일은 PC에 저장했지만 입력 줄에 넣지 못했습니다.'+savedNote());
       else termRef.current?.focus();

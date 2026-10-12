@@ -85,6 +85,14 @@ function gitOptions(base: string) {
   return { cwd: base, env, windowsHide: true, timeout: 10000, maxBuffer: 2 * 1024 * 1024, encoding: 'utf8' as const };
 }
 
+/** Whether Git ignores this path below base, with every ignore source applied (check-ignore exits 0 ignored, 1 not). Same safe flags and environment as the Git view. */
+export async function gitIgnores(base: string, relative: string): Promise<boolean> {
+  // check-ignore refuses literal pathspecs; the path here is a fixed name, so the variable is simply left out.
+  const options = gitOptions(base); delete (options.env as Record<string, string | undefined>).GIT_LITERAL_PATHSPECS;
+  try { await execute('git', [...gitFlags, 'check-ignore', '-q', '--', relative], options); return true; }
+  catch (error) { if ((error as { code?: unknown }).code === 1) return false; throw error; }
+}
+
 /** Selected cwd only. No shell, network, hooks, index writes or Git mutations. */
 export async function inspectGit(root: string, dataDir: string): Promise<GitListing> {
   const { base, protectedRoot } = await resolveFileRoot(root, dataDir);

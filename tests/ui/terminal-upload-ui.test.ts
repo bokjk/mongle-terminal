@@ -22,12 +22,13 @@ async function appSource(capabilities: string[]) {
     const state=()=>({hostId:'host',bootId:'boot',name:'테스트 PC',version:'0.1.0',protocolVersion:1,capabilities:${JSON.stringify(capabilities)},groups:[{id:'group',name:'그룹',cwd:'C:\\\\test',profileId:'pwsh',revision:1,layout:{type:'leaf',terminalId:'terminal'}}],terminals:[info],profiles:[{id:'pwsh',name:'PowerShell',executable:'pwsh.exe',args:[],kind:'powershell'}],settings:{name:'테스트 PC',recordHistory:true,scrollback:5000}});
     const frame=()=>({type:'snapshot',terminalId:info.id,generation:info.generation,bootId:'boot',seq:++seq,snapshot:{...${JSON.stringify(snapshot)},cols:info.cols,rows:info.rows}});
     const emitState=()=>listeners.forEach(fn=>fn({type:'state',state:state()}));
-    const h=window.uploadTest={calls:[],files:{},holdChunk:false,pendingChunk:null,holdFinish:false,pendingFinish:null};
+    const h=window.uploadTest={calls:[],files:{},holdChunk:false,pendingChunk:null,holdFinish:false,pendingFinish:null,holdAcquire:false,pendingAcquire:null};
+    h.revoke=()=>{info={...info,controller:{connectionId:'other',deviceName:'다른 기기',epoch:++epoch,ready:true}};emitState();};
     const request=async(method,params)=>{
       h.calls.push({method,params});
       if(method==='state.get')return state();
       if(method==='terminals.attach')return frame();
-      if(method==='control.acquire'){info={...info,cols:params.cols,rows:params.rows,controller:{connectionId:'me',deviceName:'이 기기',epoch:++epoch,ready:true}};emitState();return {epoch,connectionId:'me',frame:frame()};}
+      if(method==='control.acquire'){if(h.holdAcquire)await new Promise(resolve=>{h.pendingAcquire=()=>{h.pendingAcquire=null;h.holdAcquire=false;resolve();};});info={...info,cols:params.cols,rows:params.rows,controller:{connectionId:'me',deviceName:'이 기기',epoch:++epoch,ready:true}};emitState();return {epoch,connectionId:'me',frame:frame()};}
       if(method==='terminal.resize'){info={...info,cols:params.cols,rows:params.rows};emitState();return {frame:frame()};}
       if(method==='terminal.ack')return {acknowledged:true};
       if(method==='files.upload.begin'){const id='00000000-0000-4000-8000-00000000000'+Object.keys(h.files).length;h.files[id]={name:params.name,size:params.size,data:''};return {uploadId:id,chunkBytes:4096,name:params.name};}
@@ -110,6 +111,14 @@ test('a pasted screenshot uploads like a chosen file, and cancelling leaves noth
     await page.getByText('보내기를 취소해 입력 줄에는 넣지 않았습니다.', { exact: false }).waitFor();
     await page.getByText('20261012-153000-abcd1234-third.png', { exact: false }).first().waitFor();
     assert.equal(await typed(page), 'C:\\test\\.mongle-attachments\\20261012-153000-abcd1234-clip.png ', 'a cancel during finish types nothing');
+    // Cancel while this window waits to take control back from another device: still nothing is typed.
+    await page.evaluate(() => { const h = (window as any).uploadTest; h.holdFinish = false; h.holdAcquire = true; h.revoke(); });
+    await paste('fourth.png');
+    await page.waitForFunction(() => Boolean((window as any).uploadTest.pendingAcquire));
+    await page.getByRole('button', { name: '취소', exact: true }).click();
+    await page.evaluate(() => (window as any).uploadTest.pendingAcquire());
+    await page.getByText('20261012-153000-abcd1234-fourth.png', { exact: false }).first().waitFor();
+    assert.equal(await typed(page), 'C:\\test\\.mongle-attachments\\20261012-153000-abcd1234-clip.png ', 'a cancel while taking control types nothing');
     assert.deepEqual(errors, []);
   });
 });
