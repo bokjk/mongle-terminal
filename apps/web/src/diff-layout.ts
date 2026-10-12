@@ -9,7 +9,11 @@ export function preferredLayout(): DiffLayout {
 export function rememberLayout(layout: DiffLayout) { try { localStorage.setItem('mongle.diff.layout', layout); } catch {} }
 /** Short tab suffix that tells staged and unstaged comparisons of the same file apart. */
 export function diffLabel(base: GitDiffBase, target: GitDiffTarget) {
-  return base === 'HEAD' && target === 'INDEX' ? '스테이징' : base === 'HEAD' ? 'HEAD 비교' : '작업 중';
+  return base === 'HEAD' && target === 'INDEX' ? '스테이징' : base === 'HEAD' ? 'HEAD 비교' : base === 'INDEX' ? '작업 중' : '기준';
+}
+/** Pane title for one side of a comparison. */
+export function sideName(side: GitDiffBase | GitDiffTarget) {
+  return side === 'HEAD' ? 'HEAD · 마지막 커밋' : side === 'INDEX' ? '스테이징' : side === 'WORKTREE' ? '작업 폴더 · 현재 파일' : '기준 커밋 · ' + side.slice(0, 7);
 }
 /** Line endings are normalized by the editor, so a CRLF-only change would otherwise look empty. */
 export function lineEndingsOnly(diff: GitDiff) {

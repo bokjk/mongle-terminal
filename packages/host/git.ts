@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 import { lstat, open, readFile, readlink, realpath } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import path from 'node:path';
-import { AppError, GIT_DIFF_BYTES, type GitChange, type GitDiff, type GitDiffBase, type GitDiffTarget, type GitListing, type GitStatusCode } from '../protocol/index.js';
+import { AppError, GIT_COMMIT_PATTERN, GIT_DIFF_BYTES, type GitChange, type GitDiff, type GitDiffBase, type GitDiffTarget, type GitListing, type GitReview, type GitReviewFile, type GitReviewMode, type GitStatusCode } from '../protocol/index.js';
 import { localPath, resolveFileRoot, within } from './files.js';
 
 const execute = promisify(execFile);
@@ -148,7 +148,7 @@ const notText = '바이너리이거나 지원하지 않는 인코딩이라 비�
  * configured program runs; the working copy is read directly and bounded.
  */
 export async function readGitDiff(root: string, dataDir: string, request: { path: string; originalPath?: string; base: GitDiffBase; target: GitDiffTarget }): Promise<GitDiff> {
-  if (request.base === 'INDEX' && request.target === 'INDEX') throw new AppError('INVALID_REQUEST', '비교할 두 버전을 확인해 주세요.');
+  if ((request.base === 'INDEX' && request.target === 'INDEX') || (request.base !== 'HEAD' && request.base !== 'INDEX' && !GIT_COMMIT_PATTERN.test(request.base))) throw new AppError('INVALID_REQUEST', '비교할 두 버전을 확인해 주세요.');
   if (!validRelative(request.path) || !request.path || (request.originalPath !== undefined && !validRelative(request.originalPath))) throw new AppError('FILES_OUTSIDE_ROOT', '현재 터미널 폴더 안의 파일만 비교할 수 있습니다.');
   const { base, protectedRoot } = await resolveFileRoot(root, dataDir);
   const discovered = await repositoryAt(base, protectedRoot);
@@ -165,9 +165,9 @@ export async function readGitDiff(root: string, dataDir: string, request: { path
       return { target, repositoryPath: path.relative(repositoryRoot, target).split(path.sep).join('/') };
     };
     const current = locate(request.path), previous = request.originalPath ? locate(request.originalPath) : current;
-    async function stored(area: 'HEAD' | 'INDEX', location: { repositoryPath: string }): Promise<DiffSide> {
-      // `HEAD:path` and `:path` are repository-relative; validRelative rules out ':' and '..'.
-      const spec = `${area === 'HEAD' ? 'HEAD' : ''}:${location.repositoryPath}`;
+    async function stored(area: GitDiffBase, location: { repositoryPath: string }): Promise<DiffSide> {
+      // `<commit>:path` and `:path` are repository-relative; validRelative rules out ':' and '..'.
+      const spec = `${area === 'INDEX' ? '' : area}:${location.repositoryPath}`;
       let type: string;
       try { type = (await run(['cat-file', '-t', spec])).stdout.trim(); }
       catch (error) { if (typeof (error as { code?: unknown }).code === 'number') return { text: null }; throw error; }
@@ -194,7 +194,7 @@ export async function readGitDiff(root: string, dataDir: string, request: { path
         return text === undefined ? { unavailable: notText } : { text };
       } finally { await file.close(); }
     }
-    const original = await stored(request.base, request.base === 'HEAD' ? previous : current);
+    const original = await stored(request.base, request.base === 'INDEX' ? current : previous);
     const modified = request.target === 'WORKTREE' ? await working(current) : await stored('INDEX', current);
     const result: GitDiff = { path: request.path, ...(request.originalPath ? { originalPath: request.originalPath } : {}), absolutePath: current.target, base: request.base, target: request.target, original: null, modified: null };
     const unavailable = 'unavailable' in original ? original.unavailable : 'unavailable' in modified ? modified.unavailable : undefined;
@@ -205,5 +205,90 @@ export async function readGitDiff(root: string, dataDir: string, request: { path
     const failure = error as NodeJS.ErrnoException & { killed?: boolean };
     if (failure.code === 'EACCES' || failure.code === 'EPERM') throw new AppError('FILES_UNAVAILABLE', '이 파일을 읽을 권한이 없습니다.');
     throw new AppError('GIT_UNAVAILABLE', failure.code === 'ENOENT' ? '이 컴퓨터에서 Git을 찾지 못했습니다. Git 설치 후 다시 시도해 주세요.' : failure.killed ? 'Git 조회가 오래 걸립니다. 잠시 후 다시 시도해 주세요.' : '변경 내용을 읽지 못했습니다. 새로고침한 뒤 다시 시도해 주세요.');
+  }
+}
+
+/** Parses `git diff --name-status -z`; renames and copies carry the old path first. */
+export function parseNameStatus(output: string) {
+  const entries: Array<{ code: string; path: string; originalPath?: string }> = [];
+  const tokens = output.split('\0');
+  for (let i = 0; i < tokens.length; i++) {
+    const code = tokens[i]; if (!code) continue;
+    if (/^[RC]\d*$/.test(code)) { const originalPath = tokens[++i], next = tokens[++i]; if (originalPath && next) entries.push({ code: code[0], path: next, originalPath }); }
+    else { const next = tokens[++i]; if (next) entries.push({ code: code[0], path: next }); }
+  }
+  return entries;
+}
+
+/**
+ * Lists every file that differs between a base commit and the working folder, like a pull request.
+ * In branch mode the base is where HEAD left `preferredBase` (or the remote default branch);
+ * otherwise, and as a fallback, it is HEAD. Only tree-to-tree diffs run here; file content is read by readGitDiff.
+ */
+export async function readGitReview(root: string, dataDir: string, mode: GitReviewMode, preferredBase?: (repositoryRoot: string) => string | undefined): Promise<GitReview> {
+  const listing = await inspectGit(root, dataDir);
+  if (listing.state !== 'repository') return listing;
+  const { base, protectedRoot } = await resolveFileRoot(root, dataDir);
+  const options = gitOptions(base);
+  const run = async (args: string[]) => (await execute('git', [...gitFlags, ...args], options)).stdout.trim();
+  const attempt = async (args: string[]) => { try { return await run(args); } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') throw error; return ''; } };
+  try {
+    const head = await attempt(['rev-parse', '--verify', '--quiet', 'HEAD^{commit}']);
+    let baseCommit = head || 'HEAD', baseLabel = 'HEAD', used: GitReviewMode = 'head', notice: string | undefined;
+    if (mode === 'branch') {
+      const preferred = preferredBase?.(listing.repositoryRoot);
+      for (const reference of [...new Set([preferred, 'origin/HEAD'].filter((value): value is string => Boolean(value)))]) {
+        if (!head) break;
+        const commit = await attempt(['rev-parse', '--verify', '--quiet', '--end-of-options', reference + '^{commit}']);
+        const fork = commit && GIT_COMMIT_PATTERN.test(commit) ? await attempt(['merge-base', head, commit]) : '';
+        if (!fork || !GIT_COMMIT_PATTERN.test(fork)) continue;
+        baseCommit = fork; used = 'branch';
+        baseLabel = reference === 'origin/HEAD' ? (await attempt(['rev-parse', '--abbrev-ref', 'origin/HEAD'])) || reference : reference;
+        break;
+      }
+      if (used !== 'branch') notice = head ? '비교할 기준 브랜치를 찾지 못해 커밋하지 않은 변경만 보여 줍니다.' : '아직 커밋이 없어 커밋하지 않은 변경만 보여 줍니다.';
+    }
+    type Entry = { status?: string; originalPath?: string; atBase: boolean; inWorktree: boolean; conflicted?: boolean };
+    const entries = new Map<string, Entry>();
+    const inside = (relative: string) => validRelative(relative) && within(base, path.resolve(base, relative)) && !within(protectedRoot, path.resolve(base, relative));
+    if (used === 'branch' && baseCommit !== head) {
+      // Tree-to-tree only: no working-folder reads, so no clean filters or index refresh run here.
+      for (const entry of parseNameStatus(await run(['diff', '--relative', '--name-status', '-z', '-M', '--no-ext-diff', '--no-textconv', '--no-color', baseCommit, head]))) {
+        if (!inside(entry.path) || (entry.originalPath && !inside(entry.originalPath))) continue;
+        if (entry.code === 'R' && entry.originalPath) {
+          entries.set(entry.path, { originalPath: entry.originalPath, atBase: true, inWorktree: true });
+          entries.set(entry.originalPath, { atBase: true, inWorktree: false, status: 'moved' });
+        } else entries.set(entry.path, { atBase: entry.code !== 'A' && entry.code !== 'C', inWorktree: entry.code !== 'D' });
+      }
+    }
+    for (const change of listing.changes) {
+      const previous = entries.get(change.path);
+      // Without a branch entry, HEAD and the base agree for this path.
+      const atBase = previous ? previous.atBase : !(change.untracked && !change.index) && change.index !== 'A' && change.index !== 'R' && change.index !== 'C';
+      const inWorktree = change.conflicted || change.untracked || (change.worktree !== 'D' && !(change.index === 'D' && !change.untracked));
+      const next: Entry = { atBase: previous?.status === 'moved' ? true : atBase, inWorktree, conflicted: change.conflicted, originalPath: previous?.originalPath };
+      if (change.index === 'R' && change.originalPath) {
+        const origin = entries.get(change.originalPath);
+        if (origin?.originalPath) next.originalPath = origin.originalPath;
+        else if (origin && !origin.atBase) next.atBase = false;
+        else next.originalPath = change.originalPath;
+        next.atBase = next.atBase || Boolean(next.originalPath);
+        entries.set(change.originalPath, { atBase: true, inWorktree: false, status: 'moved' });
+      }
+      entries.set(change.path, next);
+    }
+    const files: GitReviewFile[] = [];
+    for (const [file, entry] of entries) {
+      if (entry.status === 'moved' && !entry.inWorktree) continue;
+      const status = entry.conflicted ? 'conflicted' : entry.atBase && entry.inWorktree ? (entry.originalPath ? 'renamed' : 'modified') : entry.inWorktree ? 'added' : entry.atBase ? 'deleted' : undefined;
+      if (status) files.push({ path: file, ...(status === 'renamed' ? { originalPath: entry.originalPath } : {}), status });
+    }
+    files.sort((a, b) => a.path.localeCompare(b.path, 'en'));
+    const truncated = listing.truncated || files.length > GIT_CHANGE_LIMIT;
+    return { state: 'repository', root, repositoryRoot: listing.repositoryRoot, branch: listing.branch, detached: listing.detached, mode: used, base: baseCommit, baseLabel, ...(notice ? { notice } : {}), files: files.slice(0, GIT_CHANGE_LIMIT), truncated };
+  } catch (error) {
+    if (error instanceof AppError) throw error;
+    const failure = error as NodeJS.ErrnoException & { killed?: boolean };
+    return { state: 'unavailable', root, message: failure.code === 'ENOENT' ? '이 컴퓨터에서 Git을 찾지 못했습니다. Git 설치 후 새로고침해 주세요.' : failure.killed || failure.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' ? 'Git 조회가 오래 걸리거나 변경이 너무 많습니다. 잠시 후 새로고침해 주세요.' : '변경 목록을 읽지 못했습니다. 새로고침해 주세요.' };
   }
 }

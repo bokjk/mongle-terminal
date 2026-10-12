@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { FILE_EDIT_BYTES, type FileDocument, type GitDiff, type GitDiffBase, type GitDiffTarget, type HostState, type Transport } from '../../../packages/protocol';
+import { FILE_EDIT_BYTES, type FileDocument, type GitDiff, type GitDiffBase, type GitDiffTarget, type GitReview, type GitReviewMode, type HostState, type Transport } from '../../../packages/protocol';
 import type { EditorSession } from './CodeEditor';
 import { preferredLayout, type DiffLayout } from './diff-layout';
 import { loadPdfDocument, type PdfDocument } from './pdf-document';
@@ -8,6 +8,8 @@ import type { ExplorerClient } from './explorer-queue';
 export type FileReference = { id: string; hostId: string; bootId: string; generation: string; root: string };
 /** A read-only comparison tab for one Git change; it never holds an edit grant. */
 export type DiffDocument = { base: GitDiffBase; target: GitDiffTarget; originalPath?: string; data?: GitDiff; layout: DiffLayout; collapse: boolean };
+/** Every change in one terminal folder, read like a pull request. focus scrolls to a file each time token changes. */
+export type ReviewDocument = { mode: GitReviewMode; data?: GitReview; focus?: { path: string; token: number } };
 export type OpenDocument = {
   key: string; name: string; reference: FileReference; path: string; file?: FileDocument;
   text: string; baseline: string; busy: boolean; saving: boolean; error?: string; changedOnDisk?: boolean;
@@ -15,12 +17,14 @@ export type OpenDocument = {
   editorSession: EditorSession;
   pdf?: PdfDocument; pdfPage?: number; pdfZoom?: number; progress?: number;
   diff?: DiffDocument;
+  review?: ReviewDocument;
 };
 const normalize = (value: string) => value.replaceAll('\\', '/').replace(/\/+$/, '').toLowerCase();
 export const isMarkdown = (path: string) => /\.(md|markdown|mdown)$/i.test(path);
 export const isPdf = (path: string) => /\.pdf$/i.test(path);
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : '파일 작업을 완료하지 못했습니다.';
 export const dirtyDocument = (doc: OpenDocument) => doc.text !== doc.baseline;
+export function preferredReviewMode(): GitReviewMode { try { return localStorage.getItem('mongle.review.mode') === 'head' ? 'head' : 'branch'; } catch { return 'branch'; } }
 function encodeText(text: string) {
   const bytes = new TextEncoder().encode(text);
   if (bytes.length > FILE_EDIT_BYTES) throw new Error('저장할 내용은 UTF-8 기준 64 KiB 이하여야 합니다.');
@@ -58,6 +62,19 @@ export function useFileDocuments(client: Transport, state: HostState | undefined
     let reference = { ...doc.reference, bootId: context.current.state!.bootId };
     if (replace) patch(key, { busy: true, error: undefined, loadId });
     try {
+      if (doc.review) {
+        if (!context.current.state?.capabilities?.includes('git.review')) throw new Error('이 컴퓨터를 업데이트하면 변경 검토를 사용할 수 있습니다.');
+        const terminal = context.current.state.terminals.find(info => normalize(info.currentCwd || info.cwd) === normalize(doc.reference.root));
+        if (!terminal) throw new Error('처음 변경 검토를 연 폴더의 터미널로 이동한 뒤 다시 열어 주세요.');
+        reference = { ...reference, id: terminal.id, generation: terminal.generation };
+        const mode = doc.review.mode;
+        const data = await client.request<GitReview>('git.review', { ...reference, mode });
+        const latest = current.current.find(item => item.key === key);
+        if (!latest?.review || latest.review.mode !== mode || !available(latest) || context.current.connectionId !== startConnection || (replace && latest.loadId !== loadId)) return;
+        if (!replace && JSON.stringify(latest.review.data) === JSON.stringify(data)) return;
+        patch(key, { review: { ...latest.review, data }, reference, busy: false, error: undefined, connectionId: startConnection });
+        return;
+      }
       if (doc.diff) {
         if (!context.current.state?.capabilities?.includes('git.diff')) throw new Error('이 컴퓨터를 업데이트하면 변경 내용을 비교할 수 있습니다.');
         const terminal = context.current.state.terminals.find(info => normalize(info.currentCwd || info.cwd) === normalize(doc.reference.root));
@@ -131,6 +148,23 @@ export function useFileDocuments(client: Transport, state: HostState | undefined
     update(docs => [...docs, { key, name: path.split(/[\\/]/).at(-1) || path, path, reference, text: '', baseline: '', busy: false, saving: false, mode: 'edit', loadId: 0, editorSession: {}, diff: { base, target, ...(originalPath ? { originalPath } : {}), layout: preferredLayout(), collapse: true } }]);
     await load(key);
   }
+  async function openReview(reference: FileReference, focusPath?: string) {
+    const key = `${reference.hostId}:review:${normalize(reference.root)}`;
+    setActiveKey(key); setVisible(true);
+    const focus = focusPath ? { path: focusPath, token: Date.now() } : undefined;
+    const existing = current.current.find(doc => doc.key === key);
+    if (existing) { if (focus) patch(key, { review: { ...existing.review!, focus } }); void load(key, !existing.review?.data); return; }
+    if (current.current.length >= 24) { const last = current.current.at(-1)!; setActiveKey(last.key); patch(last.key, { error: '파일은 최대 24개까지 열 수 있습니다. 사용하지 않는 파일 탭을 닫아 주세요.' }); return; }
+    update(docs => [...docs, { key, name: '변경 검토', path: '', reference, text: '', baseline: '', busy: false, saving: false, mode: 'edit', loadId: 0, editorSession: {}, review: { mode: preferredReviewMode(), ...(focus ? { focus } : {}) } }]);
+    await load(key);
+  }
+  function setReviewMode(key: string, mode: GitReviewMode) {
+    const doc = current.current.find(item => item.key === key); if (!doc?.review || doc.review.mode === mode) return;
+    try { localStorage.setItem('mongle.review.mode', mode); } catch {}
+    patch(key, { review: { ...doc.review, mode, data: undefined } });
+    void load(key);
+  }
+  const request = <T,>(method: string, params: unknown, signal?: AbortSignal) => (client as ExplorerClient).request<T>(method, params, signal);
   async function save(key: string) {
     const doc = current.current.find(item => item.key === key);
     if (!doc || !doc.file?.documentId || !doc.file.version || !available(doc) || doc.busy || doc.saving || !dirtyDocument(doc)) return;
@@ -154,7 +188,7 @@ export function useFileDocuments(client: Transport, state: HostState | undefined
     if (!current.current.length) setVisible(false);
   }
   useEffect(() => {
-    if (!visible || !(active?.file?.documentId || active?.diff) || !connected) return;
+    if (!visible || !(active?.file?.documentId || active?.diff || active?.review) || !connected) return;
     let checking = false;
     const refresh = async () => {
       const doc = current.current.find(item => item.key === activeKey);
@@ -164,7 +198,7 @@ export function useFileDocuments(client: Transport, state: HostState | undefined
     const timer = setInterval(() => void refresh(), 5000);
     window.addEventListener('focus', refresh);
     return () => { clearInterval(timer); window.removeEventListener('focus', refresh); };
-  }, [visible, activeKey, active?.file?.documentId, Boolean(active?.diff), connected, connectionId]);
-  return { documents, active, activeKey, visible, unsaved, open, openDiff, load, save, close, patch, setVisible, setActiveKey, available };
+  }, [visible, activeKey, active?.file?.documentId, Boolean(active?.diff || active?.review), connected, connectionId]);
+  return { documents, active, activeKey, visible, unsaved, open, openDiff, openReview, setReviewMode, request, load, save, close, patch, setVisible, setActiveKey, available };
 }
 export type FileDocuments = ReturnType<typeof useFileDocuments>;

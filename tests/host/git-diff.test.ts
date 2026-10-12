@@ -5,7 +5,7 @@ import { existsSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
-import { readGitDiff } from '../../packages/host/git';
+import { readGitDiff, readGitReview } from '../../packages/host/git';
 import { HostCore } from '../../packages/host/core';
 import { GIT_DIFF_BYTES, type ConnectionContext, type GitDiff, type TerminalInfo } from '../../packages/protocol';
 import { git, gitFixture } from '../helpers/git';
@@ -92,7 +92,11 @@ test('Git diff RPC advertises the capability and validates the compared versions
   const ctx: ConnectionContext = { id: randomUUID(), deviceId: 'git-diff', deviceName: 'Approved browser', owner: false }; core.connect(ctx, () => {});
   const terminal: TerminalInfo = await core.handle('terminals.create', { groupId: core.getState().groups[0].id, profileId: 'cmd', cwd: repository }, ctx);
   const state = core.getState(), ref = { id: terminal.id, hostId: state.hostId, bootId: state.bootId, generation: terminal.generation, root: terminal.currentCwd || terminal.cwd };
-  assert.ok(state.capabilities?.includes('git.diff'));
+  assert.ok(state.capabilities?.includes('git.diff')); assert.ok(state.capabilities?.includes('git.review'));
+  const review = await core.handle('git.review', { ...ref, mode: 'branch' }, ctx); assert.equal(review.state, 'repository'); assert.equal(review.mode, 'head');
+  await assert.rejects(core.handle('git.review', { ...ref, mode: 'all' }, ctx), { name: 'ZodError' }); await assert.rejects(core.handle('git.review', { ...ref, path: 'src', mode: 'head' }, ctx), { code: 'INVALID_REQUEST' });
+  assert.equal((await core.handle('git.diff', { ...ref, path: 'staged.txt', base: review.base, target: 'WORKTREE' }, ctx) as GitDiff).original, 'before\n');
+  await assert.rejects(core.handle('git.diff', { ...ref, path: 'staged.txt', base: 'HEAD~1', target: 'WORKTREE' }, ctx), { name: 'ZodError' });
   await writeFile(path.join(repository, 'src', 'modified.ts'), 'export const value = 3;\n');
   const diff: GitDiff = await core.handle('git.diff', { ...ref, path: 'src/modified.ts', base: 'INDEX', target: 'WORKTREE' }, ctx);
   assert.equal(diff.modified, 'export const value = 3;\n');
@@ -103,3 +107,44 @@ test('Git diff RPC advertises the capability and validates the compared versions
   const after = core.getState().terminals[0]; assert.equal(after.pid, terminal.pid); assert.equal(after.controller, undefined);
 });
 
+test('Git review lists every change since the branch left its base, falls back to HEAD and stays inside the folder', async t => {
+  const { repository, data } = await fixture(t);
+  await git(repository, 'update-ref', 'refs/remotes/origin/main', 'HEAD'); await git(repository, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+  await git(repository, 'checkout', '-qb', 'feature');
+  await writeFile(path.join(repository, 'src', 'modified.ts'), 'export const value = 2;\n'); await writeFile(path.join(repository, 'committed.txt'), 'committed\n');
+  await git(repository, 'mv', '--', '이전 이름.txt', '새 이름.txt'); await git(repository, 'rm', '-q', '--', 'deleted.txt');
+  await git(repository, 'add', '--', '.'); await git(repository, 'commit', '-qm', 'feature work');
+  await writeFile(path.join(repository, 'staged.txt'), 'uncommitted\n'); await writeFile(path.join(repository, 'new.txt'), 'new\n');
+  await writeFile(path.join(repository, 'added.txt'), 'added\n'); await git(repository, 'add', '--', 'added.txt');
+  const marker = path.join(repository, 'program-ran.txt').replace(/\\/g, '/');
+  await git(repository, 'config', 'diff.mark.textconv', `touch "${marker}" && cat`); await writeFile(path.join(repository, '.git', 'info', 'attributes'), '* diff=mark\n');
+  const before = await digest(path.join(repository, '.git', 'index'));
+  const fork = (await git(repository, 'rev-parse', 'origin/main')).trim();
+
+  const branch = await readGitReview(repository, data, 'branch');
+  assert.equal(branch.state, 'repository'); if (branch.state !== 'repository') return;
+  assert.deepEqual([branch.mode, branch.base, branch.baseLabel, branch.branch, branch.notice], ['branch', fork, 'origin/main', 'feature', undefined]);
+  assert.deepEqual(branch.files, [
+    { path: 'added.txt', status: 'added' }, { path: 'committed.txt', status: 'added' }, { path: 'deleted.txt', status: 'deleted' }, { path: 'new.txt', status: 'added' },
+    { path: 'src/modified.ts', status: 'modified' }, { path: 'staged.txt', status: 'modified' }, { path: '새 이름.txt', originalPath: '이전 이름.txt', status: 'renamed' },
+  ]);
+  const renamed = await readGitDiff(repository, data, { path: '새 이름.txt', originalPath: '이전 이름.txt', base: branch.base, target: 'WORKTREE' });
+  assert.deepEqual([renamed.original, renamed.modified], ['rename me\n', 'rename me\n']);
+  const committed = await readGitDiff(repository, data, { path: 'src/modified.ts', base: branch.base, target: 'WORKTREE' });
+  assert.deepEqual([committed.original, committed.modified], ['export const value = 1;\n', 'export const value = 2;\n']);
+
+  const head = await readGitReview(repository, data, 'head');
+  assert.equal(head.state, 'repository'); if (head.state !== 'repository') return;
+  assert.equal(head.mode, 'head'); assert.equal(head.base, (await git(repository, 'rev-parse', 'HEAD')).trim());
+  assert.deepEqual(head.files.map(file => file.path + ':' + file.status), ['added.txt:added', 'new.txt:added', 'staged.txt:modified']);
+
+  const preferred = await readGitReview(repository, data, 'branch', () => 'main');
+  assert.equal(preferred.state === 'repository' && preferred.baseLabel, 'main');
+  const scoped = await readGitReview(path.join(repository, 'src'), data, 'branch');
+  assert.deepEqual(scoped.state === 'repository' && scoped.files, [{ path: 'modified.ts', status: 'modified' }]);
+  await git(repository, 'update-ref', '-d', 'refs/remotes/origin/HEAD'); await git(repository, 'update-ref', '-d', 'refs/remotes/origin/main');
+  const fallback = await readGitReview(repository, data, 'branch', () => 'missing-branch');
+  assert.equal(fallback.state === 'repository' && fallback.mode, 'head'); assert.match(fallback.state === 'repository' && fallback.notice || '', /기준 브랜치를 찾지 못해/);
+  assert.equal(await digest(path.join(repository, '.git', 'index')), before); assert.equal(existsSync(marker), false);
+  await assert.rejects(readGitDiff(repository, data, { path: 'staged.txt', base: 'HEAD~1', target: 'WORKTREE' }), { code: 'INVALID_REQUEST' });
+});

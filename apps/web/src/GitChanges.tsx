@@ -1,5 +1,5 @@
 import { useEffect, useId, useState } from 'react';
-import { CheckCircle2, ChevronDown, ChevronRight, FileText, GitBranch, GitCompareArrows } from 'lucide-react';
+import { CheckCircle2, ChevronDown, ChevronRight, FileDiff, FileText, GitBranch, GitCompareArrows } from 'lucide-react';
 import type { GitChange, GitListing } from '../../../packages/protocol/index';
 import type { ExplorerClient } from './explorer-queue';
 
@@ -49,7 +49,7 @@ export function useGitListing(client: ExplorerClient, reference: { id: string; h
   return { listing, error, busy };
 }
 
-export function GitChanges({ listing, error, selected, diff, onFile, onRetry }: { listing?: GitListing; error: string; selected: string; diff?: boolean; onFile(change: GitChange, group: GitChangeGroup): void; onRetry(): void }) {
+export function GitChanges({ listing, error, selected, diff, onFile, onReview, onRetry }: { listing?: GitListing; error: string; selected: string; diff?: boolean; onFile(change: GitChange, group: GitChangeGroup): void; onReview?(): void; onRetry(): void }) {
   if (error) return <div className="file-message" role="alert">{error}<button className="button subtle" onClick={onRetry}>다시 시도</button></div>;
   if (!listing) return <p className="file-message" role="status">Git 상태를 확인하는 중…</p>;
   if (listing.state !== 'repository') return <div className="git-empty"><GitBranch size={26}/><strong>{listing.message}</strong><p>{listing.state === 'not-repository' ? 'Git으로 관리하는 프로젝트 폴더의 터미널을 선택하세요.' : '파일 보기에서는 폴더를 계속 탐색할 수 있습니다.'}</p></div>;
@@ -59,6 +59,7 @@ export function GitChanges({ listing, error, selected, diff, onFile, onRetry }: 
   const untracked = listing.changes.filter(change => change.untracked);
   return <>
     <div className="git-repository"><GitBranch size={15}/><span title={listing.repositoryRoot}>{listing.detached ? '분리된 HEAD' : listing.branch || '이름 없는 브랜치'}</span><span className="git-count">{listing.changes.length}{listing.truncated && '+'}</span></div>
+    {onReview && <button className="button subtle git-review-open" onClick={onReview}><FileDiff size={14}/>변경 검토 열기</button>}
     {listing.changes.length === 0 ? <div className="git-empty"><CheckCircle2 size={28}/><strong>변경된 파일이 없습니다</strong><p>현재 터미널 폴더의 작업 내용이 Git과 일치합니다.</p></div> : <>
       {conflicts.length > 0 && <ChangeGroup name="충돌" group="conflict" changes={conflicts} selected={selected} onFile={onFile}/>}
       {staged.length > 0 && <ChangeGroup name="스테이징됨" group="index" area="index" changes={staged} selected={selected} onFile={onFile}/>}
@@ -66,7 +67,7 @@ export function GitChanges({ listing, error, selected, diff, onFile, onRetry }: 
       {untracked.length > 0 && <ChangeGroup name="새 파일" group="untracked" changes={untracked} selected={selected} onFile={onFile}/>}
     </>}
     {listing.truncated && <p className="file-message">변경이 많아 처음 1,000개만 표시합니다. 더 작은 폴더에서 확인해 주세요.</p>}
-    <p className="git-footnote">현재 폴더 기준 · 읽기 전용<br/>{diff ? '파일을 누르면 바뀌기 전과 후를 나란히 비교합니다.' : '파일을 누르면 작업 폴더의 현재 내용을 봅니다.'}</p>
+    <p className="git-footnote">현재 폴더 기준 · 읽기 전용<br/>{diff ? '파일을 누르면 변경 검토에서 그 파일로 이동합니다.' : '파일을 누르면 작업 폴더의 현재 내용을 봅니다.'}</p>
   </>;
 }
 

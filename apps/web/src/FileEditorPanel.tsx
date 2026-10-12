@@ -1,11 +1,12 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Columns2, Copy, Eye, FileText, Folder, GitCompareArrows, Maximize2, Minimize2, Pencil, RefreshCw, Save, X } from 'lucide-react';
+import { Columns2, Copy, Eye, FileDiff, FileText, Folder, GitCompareArrows, Maximize2, Minimize2, Pencil, RefreshCw, Save, X } from 'lucide-react';
 import type { FileDocuments } from './use-file-documents';
 import { dirtyDocument, isMarkdown, isPdf } from './use-file-documents';
 import { CodeEditor } from './CodeEditor';
 import { MarkdownPreview } from './MarkdownPreview';
 import { GitDiffView } from './GitDiffView';
+import { GitReview } from './GitReview';
 import { diffLabel, lineEndingsOnly } from './diff-layout';
 const PdfPreview = lazy(() => import('./PdfPreview'));
 
@@ -20,9 +21,9 @@ export function FileEditorPanel({ files, treeOpen, onToggleTree, maximized, onMa
   const doc = files.active;
   if (!files.visible || !doc) return null;
   const dirty = dirtyDocument(doc), connected = files.available(doc), editable = Boolean(doc.file?.documentId && !doc.file.readOnlyReason);
-  const diff = doc.diff;
-  const markdown = !diff && isMarkdown(doc.path);
-  const pdf = !diff && isPdf(doc.path), metadata = diff?.data || doc.pdf || doc.file;
+  const diff = doc.diff, review = doc.review;
+  const markdown = !diff && !review && isMarkdown(doc.path);
+  const pdf = !diff && !review && isPdf(doc.path), metadata = review ? { absolutePath: doc.reference.root } : diff?.data || doc.pdf || doc.file;
   function reload() { if (dirty) setConfirm({ key: doc!.key, action: 'reload' }); else void files.load(doc!.key); }
   return <section className="file-editor-panel" aria-label="파일 편집기" onKeyDown={event => {
     event.stopPropagation();
@@ -37,41 +38,44 @@ export function FileEditorPanel({ files, treeOpen, onToggleTree, maximized, onMa
         const next = event.key === 'Home' ? 0 : event.key === 'End' ? files.documents.length - 1 : (index + (event.key === 'ArrowLeft' ? -1 : 1) + files.documents.length) % files.documents.length;
         files.setActiveKey(files.documents[next].key); event.currentTarget.querySelectorAll<HTMLButtonElement>('[role=tab]')[next]?.focus();
       }}>{files.documents.map(item => <div className={`document-tab ${item.key === doc.key ? 'active' : ''}`} key={item.key}>
-        <button role="tab" aria-label={`${item.name}${item.diff ? ` · ${diffLabel(item.diff.base, item.diff.target)} 비교` : ''}${dirtyDocument(item) ? ' · 수정 중' : ''}`} aria-selected={item.key === doc.key} tabIndex={item.key === doc.key ? 0 : -1} title={item.diff ? `${item.diff.originalPath ? `${item.diff.originalPath} → ` : ''}${item.path} · ${diffLabel(item.diff.base, item.diff.target)} 비교` : item.pdf?.absolutePath || item.file?.absolutePath || item.path} onClick={() => files.setActiveKey(item.key)}>{item.diff ? <GitCompareArrows size={13}/> : <FileText size={13}/>}<span>{item.name}</span>{item.diff && <small className="diff-tab-label">{diffLabel(item.diff.base, item.diff.target)}</small>}{dirtyDocument(item) && <span className="file-dirty" aria-hidden="true">●</span>}</button>
+        <button role="tab" aria-label={`${item.name}${item.review ? ` · ${folderName(item.reference.root)}` : ''}${item.diff ? ` · ${diffLabel(item.diff.base, item.diff.target)} 비교` : ''}${dirtyDocument(item) ? ' · 수정 중' : ''}`} aria-selected={item.key === doc.key} tabIndex={item.key === doc.key ? 0 : -1} title={item.review ? `변경 검토 · ${item.reference.root}` : item.diff ? `${item.diff.originalPath ? `${item.diff.originalPath} → ` : ''}${item.path} · ${diffLabel(item.diff.base, item.diff.target)} 비교` : item.pdf?.absolutePath || item.file?.absolutePath || item.path} onClick={() => files.setActiveKey(item.key)}>{item.review ? <FileDiff size={13}/> : item.diff ? <GitCompareArrows size={13}/> : <FileText size={13}/>}<span>{item.name}</span>{item.review && <small className="diff-tab-label">{folderName(item.reference.root)}</small>}{item.diff && <small className="diff-tab-label">{diffLabel(item.diff.base, item.diff.target)}</small>}{dirtyDocument(item) && <span className="file-dirty" aria-hidden="true">●</span>}</button>
         <button className="document-tab-close" aria-label={`${item.name} 닫기`} disabled={item.saving || (item.busy && !isPdf(item.path))} onClick={() => dirtyDocument(item) ? setConfirm({ key: item.key, action: 'close' }) : files.close(item.key)}><X size={12}/></button>
       </div>)}</div>
       <button className="icon-button" aria-label={maximized ? '편집기 원래 크기' : '편집기 최대화'} onClick={onMaximize}>{maximized ? <Minimize2 size={15}/> : <Maximize2 size={15}/>}</button>
       <button className="icon-button" aria-label="편집기 숨기기" title="편집기 숨기기 · 열린 파일 유지" onClick={() => files.setVisible(false)}><X size={16}/></button>
     </header>
     <div className="file-editor-toolbar">
-      <span className="editor-breadcrumb" title={metadata?.absolutePath || doc.path}>{diff?.originalPath ? `${diff.originalPath} → ${doc.path}` : doc.path}</span>
+      <span className="editor-breadcrumb" title={metadata?.absolutePath || doc.path}>{review ? doc.reference.root : diff?.originalPath ? `${diff.originalPath} → ${doc.path}` : doc.path}</span>
       <button className="icon-button" aria-label="파일 경로 복사" disabled={!metadata} onClick={() => void copy(metadata!.absolutePath, '파일 경로를')}><Copy size={14}/></button>
       <button className="icon-button" aria-label="디스크 파일 다시 열기" title="디스크 파일 다시 열기" disabled={doc.busy || doc.saving || !connected} onClick={reload}><RefreshCw size={14}/></button>
       {diff && !(diff.target === 'WORKTREE' && diff.data?.modified === null) && <button className="button subtle diff-open" title="작업 폴더의 현재 파일을 편집기로 열기" disabled={!connected} onClick={() => void files.open(doc.reference, doc.path)}><FileText size={13}/>파일 열기</button>}
-      {!pdf && !diff && <button className="button editor-save" aria-label={doc.saving ? '저장 중' : '파일 저장'} disabled={!dirty || !editable || !connected || doc.busy || doc.saving} onClick={() => void files.save(doc.key)}><Save size={14}/>{doc.saving ? '저장 중…' : '저장'}<kbd aria-hidden="true">Ctrl S</kbd></button>}
+      {!pdf && !diff && !review && <button className="button editor-save" aria-label={doc.saving ? '저장 중' : '파일 저장'} disabled={!dirty || !editable || !connected || doc.busy || doc.saving} onClick={() => void files.save(doc.key)}><Save size={14}/>{doc.saving ? '저장 중…' : '저장'}<kbd aria-hidden="true">Ctrl S</kbd></button>}
     </div>
     {markdown && <div className="markdown-modes" role="group" aria-label="마크다운 보기 방식">{([
       ['edit', '편집', Pencil], ['preview', '미리보기', Eye], ['split', '나란히 보기', Columns2],
     ] as const).map(([mode, label, Icon]) => <button key={mode} aria-pressed={doc.mode === mode} onClick={() => files.patch(doc.key, { mode })}><Icon size={13}/>{label}</button>)}</div>}
-    {!connected && <div className="editor-notice">{pdf ? '읽어 온 PDF는 계속 볼 수 있습니다. 다시 읽으려면 원래 컴퓨터에 연결해 주세요.' : diff ? '읽어 온 비교 내용은 계속 볼 수 있습니다. 다시 읽으려면 원래 컴퓨터에 연결해 주세요.' : '이 파일을 연 컴퓨터에 다시 연결하면 저장할 수 있습니다. 수정 내용은 유지됩니다.'}</div>}
+    {!connected && <div className="editor-notice">{pdf ? '읽어 온 PDF는 계속 볼 수 있습니다. 다시 읽으려면 원래 컴퓨터에 연결해 주세요.' : diff || review ? '읽어 온 비교 내용은 계속 볼 수 있습니다. 다시 읽으려면 원래 컴퓨터에 연결해 주세요.' : '이 파일을 연 컴퓨터에 다시 연결하면 저장할 수 있습니다. 수정 내용은 유지됩니다.'}</div>}
     {doc.file?.readOnlyReason && <div className="editor-notice">{doc.file.readOnlyReason}</div>}
     {diff?.data?.unavailable && <div className="editor-notice">{diff.data.unavailable}</div>}
     {diff?.data && lineEndingsOnly(diff.data) && <div className="editor-notice">줄 끝 문자(CRLF/LF)만 바뀌었습니다. 보이는 내용은 같습니다.</div>}
     {doc.file?.truncated && <div className="editor-notice">처음 64 KiB만 표시합니다. 전체 파일을 편집하려면 외부 편집기를 사용해 주세요.</div>}
-    {(doc.error || doc.changedOnDisk) && <div className="editor-notice warning" role="alert"><span>{doc.error || '디스크의 파일이 변경되었습니다. 내 수정 내용은 유지됩니다.'}</span>{!pdf && !diff && <button className="button subtle" onClick={() => void copy(doc.text, '내 수정 내용을')}>내 내용 복사</button>}<button className="button subtle" disabled={!connected || doc.busy || doc.saving} onClick={reload}>{diff ? '다시 읽기' : '디스크 파일 다시 열기'}</button></div>}
-    {doc.busy && <p className="file-message" role="status">{diff ? '변경 내용을 읽는 중…' : pdf ? `PDF를 읽는 중… ${doc.progress || 0}%` : '파일을 읽는 중…'}</p>}
-    <div className="document-bodies">{files.documents.map(item => <div key={item.key} role="tabpanel" aria-label={item.name} hidden={item.key !== doc.key || (!item.file && !item.pdf && !item.diff?.data)} className={`document-body mode-${item.diff ? 'diff' : isMarkdown(item.path) ? item.mode : 'edit'}`}>
-      <div className="source-pane" hidden={Boolean(item.diff) || isPdf(item.path) || (isMarkdown(item.path) && item.mode === 'preview')}>
+    {(doc.error || doc.changedOnDisk) && <div className="editor-notice warning" role="alert"><span>{doc.error || '디스크의 파일이 변경되었습니다. 내 수정 내용은 유지됩니다.'}</span>{!pdf && !diff && !review && <button className="button subtle" onClick={() => void copy(doc.text, '내 수정 내용을')}>내 내용 복사</button>}<button className="button subtle" disabled={!connected || doc.busy || doc.saving} onClick={reload}>{diff || review ? '다시 읽기' : '디스크 파일 다시 열기'}</button></div>}
+    {doc.busy && <p className="file-message" role="status">{review ? '변경 목록을 읽는 중…' : diff ? '변경 내용을 읽는 중…' : pdf ? `PDF를 읽는 중… ${doc.progress || 0}%` : '파일을 읽는 중…'}</p>}
+    <div className="document-bodies">{files.documents.map(item => <div key={item.key} role="tabpanel" aria-label={item.name} hidden={item.key !== doc.key || (!item.file && !item.pdf && !item.diff?.data && !item.review?.data)} className={`document-body mode-${item.diff || item.review ? 'diff' : isMarkdown(item.path) ? item.mode : 'edit'}`}>
+      <div className="source-pane" hidden={Boolean(item.diff || item.review) || isPdf(item.path) || (isMarkdown(item.path) && item.mode === 'preview')}>
         {item.file && <CodeEditor path={item.path} value={item.text} session={item.editorSession} active={item.key === doc.key && item.mode !== 'preview'} readOnly={!item.file.documentId || Boolean(item.file.readOnlyReason) || item.busy} onChange={text => files.patch(item.key, { text })} onSave={() => void files.save(item.key)}/>}
       </div>
       {item.key === doc.key && isMarkdown(item.path) && item.mode !== 'edit' && <MarkdownPreview text={item.text} onCopyLink={copyLink}/>}
       {item.key === doc.key && item.diff?.data && !item.diff.data.unavailable && <GitDiffView path={item.path} diff={item.diff.data} layout={item.diff.layout} collapse={item.diff.collapse} active={files.visible} onLayout={layout => files.patch(item.key, { diff: { ...item.diff!, layout } })} onCollapse={collapse => files.patch(item.key, { diff: { ...item.diff!, collapse } })}/>}
+      {item.key === doc.key && item.review?.data && <GitReview review={item.review.data} mode={item.review.mode} reference={item.reference} request={files.request} active={files.visible} focus={item.review.focus} onMode={mode => files.setReviewMode(item.key, mode)} onSplit={(file, base) => void files.openDiff(item.reference, file.path, base, 'WORKTREE', file.originalPath)} onOpenFile={file => void files.open(item.reference, file.path)}/>}
       {item.key === doc.key && item.pdf && <Suspense fallback={<p className="file-message" role="status">PDF 뷰어를 여는 중…</p>}><PdfPreview pdf={item.pdf} page={item.pdfPage || 1} zoom={item.pdfZoom || 0} onView={(pdfPage, pdfZoom) => files.patch(item.key, { pdfPage, pdfZoom })}/></Suspense>}
     </div>)}</div>
-    <footer className="editor-status">{diff ? <><span>변경 비교 · {diffLabel(diff.base, diff.target)}</span><span role="status">읽기 전용</span><span>{typeof diff.data?.modified === 'string' ? `${diff.data.modified.split(/\r\n|\r|\n/).length}줄` : ''}</span></> : <><span>{pdf ? 'PDF' : `${doc.file?.encoding || '텍스트'} · ${doc.file?.text.includes('\r\n') ? 'CRLF' : 'LF'}`}</span><span role="status">{pdf ? '읽기 전용' : doc.saving ? '저장 중…' : dirty ? '저장하지 않은 변경' : doc.file ? '수정 없음' : '파일 열기'}</span><span>{pdf ? doc.pdf ? doc.pdf.size < 1024 * 1024 ? `${Math.ceil(doc.pdf.size / 1024)} KiB` : `${(doc.pdf.size / 1024 / 1024).toFixed(1)} MiB` : '' : `${doc.text.split(/\r\n|\r|\n/).length}줄`}</span></>}</footer>
+    <footer className="editor-status">{review ? <><span>변경 검토 · {review.mode === 'branch' ? '브랜치 전체' : '커밋 안 한 변경'}</span><span role="status">읽기 전용</span><span>{review.data?.state === 'repository' ? `파일 ${review.data.files.length}개` : ''}</span></> : diff ? <><span>변경 비교 · {diffLabel(diff.base, diff.target)}</span><span role="status">읽기 전용</span><span>{typeof diff.data?.modified === 'string' ? `${diff.data.modified.split(/\r\n|\r|\n/).length}줄` : ''}</span></> : <><span>{pdf ? 'PDF' : `${doc.file?.encoding || '텍스트'} · ${doc.file?.text.includes('\r\n') ? 'CRLF' : 'LF'}`}</span><span role="status">{pdf ? '읽기 전용' : doc.saving ? '저장 중…' : dirty ? '저장하지 않은 변경' : doc.file ? '수정 없음' : '파일 열기'}</span><span>{pdf ? doc.pdf ? doc.pdf.size < 1024 * 1024 ? `${Math.ceil(doc.pdf.size / 1024)} KiB` : `${(doc.pdf.size / 1024 / 1024).toFixed(1)} MiB` : '' : `${doc.text.split(/\r\n|\r|\n/).length}줄`}</span></>}</footer>
     {confirm && <DiscardFileDialog name={files.documents.find(item => item.key === confirm.key)?.name || '파일'} onCancel={() => setConfirm(undefined)} onDiscard={() => { if (confirm.action === 'close') files.close(confirm.key); else void files.load(confirm.key); setConfirm(undefined); }}/>}
   </section>;
 }
+
+function folderName(root: string) { return root.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || root; }
 
 function DiscardFileDialog({ name, onCancel, onDiscard }: { name: string; onCancel(): void; onDiscard(): void }) {
   const panel = useRef<HTMLDivElement>(null);

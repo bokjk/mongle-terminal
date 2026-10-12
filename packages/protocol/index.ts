@@ -37,10 +37,17 @@ export interface GitChange { path: string; originalPath?: string; index: GitStat
 export type GitListing = { state: 'not-repository' | 'unavailable'; root: string; message: string } | { state: 'repository'; root: string; repositoryRoot: string; branch: string; detached: boolean; changes: GitChange[]; truncated: boolean };
 /** Each compared side is limited so a diff response stays well below the remote send buffer. */
 export const GIT_DIFF_BYTES = 256 * 1024;
-export type GitDiffBase = 'HEAD' | 'INDEX';
+/** HEAD, the index, or a full commit id such as the branch base used by the review tab. */
+export type GitDiffBase = 'HEAD' | 'INDEX' | (string & {});
 export type GitDiffTarget = 'INDEX' | 'WORKTREE';
 /** original/modified are null when the file does not exist on that side. unavailable explains why text is not shown. */
 export interface GitDiff { path: string; originalPath?: string; absolutePath: string; base: GitDiffBase; target: GitDiffTarget; original: string | null; modified: string | null; unavailable?: string; }
+export const GIT_COMMIT_PATTERN = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
+export type GitReviewMode = 'branch' | 'head';
+export type GitReviewStatus = 'added' | 'modified' | 'deleted' | 'renamed' | 'conflicted';
+export interface GitReviewFile { path: string; originalPath?: string; status: GitReviewStatus; }
+/** Every change from base to the working folder. mode is what was actually used; notice explains a fallback. */
+export type GitReview = { state: 'not-repository' | 'unavailable'; root: string; message: string } | { state: 'repository'; root: string; repositoryRoot: string; branch: string; detached: boolean; mode: GitReviewMode; base: string; baseLabel: string; notice?: string; files: GitReviewFile[]; truncated: boolean };
 export interface RpcRequest { type: 'request'; id: string; method: string; params: unknown; }
 export type RpcResponse = { type: 'response'; id: string; ok: true; result: any } | { type: 'response'; id: string; ok: false; error: { code: string; message: string } };
 export interface PresentationSnapshot { kind: 'presentation-v1'; data: string; cols: number; rows: number; modes: Record<string, unknown>; version: string; inputResetGeneration?: number; notificationCount?: number; }

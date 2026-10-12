@@ -13,10 +13,14 @@ import { git, gitFixture } from '../helpers/git';
 
 const lines = (count: number, change: (index: number) => string | undefined = () => undefined) => Array.from({ length: count }, (_, index) => change(index) ?? `export const line${index + 1} = ${index + 1};`).join('\n') + '\n';
 
-test('Git diff tab compares staged, working, renamed, deleted, new and binary changes side by side and inline', { skip: process.platform !== 'win32' || !existsSync('dist/web/index.html'), timeout: 120000 }, async t => {
+test('Git review shows every branch change on one page, moves by file and change, and opens side-by-side comparisons', { skip: process.platform !== 'win32' || !existsSync('dist/web/index.html'), timeout: 120000 }, async t => {
   const fixture = await gitFixture(), repository = await realpath(fixture.repository);
   await writeFile(path.join(repository, 'src', 'long.ts'), lines(60)); await git(repository, 'add', '--', '.'); await git(repository, 'commit', '-qm', 'long file');
-  await writeFile(path.join(repository, 'src', 'long.ts'), lines(60, index => index === 9 ? 'export const line10 = "changed";' : index === 44 ? 'export const line45 = "also changed";' : undefined));
+  await git(repository, 'update-ref', 'refs/remotes/origin/main', 'HEAD'); await git(repository, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+  await git(repository, 'checkout', '-qb', 'feature');
+  await writeFile(path.join(repository, 'src', 'long.ts'), lines(60, index => index === 44 ? 'export const line45 = "committed";' : undefined));
+  await writeFile(path.join(repository, 'committed.txt'), 'committed on the branch\n'); await git(repository, 'add', '--', '.'); await git(repository, 'commit', '-qm', 'branch work');
+  await writeFile(path.join(repository, 'src', 'long.ts'), lines(60, index => index === 9 ? 'export const line10 = "changed";' : index === 44 ? 'export const line45 = "committed";' : undefined));
   await writeFile(path.join(repository, 'staged.txt'), 'staged\n'); await git(repository, 'add', '--', 'staged.txt'); await writeFile(path.join(repository, 'staged.txt'), 'staged and working content\n');
   await unlink(path.join(repository, 'deleted.txt')); await git(repository, 'mv', '--', '이전 이름.txt', '새 이름.txt');
   await writeFile(path.join(repository, '새 파일.txt'), '<script>window.gitDiffExecuted=true</script>\n안녕하세요\n');
@@ -47,82 +51,86 @@ test('Git diff tab compares staged, working, renamed, deleted, new and binary ch
     await page.locator(`[data-terminal-id="${terminal.id}"] textarea`).focus(); await page.getByRole('button', { name: '파일 탐색기', exact: true }).click();
     const explorer = page.getByRole('complementary', { name: '파일 탐색기' }), editor = page.getByRole('region', { name: '파일 편집기', exact: true });
     await explorer.getByRole('tab', { name: /^Git/ }).click();
-    await expect(explorer.locator('.git-footnote')).toContainText('나란히 비교');
-    const staged = explorer.getByRole('region', { name: '스테이징됨', exact: true }), working = explorer.getByRole('region', { name: '작업 폴더 변경', exact: true });
-    const view = editor.locator('.document-body:not([hidden]) .diff-view'), position = view.locator('.diff-position');
+    await expect(explorer.locator('.git-footnote')).toContainText('변경 검토');
+    const working = explorer.getByRole('region', { name: '작업 폴더 변경', exact: true });
+    const review = editor.locator('.document-body:not([hidden]) .git-review'), position = review.locator('.diff-position');
+    const section = (file: string) => review.locator(`.review-section[data-path="${file}"]`);
 
-    // Working-copy change: side by side, collapsed unchanged lines, F7 navigation.
+    // Clicking a Git row opens the review on that file; the default base is where the branch left origin/main.
     await working.getByRole('button', { name: 'src/long.ts · 수정됨' }).click();
-    await expect(editor.getByRole('tab', { name: 'long.ts · 작업 중 비교' })).toHaveAttribute('aria-selected', 'true');
-    await expect(view.locator('.cm-mergeView')).toBeVisible();
-    await expect(view.locator('.diff-sides')).toContainText('스테이징'); await expect(view.locator('.diff-sides')).toContainText('작업 폴더');
-    await expect(view.locator('.cm-merge-a .cm-content')).toContainText('export const line10 = 10;');
-    await expect(view.locator('.cm-merge-b .cm-content')).toContainText('export const line10 = "changed";');
-    await expect(view.locator('.cm-merge-b .cm-changedText').first()).toBeVisible();
-    await expect(view.locator('.diff-stats')).toHaveAccessibleName('추가 2줄, 삭제 2줄');
-    await expect(position).toHaveText('1 / 2');
-    await expect(view.locator('.cm-merge-b .cm-collapsedLines').first()).toContainText('바뀌지 않은 줄');
-    await page.screenshot({ path: `${output}/split-dark.png` });
-    await view.getByRole('button', { name: '다음 변경' }).click(); await expect(position).toHaveText('2 / 2');
-    await expect(view.locator('.cm-merge-b .cm-activeLine')).toContainText('line45');
-    await page.keyboard.press('F7'); await expect(position).toHaveText('1 / 2');
-    await page.keyboard.press('Shift+F7'); await expect(position).toHaveText('2 / 2');
-    await view.getByRole('button', { name: '변경 부분만' }).click();
-    await expect(view.locator('.cm-collapsedLines')).toHaveCount(0); await expect(view.getByRole('button', { name: '변경 부분만' })).toHaveAttribute('aria-pressed', 'false');
-    await view.getByRole('button', { name: '변경 부분만' }).click();
-
-    // The same comparison inline, remembered for the next diff.
-    await view.getByRole('button', { name: '한 화면' }).click();
-    await expect(view.locator('.cm-mergeView')).toHaveCount(0);
-    await expect(view.locator('.cm-deletedChunk').first()).toContainText('export const line10 = 10;');
-    await expect(view.locator('.cm-content')).toContainText('export const line10 = "changed";');
-    await page.screenshot({ path: `${output}/unified-dark.png` });
-
-    // Staged and working versions of one file stay separate tabs.
-    await staged.getByRole('button', { name: 'staged.txt · 수정됨' }).click();
-    await expect(editor.getByRole('tab', { name: 'staged.txt · 스테이징 비교' })).toHaveAttribute('aria-selected', 'true');
-    await expect(view.locator('.cm-deletedChunk')).toContainText('before'); await expect(view.locator('.cm-content')).toContainText('staged');
-    await view.getByRole('button', { name: '나란히' }).click();
-    await working.getByRole('button', { name: 'staged.txt · 수정됨' }).click();
-    await expect(editor.getByRole('tab', { name: 'staged.txt · 작업 중 비교' })).toHaveAttribute('aria-selected', 'true');
-    await expect(view.locator('.cm-merge-a .cm-content')).toHaveText('staged'); await expect(view.locator('.cm-merge-b .cm-content')).toHaveText('staged and working content');
-
-    // Rename, deletion, new file and binary content.
-    await staged.getByRole('button', { name: '새 이름.txt · 이름 변경' }).click();
-    await expect(view.locator('.diff-sides')).toContainText('이전 이름.txt'); await expect(editor.locator('.editor-breadcrumb')).toHaveText('이전 이름.txt → 새 이름.txt');
-    await expect(position).toHaveText('내용 차이 없음');
-    await working.getByRole('button', { name: 'deleted.txt · 삭제됨' }).click();
-    await expect(view.locator('.diff-sides')).toContainText('작업 폴더 · 현재 파일 · 파일 없음'); await expect(view.locator('.cm-merge-a .cm-content')).toContainText('delete me');
-    await expect(editor.getByRole('button', { name: '파일 열기' })).toHaveCount(0);
-    await explorer.getByRole('button', { name: '새 파일.txt · 새 파일', exact: false }).click();
-    await expect(view.locator('.diff-sides')).toContainText('스테이징 · 파일 없음'); await expect(view.locator('.cm-merge-b .cm-content')).toContainText('안녕하세요');
+    await expect(editor.getByRole('tab', { name: /^변경 검토 · 작업 프로젝트/ })).toHaveAttribute('aria-selected', 'true');
+    await expect(review.getByRole('button', { name: '브랜치 전체' })).toHaveAttribute('aria-pressed', 'true');
+    await expect(review.locator('.review-base')).toContainText('origin/main 이후');
+    const branchFiles = ['committed.txt', 'deleted.txt', 'image.bin', 'src/long.ts', 'staged.txt', '새 이름.txt', '새 파일.txt'];
+    await expect(review.locator('.review-section')).toHaveCount(branchFiles.length);
+    assert.deepEqual(await review.locator('.review-section').evaluateAll(items => items.map(item => (item as HTMLElement).dataset.path)), branchFiles);
+    const list = review.getByRole('navigation', { name: '변경 파일 목록' });
+    if (!(await list.isVisible())) await review.getByRole('button', { name: '파일 목록 보기' }).click();
+    await expect(list.getByRole('button')).toHaveCount(branchFiles.length);
+    await list.getByRole('button').filter({ hasText: 'committed.txt' }).click();
+    await expect(review.locator('.review-section.current')).toHaveAttribute('data-path', 'committed.txt');
+    await working.getByRole('button', { name: 'src/long.ts · 수정됨' }).click(); await expect(review.locator('.review-section.current')).toHaveAttribute('data-path', 'src/long.ts');
+    await expect(section('src/long.ts').locator('.cm-deletedChunk').first()).toContainText('export const line10 = 10;');
+    await expect(section('src/long.ts').locator('.cm-content')).toContainText('line45 = "committed"');
+    await expect(section('src/long.ts').locator('.review-count')).toHaveText('+2 −2');
+    await expect(section('src/long.ts').locator('.cm-collapsedLines').first()).toContainText('바뀌지 않은 줄');
+    await expect(section('committed.txt').locator('.cm-content')).toContainText('committed on the branch');
+    await expect(section('deleted.txt').locator('.cm-deletedChunk')).toContainText('delete me');
+    await expect(section('새 이름.txt').locator('.review-path')).toContainText('이전 이름.txt → 새 이름.txt');
+    await expect(section('image.bin').locator('.review-message')).toContainText('바이너리');
+    await expect(section('새 파일.txt').locator('.cm-content')).toContainText('안녕하세요');
     assert.equal(await page.evaluate(() => (window as any).gitDiffExecuted), undefined);
-    await explorer.getByRole('button', { name: 'image.bin · 새 파일', exact: false }).click();
-    await expect(editor.locator('.editor-notice')).toContainText('바이너리'); await expect(view).toHaveCount(0);
+    await page.screenshot({ path: `${output}/review-dark.png` });
 
-    // Background refresh picks up a new edit; "파일 열기" opens the editable file.
-    await working.getByRole('button', { name: 'src/long.ts · 수정됨' }).click();
-    await writeFile(path.join(repository, 'src', 'long.ts'), lines(60, index => index === 9 ? 'export const line10 = "edited again";' : undefined));
-    await expect(view.locator('.cm-merge-b .cm-content')).toContainText('edited again', { timeout: 12000 }); await expect(position).toHaveText('1 / 1');
-    await editor.getByRole('button', { name: '파일 열기' }).click();
-    await expect(editor.getByRole('tab', { name: 'long.ts', exact: true })).toHaveAttribute('aria-selected', 'true');
-    await expect(editor.locator('.document-body:not([hidden]) .source-pane .cm-content')).toContainText('edited again');
+    // n/p move through changes across files, j/k through files.
+    await section('src/long.ts').locator('.review-path').click();
+    await page.keyboard.press('n'); await expect(position).toHaveText(/^\d+ \/ \d+$/);
+    const first = Number((await position.textContent())!.split(' / ')[0]);
+    await page.keyboard.press('n'); await expect(position).toHaveText(new RegExp('^' + (first + 1) + ' / '));
+    await page.keyboard.press('p'); await expect(position).toHaveText(new RegExp('^' + first + ' / '));
+    await page.keyboard.press('j'); await expect(review.locator('.review-section.current')).toHaveAttribute('data-path', 'staged.txt');
+    await page.keyboard.press('k'); await expect(review.locator('.review-section.current')).toHaveAttribute('data-path', 'src/long.ts');
+    await review.getByRole('button', { name: '모든 파일 접기' }).click(); await expect(review.locator('.review-diff')).toHaveCount(0);
+    await review.getByRole('button', { name: '모든 파일 펼치기' }).click(); await expect(section('src/long.ts').locator('.review-diff')).toBeVisible();
+
+    // A file opens side by side against the same base, or as an editable file.
+    await section('src/long.ts').getByRole('button', { name: 'src/long.ts 나란히 비교' }).click();
+    await expect(editor.getByRole('tab', { name: 'long.ts · 기준 비교' })).toHaveAttribute('aria-selected', 'true');
+    const split = editor.locator('.document-body:not([hidden]) .diff-view');
+    await expect(split.locator('.cm-mergeView')).toBeVisible(); await expect(split.locator('.diff-sides')).toContainText('기준 커밋');
+    await expect(split.locator('.cm-merge-a .cm-content')).toContainText('export const line45 = 45;'); await expect(split.locator('.cm-merge-b .cm-content')).toContainText('line45 = "committed"');
+    await page.keyboard.press('F7'); await expect(split.locator('.diff-position')).toHaveText(/^\d \/ 2$/);
+    await page.screenshot({ path: `${output}/split-dark.png` });
+    await editor.getByRole('tab', { name: /^변경 검토/ }).click();
+    await section('staged.txt').getByRole('button', { name: 'staged.txt 파일 열기' }).click();
+    await expect(editor.getByRole('tab', { name: 'staged.txt', exact: true })).toHaveAttribute('aria-selected', 'true');
     await expect(editor.getByRole('button', { name: '파일 저장' })).toBeVisible();
 
+    // Switching to uncommitted changes drops the committed branch work.
+    await editor.getByRole('tab', { name: /^변경 검토/ }).click();
+    await review.getByRole('button', { name: '커밋 안 한 변경' }).click();
+    await expect(review.locator('.review-base')).toContainText('HEAD 이후');
+    await expect(section('committed.txt')).toHaveCount(0); await expect(review.locator('.review-section')).toHaveCount(branchFiles.length - 1);
+    await expect(section('src/long.ts').locator('.review-count')).toHaveText('+1 −1');
+
+    // Background refresh follows edits to visible files.
+    await writeFile(path.join(repository, 'src', 'long.ts'), lines(60, index => index === 9 ? 'export const line10 = "edited again";' : index === 44 ? 'export const line45 = "committed";' : undefined));
+    await expect(section('src/long.ts').locator('.cm-content')).toContainText('edited again', { timeout: 12000 });
+
     // Light theme and a phone-width viewport.
-    await editor.getByRole('tab', { name: 'long.ts · 작업 중 비교' }).click();
     await page.getByRole('button', { name: '설정', exact: true }).first().click(); await page.getByRole('button', { name: '밝게', exact: true }).click(); await page.getByRole('button', { name: '설정 닫기' }).click();
-    await view.getByRole('button', { name: '나란히' }).click(); await expect(view.locator('.cm-mergeView')).toBeVisible();
-    await page.screenshot({ path: `${output}/split-light.png` });
+    await review.getByRole('button', { name: '브랜치 전체' }).click(); await expect(section('committed.txt')).toBeVisible();
+    await page.screenshot({ path: `${output}/review-light.png` });
     await page.setViewportSize({ width: 390, height: 844 });
     await explorer.getByRole('button', { name: '파일 탐색기 닫기' }).click();
-    await view.getByRole('button', { name: '한 화면' }).click(); await expect(view.locator('.cm-deletedChunk').first()).toBeVisible();
+    await expect(review.getByRole('navigation', { name: '변경 파일 목록' })).toBeHidden();
+    await expect(section('src/long.ts').locator('.cm-content')).toBeVisible();
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
-    await page.screenshot({ path: `${output}/unified-mobile.png` });
-    assert.ok(requests.includes('git.diff'));
+    await page.screenshot({ path: `${output}/review-mobile.png` });
+    assert.ok(requests.includes('git.review') && requests.includes('git.diff'));
     assert.equal(host.getState().terminals.find(item => item.id === terminal.id)?.pid, terminal.pid);
     assert.deepEqual(errors, []);
-    await writeFile(`${output}/result.json`, JSON.stringify({ passed: true, realGit: true, realHost: true, desktopBridge: 'test binding', scenarios: ['working diff side by side', 'collapsed unchanged lines', 'next/previous and F7 navigation', 'inline layout', 'staged vs working tabs', 'rename', 'deleted file', 'new file without script execution', 'binary notice', 'background refresh', 'open editable file', 'light theme', '390px viewport'], errors }, null, 2));
+    await writeFile(`${output}/result.json`, JSON.stringify({ passed: true, realGit: true, realHost: true, desktopBridge: 'test binding', scenarios: ['row opens review at file', 'branch base from origin/HEAD', 'committed and uncommitted changes together', 'rename/delete/new/binary sections', 'n/p change and j/k file keys', 'collapse/expand all', 'side-by-side against same base', 'open editable file', 'uncommitted-only mode', 'background refresh', 'light theme', '390px viewport'], errors }, null, 2));
   } finally {
     host.disconnect(ctx.id); await browser.close(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve()));
   }

@@ -5,11 +5,10 @@ import { keymap } from '@codemirror/view';
 import { syntaxHighlighting } from '@codemirror/language';
 import { getChunks, goToNextChunk, goToPreviousChunk, MergeView, unifiedMergeView, type Chunk } from '@codemirror/merge';
 import { ChevronDown, ChevronUp, Columns2, FoldVertical, Rows2 } from 'lucide-react';
-import type { GitDiff, GitDiffBase, GitDiffTarget } from '../../../packages/protocol/index';
+import type { GitDiff } from '../../../packages/protocol/index';
 import { editorThemeSpec, highlighting, language } from './CodeEditor';
-import { lineEndingsOnly, rememberLayout, type DiffLayout } from './diff-layout';
+import { lineEndingsOnly, rememberLayout, sideName, type DiffLayout } from './diff-layout';
 
-const sideNames: Record<GitDiffBase | GitDiffTarget, string> = { HEAD: 'HEAD · 마지막 커밋', INDEX: '스테이징', WORKTREE: '작업 폴더 · 현재 파일' };
 const lineEnding = (text: string | null) => !text ? '' : text.includes('\r\n') ? 'CRLF' : 'LF';
 const phrases = EditorState.phrases.of({ '$ unchanged lines': '바뀌지 않은 줄 $개' });
 
@@ -51,10 +50,10 @@ export function GitDiffView({ path, diff, layout, collapse, active, onLayout, on
       EditorView.updateListener.of(update => { if (update.selectionSet && update.view === navigation.current) locate(update.view); }),
     ];
     const folding = collapse ? { collapseUnchanged: { margin: 3, minSize: 4 } } : {};
-    const originalLabel = sideNames[diff.base] + (diff.originalPath ? ' · ' + diff.originalPath : '');
+    const originalLabel = sideName(diff.base) + (diff.originalPath ? ' · ' + diff.originalPath : '');
     let destroy: () => void, a: EditorState['doc'], b: EditorState['doc'], chunks: readonly Chunk[];
     if (layout === 'split') {
-      const merge = new MergeView({ parent: host, a: { doc: original, extensions: base('이전 내용: ' + originalLabel, false) }, b: { doc: modified, extensions: base('새 내용: ' + sideNames[diff.target], false) }, highlightChanges: true, gutter: true, ...folding });
+      const merge = new MergeView({ parent: host, a: { doc: original, extensions: base('이전 내용: ' + originalLabel, false) }, b: { doc: modified, extensions: base('새 내용: ' + sideName(diff.target), false) }, highlightChanges: true, gutter: true, ...folding });
       navigation.current = merge.b; a = merge.a.state.doc; b = merge.b.state.doc; chunks = merge.chunks;
       destroy = () => merge.destroy();
     } else {
@@ -83,9 +82,9 @@ export function GitDiffView({ path, diff, layout, collapse, active, onLayout, on
         <button className="icon-button" aria-label="다음 변경" title="다음 변경 (F7)" disabled={!position.total} onClick={() => move(1)}><ChevronDown size={15}/></button>
       </span>
     </div>
-    {layout === 'split' && <div className="diff-sides" aria-hidden="true"><span title={originalLabelFor(diff)}>{originalLabelFor(diff)}{missing(diff.original)}{lineEndingsOnly(diff) && ' · ' + lineEnding(diff.original)}</span><span>{sideNames[diff.target]}{missing(diff.modified)}{lineEndingsOnly(diff) && ' · ' + lineEnding(diff.modified)}</span></div>}
+    {layout === 'split' && <div className="diff-sides" aria-hidden="true"><span title={originalLabelFor(diff)}>{originalLabelFor(diff)}{missing(diff.original)}{lineEndingsOnly(diff) && ' · ' + lineEnding(diff.original)}</span><span>{sideName(diff.target)}{missing(diff.modified)}{lineEndingsOnly(diff) && ' · ' + lineEnding(diff.modified)}</span></div>}
     <div className="diff-body" ref={parent}/>
   </div>;
 }
-function originalLabelFor(diff: GitDiff) { return sideNames[diff.base] + (diff.originalPath ? ' · ' + diff.originalPath : ''); }
+function originalLabelFor(diff: GitDiff) { return sideName(diff.base) + (diff.originalPath ? ' · ' + diff.originalPath : ''); }
 

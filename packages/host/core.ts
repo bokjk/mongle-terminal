@@ -1,10 +1,10 @@
 import { randomUUID, randomBytes, createHash, timingSafeEqual } from 'node:crypto';
 import { hostname, homedir } from 'node:os';
 import { readFile, realpath, stat, unlink } from 'node:fs/promises';
-import { join, dirname, basename } from 'node:path';
+import { join, dirname, basename, resolve } from 'node:path';
 import * as pty from 'node-pty';
 import { z } from 'zod';
-import { APP_VERSION, PROTOCOL_VERSION, AppError, appendTab, dimensionSchema, groupRepositoryIds, idSchema, leafIds, removeLeaf, splitLeaf } from '../protocol/index.js';
+import { APP_VERSION, PROTOCOL_VERSION, AppError, GIT_COMMIT_PATTERN, appendTab, dimensionSchema, groupRepositoryIds, idSchema, leafIds, removeLeaf, splitLeaf } from '../protocol/index.js';
 import type { ConnectionContext, Group, HostSettings, HostState, LayoutNode, PresentationSnapshot, Send, ShellProfile, SnapshotEvent, TerminalInfo, Repository, Worktree, WorktreeOperation, ProjectInspection } from '../protocol/index.js';
 import { HostStore, type PersistedHost, type PersistedSnapshot } from '../storage/index.js';
 import { agentInputSignal, validAgentSession, validCodexEvent, type AgentSessionIdentity } from '../terminal/agent-status.js';
@@ -15,7 +15,7 @@ import { shellIntegration } from '../shell-profiles/integration.js';
 import { inspectFiles, within } from './files.js';
 import { openFileDocument, saveFileDocument } from './file-editor.js';
 import { readPdfChunk } from './pdf-files.js';
-import { inspectGit, readGitDiff } from './git.js';
+import { inspectGit, readGitDiff, readGitReview } from './git.js';
 import { inspectProject, inspectKnownRepository, validateWorktree, prepareWorktree, addWorktree, removeWorktree, samePath, worktreeSlug } from './worktrees.js';
 
 const nameSchema = z.string().trim().min(1).max(100);
@@ -125,7 +125,7 @@ export class HostCore {
     return result;
   }
   getState(): HostState {
-    return structuredClone({ hostId:this.hostId, bootId:this.bootId, name:this.settings.name, version:APP_VERSION, protocolVersion:PROTOCOL_VERSION, capabilities:['control.acquire-if-free','files.read','files.edit','files.pdf','git.read','git.diff','layout.tabs','notifications.push','pairing.remote-approve','worktrees.manage','worktrees.terminal-context'], groups:this.groups, terminals:this.terminals, repositories:this.repositories,worktrees:this.worktrees,worktreeOperations:this.worktreeOperations,profiles:this.profiles, settings:this.settings, ...(this.options.claudeIntegration ? {claudeIntegration:this.options.claudeIntegration} : {}), ...(this.options.codexIntegration ? {codexIntegration:this.options.codexIntegration} : {}), ...(this.storageError ? {storageError:this.storageError} : {}) });
+    return structuredClone({ hostId:this.hostId, bootId:this.bootId, name:this.settings.name, version:APP_VERSION, protocolVersion:PROTOCOL_VERSION, capabilities:['control.acquire-if-free','files.read','files.edit','files.pdf','git.read','git.diff','git.review','layout.tabs','notifications.push','pairing.remote-approve','worktrees.manage','worktrees.terminal-context'], groups:this.groups, terminals:this.terminals, repositories:this.repositories,worktrees:this.worktrees,worktreeOperations:this.worktreeOperations,profiles:this.profiles, settings:this.settings, ...(this.options.claudeIntegration ? {claudeIntegration:this.options.claudeIntegration} : {}), ...(this.options.codexIntegration ? {codexIntegration:this.options.codexIntegration} : {}), ...(this.storageError ? {storageError:this.storageError} : {}) });
   }
   connect(ctx: ConnectionContext, send: Send): void {
     if (!this.initialized || this.closing || this.shutdownPrepared) throw new AppError('HOST_UNAVAILABLE','호스트가 준비되지 않았습니다.');
@@ -145,7 +145,7 @@ export class HostCore {
     // Lease renewal must not wait for a slow snapshot or filesystem mutation.
     if (method === 'heartbeat') return this.route(method, params ?? {}, this.connectedClient(ctx));
     // Filesystem latency must not block heartbeat, terminal input or shutdown.
-    if (method === 'files.list' || method === 'files.preview' || method === 'files.open' || method === 'files.pdf' || method === 'git.status' || method === 'git.diff') return this.readFiles(method, params, ctx);
+    if (method === 'files.list' || method === 'files.preview' || method === 'files.open' || method === 'files.pdf' || method === 'git.status' || method === 'git.diff' || method === 'git.review') return this.readFiles(method, params, ctx);
     if (method === 'files.save' || method === 'files.close' || method === 'files.reload') return this.editFile(method, params, ctx);
     if (method.startsWith('projects.') || method.startsWith('worktrees.')) return this.projectRequest(method,params,ctx);
     if(method==='terminals.create'||method==='terminals.restart') {
@@ -349,9 +349,10 @@ export class HostCore {
   private async readFiles(method: string, params: unknown, ctx: ConnectionContext) {
     const schema = terminalRef.extend({ root: cwdSchema, path: z.string().max(4096).default('') });
     const pdfParams = method === 'files.pdf' ? schema.extend({ offset: z.number().int().min(0).max(8 * 1024 * 1024), version: z.string().regex(/^[a-f0-9]{64}$/).optional() }).strict().parse(params) : undefined;
-    const diffParams = method === 'git.diff' ? schema.extend({ path: z.string().min(1).max(4096), originalPath: z.string().min(1).max(4096).optional(), base: z.enum(['HEAD', 'INDEX']), target: z.enum(['INDEX', 'WORKTREE']) }).strict().parse(params) : undefined;
-    const p = pdfParams || diffParams || schema.strict().parse(params);
-    if (method === 'git.status' && p.path !== '') throw new AppError('INVALID_REQUEST', 'Git 상태는 현재 터미널 폴더에서 확인해 주세요.');
+    const diffParams = method === 'git.diff' ? schema.extend({ path: z.string().min(1).max(4096), originalPath: z.string().min(1).max(4096).optional(), base: z.union([z.enum(['HEAD', 'INDEX']), z.string().regex(GIT_COMMIT_PATTERN)]), target: z.enum(['INDEX', 'WORKTREE']) }).strict().parse(params) : undefined;
+    const reviewParams = method === 'git.review' ? schema.extend({ mode: z.enum(['branch', 'head']) }).strict().parse(params) : undefined;
+    const p = pdfParams || diffParams || reviewParams || schema.strict().parse(params);
+    if ((method === 'git.status' || method === 'git.review') && p.path !== '') throw new AppError('INVALID_REQUEST', 'Git 상태는 현재 터미널 폴더에서 확인해 주세요.');
     const originalClient = this.clients.get(ctx.id);
     const check = () => {
       if (this.closing || this.shutdownPrepared) throw new AppError('HOST_UNAVAILABLE', '호스트가 종료 중입니다.');
@@ -365,7 +366,7 @@ export class HostCore {
     if (count >= 2 || [...this.fileReads.values()].reduce((a, b) => a + b, 0) >= 8) throw new AppError('FILES_BUSY', '파일을 읽는 중입니다. 잠시 후 다시 시도해 주세요.');
     this.fileReads.set(ctx.id, count + 1);
     try {
-      const result = pdfParams ? await readPdfChunk(p.root, p.path, this.options.dataDir, pdfParams.offset, pdfParams.version) : diffParams ? await readGitDiff(p.root, this.options.dataDir, diffParams) : method === 'git.status' ? await inspectGit(p.root, this.options.dataDir) : method === 'files.open' ? await openFileDocument(p.root, p.path, this.options.dataDir) : await inspectFiles(p.root, p.path, this.options.dataDir, method === 'files.preview');
+      const result = pdfParams ? await readPdfChunk(p.root, p.path, this.options.dataDir, pdfParams.offset, pdfParams.version) : diffParams ? await readGitDiff(p.root, this.options.dataDir, diffParams) : reviewParams ? await readGitReview(p.root, this.options.dataDir, reviewParams.mode, repositoryRoot => this.reviewBase(p, repositoryRoot)) : method === 'git.status' ? await inspectGit(p.root, this.options.dataDir) : method === 'files.open' ? await openFileDocument(p.root, p.path, this.options.dataDir) : await inspectFiles(p.root, p.path, this.options.dataDir, method === 'files.preview');
       check();
       if (method === 'files.open' && 'version' in result && result.version && 'absolutePath' in result && !('readOnlyReason' in result && result.readOnlyReason)) {
         if ([...this.fileDocuments.values()].filter(item => item.client === originalClient).length >= 32 || this.fileDocuments.size >= 128) throw new AppError('FILES_LIMIT', '열린 파일이 많습니다. 사용하지 않는 파일 탭을 닫아 주세요.');
@@ -381,6 +382,14 @@ export class HostCore {
       const remaining = (this.fileReads.get(ctx.id) || 1) - 1;
       if (remaining) this.fileReads.set(ctx.id, remaining); else this.fileReads.delete(ctx.id);
     }
+  }
+  /** The base branch a project remembers: the terminal's worktree project, else a project opened at this repository root. */
+  private reviewBase(reference: { id: string }, repositoryRoot: string) {
+    const terminal = this.terminals.find(item => item.id === reference.id);
+    const linked = terminal?.worktreeId ? this.worktrees.find(item => item.id === terminal.worktreeId) : undefined;
+    const key = (value: string) => resolve(value).replace(/[\\/]+$/, '').toLowerCase();
+    const repository = linked ? this.repositories.find(item => item.id === linked.repositoryId) : this.repositories.find(item => key(item.root) === key(repositoryRoot));
+    return repository?.baseRef;
   }
   private async editFile(method: string, params: unknown, ctx: ConnectionContext) {
     const reference = hostRef.extend({ documentId: idSchema });
