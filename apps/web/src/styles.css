@@ -888,6 +888,45 @@ details.command-menu { flex: 0 0 auto; width: auto; max-height: none; overflow: 
   .file-workspace.with-editor > .file-explorer { top: 44px; }
 }
 
+/* Git change comparison: read-only tab inside the file editor. */
+.diff-tab-label { flex-shrink: 0; padding: 0 5px; border-radius: 4px; background: var(--surface-raised); color: var(--text-secondary); font-size: 10px; line-height: 16px; }
+.document-body.mode-diff { flex-direction: column; }
+.diff-view { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; }
+.diff-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding: 6px 10px; border-bottom: 1px solid var(--border-subtle); font-size: 11px; }
+.diff-layouts { display: flex; gap: 2px; padding: 2px; border: 1px solid var(--border-subtle); border-radius: 6px; }
+.diff-layouts button, .diff-toggle { display: inline-flex; align-items: center; gap: 5px; border: 1px solid transparent; padding: 3px 8px; border-radius: 4px; background: transparent; color: var(--text-secondary); font-size: 11px; }
+.diff-layouts button[aria-pressed=true], .diff-toggle[aria-pressed=true] { background: var(--accent-dim); color: var(--accent-strong); border-color: var(--border); }
+.diff-stats { display: inline-flex; gap: 6px; font: 600 11px var(--mono); }
+.diff-added { color: var(--git-added); }
+.diff-removed { color: var(--git-deleted); }
+.diff-nav { display: inline-flex; align-items: center; gap: 2px; margin-left: auto; }
+.diff-position { min-width: 64px; padding-right: 4px; text-align: right; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.diff-open { gap: 5px; padding: 3px 8px; font-size: 11px; }
+.diff-sides { display: grid; grid-template-columns: 1fr 1fr; border-bottom: 1px solid var(--border-subtle); background: var(--sidebar); color: var(--text-secondary); font-size: 11px; }
+.diff-sides span { padding: 5px 12px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.diff-sides span + span { border-left: 1px solid var(--border); }
+.diff-body { display: flex; flex: 1; min-width: 0; min-height: 0; overflow: hidden; }
+.diff-body > .cm-editor { flex: 1; min-width: 0; }
+.diff-body > .cm-mergeView { flex: 1; min-width: 0; height: 100%; overflow: auto; overscroll-behavior: contain; }
+.diff-body .cm-mergeViewEditors { min-height: 100%; }
+.diff-body .cm-mergeViewEditor + .cm-mergeViewEditor { border-left: 1px solid var(--border); }
+.file-editor-panel .diff-body .cm-editor.cm-merge-a .cm-changedLine, .file-editor-panel .diff-body .cm-editor .cm-deletedChunk { background: color-mix(in srgb, var(--git-deleted) 12%, transparent); }
+.file-editor-panel .diff-body .cm-editor.cm-merge-b .cm-changedLine, .file-editor-panel .diff-body .cm-editor .cm-inlineChangedLine { background: color-mix(in srgb, var(--git-added) 12%, transparent); }
+.file-editor-panel .diff-body .cm-editor.cm-merge-a .cm-changedText, .file-editor-panel .diff-body .cm-editor .cm-deletedChunk .cm-deletedText { background: color-mix(in srgb, var(--git-deleted) 34%, transparent); border-radius: 2px; }
+.file-editor-panel .diff-body .cm-editor.cm-merge-b .cm-changedText { background: color-mix(in srgb, var(--git-added) 34%, transparent); border-radius: 2px; }
+.file-editor-panel .diff-body .cm-editor.cm-merge-a .cm-changedLineGutter, .file-editor-panel .diff-body .cm-editor .cm-deletedLineGutter { background: var(--git-deleted); }
+.file-editor-panel .diff-body .cm-editor.cm-merge-b .cm-changedLineGutter { background: var(--git-added); }
+.file-editor-panel .diff-body .cm-editor .cm-collapsedLines { padding: 3px 12px; border-block: 1px solid var(--border-subtle); background: var(--surface-raised); color: var(--text-secondary); font-size: 11px; }
+.file-editor-panel .diff-body .cm-mergeSpacer { background: repeating-linear-gradient(135deg, transparent 0 6px, var(--border-subtle) 6px 7px); }
+@container(max-width:560px) {
+  .diff-position { min-width: 0; }
+  .diff-open { padding: 3px 6px; }
+}
+@media(max-width:700px) {
+  .diff-layouts button, .diff-toggle, .diff-open { min-height: 36px; padding: 5px 10px; }
+  .diff-toolbar .icon-button { min-width: 36px; min-height: 36px; }
+}
+
 /* Persistent app update notice (sidebar footer card / collapsed rail badge). */
 .sidebar-footer { flex-wrap: wrap; }
 .update-notice { order: -1; flex: 1 1 100%; display: flex; flex-direction: column; gap: 7px; min-width: 0; padding: 9px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text-secondary); font-size: 11px; }

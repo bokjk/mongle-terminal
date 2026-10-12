@@ -38,7 +38,8 @@ test('Git switch, tree decorations, grouped changes, refresh, stale responses an
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve)); const address = server.address(); assert.ok(address && typeof address !== 'string');
   t.after(() => new Promise<void>(resolve => server.close(() => resolve())));
   let delayGit = false, releaseDelayed: (() => void) | undefined, oldHost = false;
-  const compatible = (value: any) => oldHost && value?.capabilities ? { ...value, capabilities: value.capabilities.filter((capability: string) => capability !== 'git.read') } : value;
+  // This test covers hosts without git.diff, where a Git row opens the current file; tests/ui/git-diff.test.ts covers comparisons.
+  const compatible = (value: any) => value?.capabilities ? { ...value, capabilities: value.capabilities.filter((capability: string) => capability !== 'git.diff' && (!oldHost || capability !== 'git.read')) } : value;
   await page.exposeBinding('hostRequest', async (_source, method: string, params: any) => {
     requests.push(method);
     try {

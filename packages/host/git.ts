@@ -1,8 +1,8 @@
 import { execFile } from 'node:child_process';
-import { lstat, readFile, readlink, realpath } from 'node:fs/promises';
+import { lstat, open, readFile, readlink, realpath } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import path from 'node:path';
-import { AppError, type GitChange, type GitListing, type GitStatusCode } from '../protocol/index.js';
+import { AppError, GIT_DIFF_BYTES, type GitChange, type GitDiff, type GitDiffBase, type GitDiffTarget, type GitListing, type GitStatusCode } from '../protocol/index.js';
 import { localPath, resolveFileRoot, within } from './files.js';
 
 const execute = promisify(execFile);
@@ -77,15 +77,19 @@ function validRelative(value: string) {
   return value.length <= 4096 && !/[\x00-\x1f:]/.test(value) && !path.isAbsolute(value) && !path.win32.isAbsolute(value) && !value.split(/[\\/]/).some(part => part === '..');
 }
 
+const gitFlags = ['--no-optional-locks', '--no-pager', '-c', 'core.fsmonitor=false', '-c', 'core.untrackedCache=false', '-c', 'maintenance.auto=false'];
+function gitOptions(base: string) {
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.toUpperCase().startsWith('GIT_')));
+  Object.assign(env, { GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0', GIT_LITERAL_PATHSPECS: '1', GIT_NO_LAZY_FETCH: '1' });
+  return { cwd: base, env, windowsHide: true, timeout: 10000, maxBuffer: 2 * 1024 * 1024, encoding: 'utf8' as const };
+}
+
 /** Selected cwd only. No shell, network, hooks, index writes or Git mutations. */
 export async function inspectGit(root: string, dataDir: string): Promise<GitListing> {
   const { base, protectedRoot } = await resolveFileRoot(root, dataDir);
   const discovered = await repositoryAt(base, protectedRoot);
   if (!discovered) return { state: 'not-repository', root, message: '이 폴더는 Git 저장소가 아닙니다.' };
-  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.toUpperCase().startsWith('GIT_')));
-  Object.assign(env, { GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0', GIT_LITERAL_PATHSPECS: '1', GIT_NO_LAZY_FETCH: '1' });
-  const options = { cwd: base, env, windowsHide: true, timeout: 10000, maxBuffer: 2 * 1024 * 1024, encoding: 'utf8' as const };
-  const flags = ['--no-optional-locks', '--no-pager', '-c', 'core.fsmonitor=false', '-c', 'core.untrackedCache=false', '-c', 'maintenance.auto=false'];
+  const options = gitOptions(base), flags = gitFlags;
   try {
     const { stdout: top } = await execute('git', [...flags, 'rev-parse', '--show-toplevel'], options);
     const repositoryRoot = await safeMetadata(top.trim(), protectedRoot);
@@ -119,5 +123,87 @@ export async function inspectGit(root: string, dataDir: string): Promise<GitList
     if (error instanceof AppError) throw error;
     const failure = error as NodeJS.ErrnoException & { killed?: boolean };
     return { state: 'unavailable', root, message: failure.code === 'ENOENT' ? '이 컴퓨터에서 Git을 찾지 못했습니다. Git 설치 후 새로고침해 주세요.' : failure.killed || failure.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' ? 'Git 조회가 오래 걸리거나 변경이 너무 많습니다. 잠시 후 새로고침해 주세요.' : 'Git 상태를 읽지 못했습니다. 저장소 권한을 확인하고 새로고침해 주세요.' };
+  }
+}
+
+/** Same encodings as the file preview: UTF-8 (optional BOM) or UTF-16 with BOM. */
+export function decodeDiffText(bytes: Uint8Array): string | undefined {
+  let encoding = 'utf-8', start = 0;
+  if (bytes[0] === 0xff && bytes[1] === 0xfe) { encoding = 'utf-16le'; start = 2; }
+  else if (bytes[0] === 0xfe && bytes[1] === 0xff) { encoding = 'utf-16be'; start = 2; }
+  else if (bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) start = 3;
+  try {
+    const text = new TextDecoder(encoding, { fatal: true }).decode(bytes.subarray(start));
+    return /[\x00-\x08\x0e-\x1f]/.test(text) ? undefined : text;
+  } catch { return undefined; }
+}
+
+type DiffSide = { text: string | null } | { unavailable: string };
+const tooLarge = `${GIT_DIFF_BYTES / 1024} KiB를 넘는 파일은 비교 화면에서 열 수 없습니다. 외부 도구로 확인해 주세요.`;
+const notText = '바이너리이거나 지원하지 않는 인코딩이라 비교할 수 없습니다. UTF-8 또는 BOM이 있는 UTF-16 텍스트만 비교합니다.';
+
+/**
+ * Reads both sides of one changed file for a read-only comparison.
+ * Blobs come from `git cat-file` without textconv or smudge filters, so no
+ * configured program runs; the working copy is read directly and bounded.
+ */
+export async function readGitDiff(root: string, dataDir: string, request: { path: string; originalPath?: string; base: GitDiffBase; target: GitDiffTarget }): Promise<GitDiff> {
+  if (request.base === 'INDEX' && request.target === 'INDEX') throw new AppError('INVALID_REQUEST', '비교할 두 버전을 확인해 주세요.');
+  if (!validRelative(request.path) || !request.path || (request.originalPath !== undefined && !validRelative(request.originalPath))) throw new AppError('FILES_OUTSIDE_ROOT', '현재 터미널 폴더 안의 파일만 비교할 수 있습니다.');
+  const { base, protectedRoot } = await resolveFileRoot(root, dataDir);
+  const discovered = await repositoryAt(base, protectedRoot);
+  if (!discovered) throw new AppError('GIT_UNAVAILABLE', '이 폴더는 Git 저장소가 아닙니다.');
+  const options = gitOptions(base);
+  const run = (args: string[]) => execute('git', [...gitFlags, ...args], options);
+  try {
+    const { stdout: top } = await run(['rev-parse', '--show-toplevel']);
+    const repositoryRoot = await safeMetadata(top.trim(), protectedRoot);
+    if (repositoryRoot !== discovered || !within(repositoryRoot, base)) throw new AppError('GIT_UNAVAILABLE', 'Git 작업 폴더가 바뀌었습니다. 새로고침해 주세요.');
+    const locate = (relative: string) => {
+      const target = path.resolve(base, relative);
+      if (!within(base, target) || within(protectedRoot, target)) throw new AppError('FILES_OUTSIDE_ROOT', '현재 터미널 폴더 안의 파일만 비교할 수 있습니다.');
+      return { target, repositoryPath: path.relative(repositoryRoot, target).split(path.sep).join('/') };
+    };
+    const current = locate(request.path), previous = request.originalPath ? locate(request.originalPath) : current;
+    async function stored(area: 'HEAD' | 'INDEX', location: { repositoryPath: string }): Promise<DiffSide> {
+      // `HEAD:path` and `:path` are repository-relative; validRelative rules out ':' and '..'.
+      const spec = `${area === 'HEAD' ? 'HEAD' : ''}:${location.repositoryPath}`;
+      let type: string;
+      try { type = (await run(['cat-file', '-t', spec])).stdout.trim(); }
+      catch (error) { if (typeof (error as { code?: unknown }).code === 'number') return { text: null }; throw error; }
+      if (type !== 'blob') return { unavailable: '하위 모듈처럼 파일이 아닌 항목은 비교할 수 없습니다.' };
+      if (Number((await run(['cat-file', '-s', spec])).stdout.trim()) > GIT_DIFF_BYTES) return { unavailable: tooLarge };
+      const { stdout } = await execute('git', [...gitFlags, 'cat-file', 'blob', spec], { ...options, encoding: 'buffer', maxBuffer: GIT_DIFF_BYTES + 1024 });
+      const text = decodeDiffText(stdout);
+      return text === undefined ? { unavailable: notText } : { text };
+    }
+    async function working(location: { target: string }): Promise<DiffSide> {
+      let real: string;
+      try { real = await realpath(location.target); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { text: null }; throw error; }
+      if (!localPath(real) || !within(base, real) || within(protectedRoot, real)) return { unavailable: '현재 폴더 밖을 가리키는 링크는 비교할 수 없습니다.' };
+      const file = await open(real, 'r');
+      try {
+        const info = await file.stat();
+        if (!info.isFile()) return { unavailable: '일반 파일만 비교할 수 있습니다.' };
+        if (info.size > GIT_DIFF_BYTES) return { unavailable: tooLarge };
+        const buffer = Buffer.alloc(GIT_DIFF_BYTES + 1);
+        const { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
+        if (bytesRead > GIT_DIFF_BYTES) return { unavailable: tooLarge };
+        const text = decodeDiffText(buffer.subarray(0, bytesRead));
+        return text === undefined ? { unavailable: notText } : { text };
+      } finally { await file.close(); }
+    }
+    const original = await stored(request.base, request.base === 'HEAD' ? previous : current);
+    const modified = request.target === 'WORKTREE' ? await working(current) : await stored('INDEX', current);
+    const result: GitDiff = { path: request.path, ...(request.originalPath ? { originalPath: request.originalPath } : {}), absolutePath: current.target, base: request.base, target: request.target, original: null, modified: null };
+    const unavailable = 'unavailable' in original ? original.unavailable : 'unavailable' in modified ? modified.unavailable : undefined;
+    if (unavailable) return { ...result, unavailable };
+    return { ...result, original: (original as { text: string | null }).text, modified: (modified as { text: string | null }).text };
+  } catch (error) {
+    if (error instanceof AppError) throw error;
+    const failure = error as NodeJS.ErrnoException & { killed?: boolean };
+    if (failure.code === 'EACCES' || failure.code === 'EPERM') throw new AppError('FILES_UNAVAILABLE', '이 파일을 읽을 권한이 없습니다.');
+    throw new AppError('GIT_UNAVAILABLE', failure.code === 'ENOENT' ? '이 컴퓨터에서 Git을 찾지 못했습니다. Git 설치 후 다시 시도해 주세요.' : failure.killed ? 'Git 조회가 오래 걸립니다. 잠시 후 다시 시도해 주세요.' : '변경 내용을 읽지 못했습니다. 새로고침한 뒤 다시 시도해 주세요.');
   }
 }

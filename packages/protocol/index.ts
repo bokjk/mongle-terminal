@@ -35,6 +35,12 @@ export interface PdfChunk { path: string; absolutePath: string; size: number; ve
 export type GitStatusCode = '' | 'M' | 'A' | 'D' | 'R' | 'C' | 'T';
 export interface GitChange { path: string; originalPath?: string; index: GitStatusCode; worktree: GitStatusCode; untracked: boolean; conflicted: boolean; }
 export type GitListing = { state: 'not-repository' | 'unavailable'; root: string; message: string } | { state: 'repository'; root: string; repositoryRoot: string; branch: string; detached: boolean; changes: GitChange[]; truncated: boolean };
+/** Each compared side is limited so a diff response stays well below the remote send buffer. */
+export const GIT_DIFF_BYTES = 256 * 1024;
+export type GitDiffBase = 'HEAD' | 'INDEX';
+export type GitDiffTarget = 'INDEX' | 'WORKTREE';
+/** original/modified are null when the file does not exist on that side. unavailable explains why text is not shown. */
+export interface GitDiff { path: string; originalPath?: string; absolutePath: string; base: GitDiffBase; target: GitDiffTarget; original: string | null; modified: string | null; unavailable?: string; }
 export interface RpcRequest { type: 'request'; id: string; method: string; params: unknown; }
 export type RpcResponse = { type: 'response'; id: string; ok: true; result: any } | { type: 'response'; id: string; ok: false; error: { code: string; message: string } };
 export interface PresentationSnapshot { kind: 'presentation-v1'; data: string; cols: number; rows: number; modes: Record<string, unknown>; version: string; inputResetGeneration?: number; notificationCount?: number; }
