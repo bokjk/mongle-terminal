@@ -1,6 +1,6 @@
 # AI 팀 실행 (호스트)
 
-2026-10-15, Windows x64, 미배포. AI 팀 기능의 2단계 중 호스트 부분이다([설계안](https://github.com/bokjk/mongle-terminal/pull/88)). 팀 화면과 새 작업 흐름은 다음 PR에서 만든다. 이번 변경만으로는 화면에 새 메뉴가 생기지 않는다.
+2026-10-15, Windows x64, 미배포. AI 팀 기능의 2단계 중 호스트 부분이다([설계안](../08-agent-team-design.md)). 팀 화면과 새 작업 흐름은 [AI 팀 화면](agent-teams-ui.md)에 있다.
 
 ## 동작
 

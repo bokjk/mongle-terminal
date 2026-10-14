@@ -1068,7 +1068,8 @@ details.command-menu { flex: 0 0 auto; width: auto; max-height: none; overflow: 
 .team-template-star { margin: 4px 4px 0 0; color: var(--text-muted); }
 .team-template-star.on { color: var(--warning); }
 .team-template-star.on svg { fill: currentColor; }
-.team-members { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.team-members { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: var(--radius); overflow-x: auto; }
+.team-member-head, .team-member-row, .team-member-detail { min-width: 720px; }
 .team-member-head, .team-member-row { display: grid; grid-template-columns: minmax(118px, 1.25fr) minmax(98px, 1fr) minmax(104px, 1fr) minmax(98px, 1fr) minmax(88px, .9fr) minmax(94px, .9fr) 58px 64px; align-items: center; gap: 6px; padding: 6px 8px; }
 .team-member-head { color: var(--text-muted); font-size: 10px; font-weight: 600; background: var(--surface); border-bottom: 1px solid var(--border-subtle); }
 .team-member + .team-member { border-top: 1px solid var(--border-subtle); }
@@ -1148,10 +1149,6 @@ details.command-menu { flex: 0 0 auto; width: auto; max-height: none; overflow: 
   .team-member-head { display: none; }
   .team-member-row { grid-template-columns: 1fr 1fr; }
   .team-member-name { grid-column: 1 / -1; }
+  .team-member-head, .team-member-row, .team-member-detail { min-width: 0; }
   .team-members-footer { flex-wrap: wrap; }
-  .team-panes { grid-template-columns: minmax(0, 1fr); padding: 0; }
-  .team-chat { margin: 6px 0 0; border-radius: 0; border-width: 1px 0 0; }
-  .team-chat-log { max-height: 72px; }
-  .team-chat-form .select { flex-basis: 96px; }
-  .team-bar { display: none; }
 }

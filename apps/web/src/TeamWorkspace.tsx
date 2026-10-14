@@ -25,8 +25,8 @@ export function TeamMemberBadge({team, memberId}: {team: Team; memberId: string}
  * The team screen: the lead's terminal large on the left, the other members stacked on the right, the team
  * conversation under them and one line of team information at the bottom.
  */
-export function TeamWorkspace({state, team, activeId, maximized, mobile, renderPane, request, onSelect, onError, onSaveTemplate, onRemove}: {
-  state: HostState; team: Team; activeId: string; maximized?: string; mobile: boolean;
+export function TeamWorkspace({state, team, maximized, renderPane, request, onSelect, onError, onSaveTemplate, onRemove}: {
+  state: HostState; team: Team; maximized?: string;
   renderPane(id: string): ReactNode; request: Request; onSelect(id: string): void; onError(message: string): void;
   onSaveTemplate(): void; onRemove(): void;
 }) {
@@ -40,10 +40,9 @@ export function TeamWorkspace({state, team, activeId, maximized, mobile, renderP
     </section></div>;
   };
   const focused = maximized && team.members.find(member => member.terminalId === maximized);
-  const shown = mobile ? team.members.find(member => member.terminalId === activeId) ?? lead : undefined;
   return <div className="team-workspace">
-    <div className={'team-panes' + (focused || shown ? ' single' : '') + (others.length ? '' : ' solo')}>
-      {focused ? pane(focused, 'team-pane-slot team-lead-slot') : shown ? pane(shown, 'team-pane-slot team-lead-slot') : <>
+    <div className={'team-panes' + (focused ? ' single' : '') + (others.length ? '' : ' solo')}>
+      {focused ? pane(focused, 'team-pane-slot team-lead-slot') : <>
         {pane(lead, 'team-pane-slot team-lead-slot')}
         {others.length > 0 && <div className="team-others">{others.map(member => pane(member, 'team-pane-slot'))}</div>}
       </>}
