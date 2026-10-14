@@ -9,17 +9,23 @@ type Request = <T = unknown>(method: string, params?: unknown) => Promise<T>;
 const message = (error: unknown) => error instanceof Error ? error.message : '요청을 완료하지 못했습니다.';
 const time = (at: number) => new Date(at).toLocaleTimeString('ko-KR', {hour: '2-digit', minute: '2-digit'});
 
-/** The small labels a member's pane header carries: lead, role, model and the read-only switch. */
+/**
+ * The small labels a member's pane header carries: lead, the role when the name does not already say it,
+ * model and the read-only switch (an icon, so narrow panes keep the name readable).
+ */
 export function TeamMemberBadge({team, memberId}: {team: Team; memberId: string}) {
   const index = team.members.findIndex(item => item.id === memberId), member = team.members[index];
   if (!member) return null;
+  const role = ROLE_DEFAULTS[member.role].label;
   return <span className="team-member-badge">
     {index === 0 && <span className="team-chip lead"><Crown size={11} aria-hidden="true"/>팀장</span>}
-    {index !== 0 && <span className="team-chip">{ROLE_DEFAULTS[member.role].label}</span>}
-    <span className="team-chip model">{modelLabel(member)}</span>
-    {member.readOnly && <span className="team-chip" title="파일을 고치지 못하게 실행했습니다"><Lock size={10} aria-hidden="true"/>읽기 전용</span>}
+    {index !== 0 && member.role !== 'custom' && !role.startsWith(member.name) && <span className="team-chip">{role}</span>}
+    <span className="team-chip model" title={modelLabel(member)}>{modelLabel(member)}</span>
+    {member.readOnly && <span className="team-chip icon" role="img" aria-label="읽기 전용" title="읽기 전용: 파일을 고치지 못하게 실행했습니다"><Lock size={11} aria-hidden="true"/></span>}
   </span>;
 }
+/** What was typed in each team's message box, kept while the user looks elsewhere in this window. */
+const drafts = new Map<string, string>();
 
 /**
  * The team screen: the lead's terminal large on the left, the other members stacked on the right, the team
@@ -55,7 +61,8 @@ export function TeamWorkspace({state, team, maximized, renderPane, request, onSe
 /** What was sent to whom and what became of it, and the box to send the next message (to the lead by default). */
 export function TeamChat({state, team, request, onSelect, onError}: {state: HostState; team: Team; request: Request; onSelect(id: string): void; onError(message: string): void}) {
   const [to, setTo] = useState(team.members[0]?.id ?? '');
-  const [text, setText] = useState('');
+  const [text, setTextState] = useState(() => drafts.get(team.id) ?? '');
+  const setText = (value: string) => { setTextState(value); if (value) drafts.set(team.id, value); else drafts.delete(team.id); };
   const [sending, setSending] = useState(false);
   const log = useRef<HTMLOListElement>(null);
   const messages = team.messages ?? [];
@@ -113,7 +120,7 @@ export function TeamBar({team, state, onSaveTemplate, onRemove}: {team: Team; st
   const group = state.groups.find(item => item.id === team.groupId);
   return <footer className="team-bar">
     <span className="team-bar-name"><Users size={14} aria-hidden="true"/><strong>{team.name}</strong><span className="hint">구성원 {team.members.length}명{worktrees ? ' · 워크트리 ' + worktrees + '개' : ''}{group ? ' · ' + group.name : ''}</span></span>
-    <span className="team-flow" aria-label="일 흐름"><GitFork size={13} aria-hidden="true"/>{teamFlow(team.members).map(item => <span key={item.from} className="team-chip">{item.from} → {item.to}</span>)}</span>
+    <span className="team-flow" aria-label="일 흐름" title={'일 흐름: ' + teamFlow(team.members).map(item => item.from + ' → ' + item.to).join(', ')}><GitFork size={13} aria-hidden="true"/>{teamFlow(team.members).map(item => <span key={item.from} className="team-chip">{item.from} → {item.to}</span>)}</span>
     <button type="button" className="button subtle" onClick={onSaveTemplate}><BookmarkPlus size={14}/>템플릿으로 저장</button>
     <details className="command-menu"><summary className="icon-button" aria-label={team.name + ' 팀 메뉴'}>···</summary><div>
       <button type="button" className="menu-item danger" onClick={onRemove}>팀 해제…</button>

@@ -82,7 +82,6 @@ export function TeamSetup({state, groupId, request, onClose, onStarted}: {state:
     finally { setBusy(''); }
   }
 
-  const names = members.map(member => member.name);
   return <Modal title="AI 팀으로 작업 시작" onClose={onClose}>
     <form className="team-setup" onSubmit={event => { event.preventDefault(); if (step === 'compose') void runCheck(); else void start(); }}>
       <ol className="team-steps" aria-label="진행 단계">
@@ -129,7 +128,7 @@ export function TeamSetup({state, groupId, request, onClose, onStarted}: {state:
                   <span role="cell"><select className="select" aria-label={member.name + ' 역할'} value={member.role} onChange={event => { setCheck(undefined); setMembers(list => list.map((item, at) => at === index ? withRole(item, event.target.value as MemberDraft['role']) : item)); }}>{ROLES.map(role => <option key={role} value={role}>{ROLE_DEFAULTS[role].label}</option>)}</select></span>
                   <span role="cell"><select className="select" aria-label={member.name + ' 도구'} value={member.provider} onChange={event => edit(index, {provider: event.target.value as MemberDraft['provider'], model: ''})}><option value="claude">Claude Code</option><option value="codex">Codex</option></select></span>
                   <span role="cell"><input className="input" aria-label={member.name + ' 모델'} list={listId} value={member.model} maxLength={80} placeholder="도구 기본값" onChange={event => edit(index, {model: event.target.value.trim()})}/><datalist id={listId}>{modelSuggestions(member.provider, templates ?? []).map(model => <option key={model} value={model}/>)}</datalist></span>
-                  <span role="cell"><select className="select" aria-label={member.name + ' 끝나면 보고'} value={member.reportTo} onChange={event => edit(index, {reportTo: event.target.value})}><option value="user">나</option>{names.filter((other, at) => at !== index && other.trim()).map(other => <option key={other} value={other}>{other}</option>)}{member.reportTo !== 'user' && !names.includes(member.reportTo) && <option value={member.reportTo}>{member.reportTo} (없음)</option>}</select></span>
+                  <span role="cell"><select className="select" aria-label={member.name + ' 끝나면 보고'} value={member.reportKey} onChange={event => edit(index, {reportKey: event.target.value})}><option value="user">나</option>{members.filter((other, at) => at !== index).map(other => <option key={other.key} value={other.key}>{other.name.trim() || '(이름 없음)'}</option>)}{member.reportKey === '' && <option value="">{member.reportTo} (없음)</option>}</select></span>
                   <span role="cell"><select className="select" aria-label={member.name + ' 작업 폴더'} value={member.folder} onChange={event => edit(index, {folder: event.target.value as MemberDraft['folder']})}><option value="base">기본 폴더</option><option value="worktree">새 워크트리</option></select></span>
                   <span role="cell" className="team-member-check"><input type="checkbox" aria-label={member.name + ' 읽기 전용'} checked={member.readOnly} onChange={event => edit(index, {readOnly: event.target.checked})}/></span>
                   <span role="cell" className="team-member-actions">

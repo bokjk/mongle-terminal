@@ -17,14 +17,19 @@ test('editing members keeps report targets and role defaults consistent', () => 
   let drafts = draftsFrom(spec);
   assert.deepEqual(specsFrom(drafts).map(member => member.name), ['설계', '개발', '검토']);
   drafts = renameMember(drafts, 2, '리뷰');
-  assert.equal(drafts[1].reportTo, '리뷰', 'whoever reported to the old name follows the rename');
+  assert.equal(specsFrom(drafts)[1].reportTo, '리뷰', 'whoever reported to the old name follows the rename');
+  // The user's case: a lead renamed, another member briefly given the same name, then renamed back.
+  let clash = renameMember(draftsFrom(spec), 0, '설계장');
+  clash = renameMember(clash, 1, '설계장');
+  clash = renameMember(clash, 1, '개발');
+  assert.deepEqual(specsFrom(clash).map(member => [member.name, member.reportTo]), [['설계장', 'user'], ['개발', '검토'], ['검토', '설계장']], 'a brief duplicate never moves a report to another member');
   const reviewer = withRole(drafts[1], 'reviewer');
   assert.equal(reviewer.instructions, ROLE_DEFAULTS.reviewer.instructions);
   assert.equal(reviewer.readOnly, true, 'the role brings its read-only default');
   const rewritten = withRole({ ...drafts[1], instructions: '직접 쓴 지시문' }, 'tester');
   assert.equal(rewritten.instructions, '직접 쓴 지시문', 'rewritten instructions are kept');
   const removed = removeMember(drafts, 2);
-  assert.deepEqual(removed.map(member => [member.name, member.reportTo]), [['설계', 'user'], ['개발', '설계']], 'reports to a removed member go to the lead');
+  assert.deepEqual(specsFrom(removed).map(member => [member.name, member.reportTo]), [['설계', 'user'], ['개발', '설계']], 'reports to a removed member go to the lead');
   const promoted = makeLead(drafts, 2);
   assert.equal(promoted[0].name, '리뷰');
   let grown = drafts;
@@ -51,7 +56,10 @@ test('a team message says what became of it and what it waits for', () => {
 });
 
 test('sending waits for a running, hook-proven agent and says why it cannot yet', () => {
-  assert.match(teamSendBlocker(state([terminal('t0')]), team, 'm0')!, /설계의 Claude Code가 준비되기를 기다리는 중/);
+  assert.match(teamSendBlocker(state([terminal('t0')]), team, 'm0')!, /설계의 Claude Code가 준비되기를 기다리는 중.*첫 요청/);
+  const codex = teamSendBlocker(state([terminal('t2')]), team, 'm2')!;
+  assert.match(codex, /검토의 Codex가 준비되기를 기다리는 중.*Hooks need review/);
+  assert.doesNotMatch(codex, /Claude/, 'no Claude-only advice for a Codex member');
   assert.equal(teamSendBlocker(state([terminal('t0', { agentReady: true })]), team, 'm0'), undefined);
   assert.match(teamSendBlocker(state([terminal('t0', { status: 'exited' })]), team, 'm0')!, /종료되었습니다/);
   assert.match(teamSendBlocker(state([]), team, 'm1')!, /개발의 터미널이 없습니다/);
