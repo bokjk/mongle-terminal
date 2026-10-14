@@ -156,3 +156,17 @@ test('a paste whose Enter never went out is reported as not delivered', async ()
   assert.deepEqual(writes, [START + 'pasted only' + END], 'no Enter after the agent stopped');
   assert.equal(settled.length, 1);
 });
+
+test('views see every added or cancelled message even while the hold stays the same', () => {
+  const facts: InboxFacts = { supported: true, dnd: false, status: 'working' };
+  const seen: (number | undefined)[] = [];
+  let inbox!: AgentInbox;
+  inbox = new AgentInbox({ write: () => true, facts: () => ({ ...facts }), changed: () => { seen.push(inbox.summary()?.messages.length); } }, timing);
+  inbox.agentStarted();
+  const first = inbox.add('first', 'phone');
+  assert.equal(inbox.summary()?.hold, 'busy');
+  inbox.add('second', 'phone');
+  assert.equal(seen.at(-1), 2, 'the second message reaches views although the hold is still busy');
+  inbox.cancel(first);
+  assert.equal(seen.at(-1), 1, 'a cancel reaches views although the hold is still busy');
+});

@@ -1152,6 +1152,7 @@ details.command-menu { flex: 0 0 auto; width: auto; max-height: none; overflow: 
 .team-flow { display: inline-flex; align-items: center; gap: 5px; flex: 1; min-width: 0; overflow: hidden; color: var(--text-muted); }
 .team-flow > svg { flex-shrink: 0; }
 .team-bar .button { flex-shrink: 0; min-height: 30px; }
+.team-bar .command-menu > div { transform: translate(-133px, calc(-100% - 38px)); }
 @media (max-width: 700px) {
   .team-setup-row { grid-template-columns: 1fr; }
   .team-member-head { display: none; }

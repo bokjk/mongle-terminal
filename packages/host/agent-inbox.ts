@@ -135,6 +135,8 @@ export class AgentInbox {
     const preview = text.replace(/\r/g, ' ').slice(0, PREVIEW_CHARS);
     this.pending.push({id, text, preview, createdAt:this.now(), from:from.slice(0, 100), force});
     this.pump();
+    // The waiting list changed even when the hold did not.
+    this.io.changed();
     return id;
   }
   cancel(id: string): boolean {
@@ -143,6 +145,7 @@ export class AgentInbox {
     this.pending.splice(index, 1);
     this.settle(id, 'cancelled');
     this.pump();
+    this.io.changed();
     return true;
   }
   /** Sends the message even though someone may be typing; every other condition still applies. */
@@ -151,6 +154,7 @@ export class AgentInbox {
     if (!message) return false;
     message.force = true;
     this.pump();
+    this.io.changed();
     return true;
   }
 
