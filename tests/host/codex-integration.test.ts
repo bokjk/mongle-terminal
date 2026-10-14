@@ -263,6 +263,22 @@ test('pipe handles chunked lines once, drops forgotten or rejected shells, caps 
   assert.ok(Date.now() - closedAt < 1000, 'close does not wait for idle sockets');
 });
 
+test('Claude starts use message version 2 and only their SessionStart counts', async t => {
+  const calls: unknown[] = [];
+  const pipe = await startAgentPipe({start:(token, session)=>{calls.push(['codex', token, session]); return true;}, end:()=>true, claudeStart:(token, session)=>{calls.push(['claude', token, session]); return true;}}, {name:pipeName()}); t.after(()=>pipe.close());
+  const msg = (o: object) => JSON.stringify({v:2, provider:'claude', token:TOKEN, event:'SessionStart', sessionId:ID, ...o}) + '\n';
+  await send(pipe.name, msg({cwd:'D:\\work', source:'startup'}));
+  await send(pipe.name, msg({event:'UserPromptSubmit'}));
+  await send(pipe.name, msg({sessionId:'not-a-uuid'}));
+  await send(pipe.name, msg({token:'zz'}));
+  await send(pipe.name, msg({cwd:'relative'}));
+  // Without a run nonce a version-1 line is not a Codex start either.
+  await send(pipe.name, JSON.stringify({v:1, provider:'claude', token:TOKEN, event:'SessionStart', sessionId:ID}) + '\n');
+  await settle();
+  assert.deepEqual(calls, [['claude', TOKEN, {provider:'claude', sessionId:ID, cwd:'D:\\work'}], ['claude', TOKEN, {provider:'claude', sessionId:ID}]]);
+  assert.equal(pipe.tracked, 0, 'a Claude start is never tracked as a Codex run');
+});
+
 test('only PowerShell shells with a token get the pipe and the codex wrapper', () => {
   const name = pipeName(), env = {MONGLE_AGENT_TOKEN:TOKEN, MONGLE_CODEX_RUN:RUN, MONGLE_AGENT_PIPE:'stale'};
   const ps = shellIntegration({kind:'powershell'} as any, [], env, {agentPipe:name});
@@ -272,6 +288,9 @@ test('only PowerShell shells with a token get the pipe and the codex wrapper', (
     const other = shellIntegration({kind} as any, [], env, {agentPipe:name});
     assert.equal(other.env.MONGLE_AGENT_PIPE, undefined); assert.equal(other.env.MONGLE_CODEX_RUN, undefined);
   }
+  const claudeOnly = shellIntegration({kind:'powershell'} as any, [], env, {agentPipe:name, codexWrapper:false});
+  assert.equal(claudeOnly.env.MONGLE_AGENT_PIPE, name, 'the Claude hook reports its start through the pipe');
+  assert.doesNotMatch(Buffer.from(claudeOnly.args.at(-1)!, 'base64').toString('utf16le'), /function global:codex/, 'no Codex wrapper without the Codex integration');
   const noToken = shellIntegration({kind:'powershell'} as any, [], {}, {agentPipe:name});
   assert.equal(noToken.env.MONGLE_AGENT_PIPE, undefined);
   assert.doesNotMatch(Buffer.from(noToken.args.at(-1)!, 'base64').toString('utf16le'), /function global:codex/);

@@ -56,7 +56,8 @@ test('a team message says what became of it and what it waits for', () => {
 });
 
 test('sending waits for a running, hook-proven agent and says why it cannot yet', () => {
-  assert.match(teamSendBlocker(state([terminal('t0')]), team, 'm0')!, /설계의 Claude Code가 준비되기를 기다리는 중.*첫 요청/);
+  assert.match(teamSendBlocker(state([terminal('t0')]), team, 'm0')!, /설계의 Claude Code가 준비되기를 기다리는 중.*확인 질문/);
+  assert.doesNotMatch(teamSendBlocker(state([terminal('t0')]), team, 'm0')!, /첫 요청|Codex/, 'Claude is ready at its start; no first request is needed');
   const codex = teamSendBlocker(state([terminal('t2')]), team, 'm2')!;
   assert.match(codex, /검토의 Codex가 준비되기를 기다리는 중.*Hooks need review/);
   assert.doesNotMatch(codex, /Claude/, 'no Claude-only advice for a Codex member');

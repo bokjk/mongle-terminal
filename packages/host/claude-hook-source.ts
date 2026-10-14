@@ -1,7 +1,9 @@
 /** No network, transcript reads, model calls, or commands from hook input.
  * SessionStart/UserPromptSubmit also carry the exact session UUID and cwd so the
  * host can offer `claude --resume <UUID>` after an app update. Tool calls send only digests
- * of their name/input and opaque call id; SessionStart sends its documented source. */
+ * of their name/input and opaque call id; SessionStart sends its documented source.
+ * SessionStart also goes, with the same fields, over the host-local named pipe of a PowerShell
+ * shell: Claude Code's fullscreen UI drops terminal sequences written before it draws. */
 export const CLAUDE_HOOK_SOURCE = String.raw`// Mongle Terminal managed Claude hook v1
 'use strict';
 const token = process.env.MONGLE_AGENT_TOKEN;
@@ -43,6 +45,15 @@ process.stdin.on('end', () => {
     if (data.is_interrupt === true) event.interrupted = true;
     const encoded = Buffer.from(JSON.stringify(event)).toString('base64');
     process.stdout.write(JSON.stringify({terminalSequence:'\x1b]777;mongle-agent;'+token+';'+encoded+'\x07'}));
+    // Claude Code's fullscreen UI drops terminal sequences written before it draws, so the start of a
+    // conversation also reaches the host through its local pipe. Hosts older than message version 2 ignore it.
+    const pipe = process.env.MONGLE_AGENT_PIPE;
+    if (event.event === 'SessionStart' && event.id && /^\\\\\.\\pipe\\mongle-agent-[a-f0-9]{32}$/.test(pipe || '')) {
+      const line = JSON.stringify({v:2, provider:'claude', token, event:'SessionStart', sessionId:event.id, cwd:event.cwd, source:event.source}) + '\n';
+      const socket = require('node:net').connect(pipe, () => socket.end(line));
+      socket.on('error', () => {});
+      setTimeout(() => socket.destroy(), 800).unref();
+    }
   } catch { /* Observability must never block a Claude turn. */ }
 });
 `;
