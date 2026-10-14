@@ -18,6 +18,7 @@ import { readPdfChunk } from './pdf-files.js';
 import { Uploads, UPLOAD_CHUNK_BYTES, UPLOAD_MAX_BYTES } from './uploads.js';
 import { inspectGit, readGitDiff, readGitReview } from './git.js';
 import { inspectProject, inspectKnownRepository, validateWorktree, prepareWorktree, addWorktree, removeWorktree, samePath, worktreeSlug } from './worktrees.js';
+import { AgentInbox, AGENT_INBOX_MAX, AGENT_MESSAGE_MAX_CHARS, cleanAgentMessage } from './agent-inbox.js';
 
 const nameSchema = z.string().trim().min(1).max(100);
 const cwdSchema = z.string().min(1).max(4096);
@@ -33,7 +34,8 @@ const MAX_FRAME_BYTES = 16 * 1024 * 1024;
 type Attachment = { lastSent: number; lastAck: number; pending?: SnapshotEvent };
 type Client = { ctx: ConnectionContext; send: Send; attached: Map<string, Attachment> };
 type Lease = { connectionId: string; deviceName: string; epoch: number; expires: number; ready: boolean; syncSeq: number; inputSeq: number; dedupe: Map<string, {seq:number; hash:string}> };
-type Runtime = { info: TerminalInfo; engine: TerminalEngine; pty?: pty.IPty; stopPty?:()=>Promise<void>; seq: number; epoch: number; lease?: Lease; timer?: ReturnType<typeof setTimeout>; framePending?: boolean; frameDirty?: boolean; checkpointAt: number; lastFrame?: SnapshotEvent; disposed: boolean; stopping?: boolean; pendingBytes: number; directoryChanged?: boolean; notificationChanged?: boolean; agentToken?: string; pendingResume?: { command: string; timer: ReturnType<typeof setTimeout> } };
+type Runtime = { info: TerminalInfo; engine: TerminalEngine; pty?: pty.IPty; stopPty?:()=>Promise<void>; seq: number; epoch: number; lease?: Lease; timer?: ReturnType<typeof setTimeout>; framePending?: boolean; frameDirty?: boolean; checkpointAt: number; lastFrame?: SnapshotEvent; disposed: boolean; stopping?: boolean; pendingBytes: number; directoryChanged?: boolean; notificationChanged?: boolean; agentToken?: string; pendingResume?: { command: string; timer: ReturnType<typeof setTimeout> }; inbox?: AgentInbox; agentShell?: boolean };
+const messageRef = terminalRef.extend({messageId:z.string().uuid()}).strict();
 /** Host-private: the exact agent conversation last verified in a terminal generation. Never in TerminalInfo/state. */
 type AgentSessionRecord = { generation: string; session: AgentSessionIdentity };
 const RESUME_PROMPT_TIMEOUT_MS = 15_000;
@@ -89,7 +91,7 @@ export class HostCore {
       this.repositories = saved.repositories || [];
       this.worktrees = (saved.worktrees || []).map(item=>item.status==='removing'?{...item,status:'missing',reason:'삭제 결과를 확인하려면 목록을 새로고침해 주세요.'}:item);
       this.worktreeOperations = (saved.worktreeOperations || []).map(item=>item.status==='pending'||item.status==='running'?{...item,status:'attention',message:'호스트가 재시작되었습니다. 목록을 새로고침해 작업 결과를 확인해 주세요.'}:item);
-      this.terminals = saved.terminals.map(({controller, pid, agentStatus, agentProvider, agentNotificationCount, codexHooksReview, ...info}) => ({...info, status: info.status === 'running' ? 'interrupted' : info.status, resumeOnBoot: info.status === 'running' || info.resumeOnBoot === true || legacyResume.has(info.id), historyAvailable: Boolean(this.settings.recordHistory && this.store.getSnapshot(info.id, info.generation))}));
+      this.terminals = saved.terminals.map(({controller, pid, agentStatus, agentProvider, agentNotificationCount, codexHooksReview, agentInbox, agentReady, ...info}) => ({...info, status: info.status === 'running' ? 'interrupted' : info.status, resumeOnBoot: info.status === 'running' || info.resumeOnBoot === true || legacyResume.has(info.id), historyAvailable: Boolean(this.settings.recordHistory && this.store.getSnapshot(info.id, info.generation))}));
       // Only an exact, validated conversation bound to the saved generation of a
       // terminal that will be restored survives; anything else is dropped.
       for (const [id, record] of Object.entries(saved.agentSessions || {})) {
@@ -128,7 +130,7 @@ export class HostCore {
     return result;
   }
   getState(): HostState {
-    return structuredClone({ hostId:this.hostId, bootId:this.bootId, name:this.settings.name, version:APP_VERSION, protocolVersion:PROTOCOL_VERSION, capabilities:['control.acquire-if-free','files.read','files.edit','files.pdf','files.upload','git.read','git.diff','git.review','layout.tabs','notifications.push','pairing.remote-approve','worktrees.manage','worktrees.terminal-context'], groups:this.groups, terminals:this.terminals, repositories:this.repositories,worktrees:this.worktrees,worktreeOperations:this.worktreeOperations,profiles:this.profiles, settings:this.settings, ...(this.options.claudeIntegration ? {claudeIntegration:this.options.claudeIntegration} : {}), ...(this.options.codexIntegration ? {codexIntegration:this.options.codexIntegration} : {}), ...(this.storageError ? {storageError:this.storageError} : {}) });
+    return structuredClone({ hostId:this.hostId, bootId:this.bootId, name:this.settings.name, version:APP_VERSION, protocolVersion:PROTOCOL_VERSION, capabilities:['agent.messages','control.acquire-if-free','files.read','files.edit','files.pdf','files.upload','git.read','git.diff','git.review','layout.tabs','notifications.push','pairing.remote-approve','worktrees.manage','worktrees.terminal-context'], groups:this.groups, terminals:this.terminals, repositories:this.repositories,worktrees:this.worktrees,worktreeOperations:this.worktreeOperations,profiles:this.profiles, settings:this.settings, ...(this.options.claudeIntegration ? {claudeIntegration:this.options.claudeIntegration} : {}), ...(this.options.codexIntegration ? {codexIntegration:this.options.codexIntegration} : {}), ...(this.storageError ? {storageError:this.storageError} : {}) });
   }
   connect(ctx: ConnectionContext, send: Send): void {
     if (!this.initialized || this.closing || this.shutdownPrepared) throw new AppError('HOST_UNAVAILABLE','호스트가 준비되지 않았습니다.');
@@ -612,6 +614,8 @@ export class HostCore {
         // Focus/mouse/device reports sent by an attaching view are not typing.
         if(runtime.pendingResume&&!isTerminalReportOnly(p.data))this.abandonResume(runtime);
         try {runtime.pty!.write(data);}catch{throw new AppError('WRITE_FAILED','터미널 입력을 전달하지 못했습니다.');}
+        // Keys a person sent hold agent messages until they stop typing; reports from the view are not typing.
+        if(!isTerminalReportOnly(p.data))runtime.inbox?.observeInput(p.data);
         // Claude sends no hook after a cancel key or a rejected request, and keys that can move a dialog's
         // selection decide what its Enter means. Only that meaning, never the typed text nor a focus/device
         // report, queues behind already received output: the observer decides with the parsed status. A
@@ -626,6 +630,31 @@ export class HostCore {
         lease.ready=false;this.updateController(runtime);await this.resize(runtime,p.cols,p.rows);
         const frame=await this.frame(runtime.info);this.requireLease(runtime,client,lease.epoch,false);lease.syncSeq=frame.seq;client.attached.get(p.id)!.lastSent=frame.seq;client.attached.get(p.id)!.pending=undefined;
         this.broadcastFrame(frame,client.ctx.id);this.broadcastState();return {frame};
+      }
+      case 'agent.message.send': {
+        const p=terminalRef.extend({text:z.string().min(1).max(AGENT_MESSAGE_MAX_CHARS*2),force:z.boolean().optional()}).strict().parse(params);
+        const runtime=this.running(this.target(p)),inbox=runtime.inbox;
+        if(!inbox||!runtime.agentShell)throw new AppError('AGENT_MESSAGE_UNSUPPORTED','PowerShell 터미널에서 실행한 Claude Code·Codex에만 보낼 수 있습니다.');
+        const text=cleanAgentMessage(p.text);
+        if(!text)throw new AppError('INVALID_REQUEST','보낼 내용을 입력해 주세요.');
+        if(text.length>AGENT_MESSAGE_MAX_CHARS)throw new AppError('AGENT_MESSAGE_TOO_LONG',`메시지는 ${AGENT_MESSAGE_MAX_CHARS.toLocaleString('ko-KR')}자까지 보낼 수 있습니다.`);
+        if(!inbox.agentRunning)throw new AppError('AGENT_NOT_RUNNING','이 터미널에서 실행 중인 Claude Code·Codex를 확인하지 못했습니다. 에이전트를 실행한 뒤 다시 보내 주세요.');
+        if(inbox.size>=AGENT_INBOX_MAX)throw new AppError('AGENT_INBOX_FULL',`보류 중인 메시지가 ${AGENT_INBOX_MAX}개입니다. 전달되거나 취소된 뒤 다시 보내 주세요.`);
+        const messageId=inbox.add(text,client.ctx.deviceName,p.force===true);
+        this.broadcastState();
+        return {messageId,pending:inbox.has(messageId),...(runtime.info.agentInbox?.hold?{hold:runtime.info.agentInbox.hold}:{})};
+      }
+      case 'agent.message.cancel':
+      case 'agent.message.force': {
+        const p=messageRef.parse(params),runtime=this.running(this.target(p));
+        const done=method==='agent.message.cancel'?runtime.inbox?.cancel(p.messageId):runtime.inbox?.force(p.messageId);
+        if(!done)throw new AppError('AGENT_MESSAGE_GONE','이미 전달됐거나 취소된 메시지입니다.');
+        this.broadcastState();return {ok:true};
+      }
+      case 'agent.dnd': {
+        const p=terminalRef.extend({enabled:z.boolean()}).strict().parse(params),info=this.target(p);
+        if(p.enabled)info.agentDnd=true;else delete info.agentDnd;
+        this.persist();this.runtimes.get(info.id)?.inbox?.pump();this.broadcastState();return {enabled:p.enabled};
       }
       case 'settings.update': {
         if(!client.ctx.owner)throw new AppError('OWNER_REQUIRED','이 컴퓨터에서 설정을 변경해 주세요.');
@@ -717,25 +746,34 @@ export class HostCore {
     const runtime={} as Runtime;
     Object.assign(runtime,{info,seq:0,epoch:0,checkpointAt:0,disposed:false,pendingBytes:0});
     info.notificationCount=0;
-    delete info.agentStatus; delete info.agentProvider; delete info.agentNotificationCount; delete info.codexHooksReview;
+    delete info.agentStatus; delete info.agentProvider; delete info.agentNotificationCount; delete info.codexHooksReview; delete info.agentInbox; delete info.agentReady;
     // Every non-WSL shell gets a per-shell secret: its prompt marker authenticates
     // "back at the shell" for status and agent resume, independent of Claude setup.
     const agentToken = profile.kind !== 'wsl' ? randomBytes(32).toString('hex') : undefined;
     runtime.agentToken=agentToken;
+    // The shell prompt marker that proves the agent has ended exists only in the PowerShell integration.
+    runtime.agentShell=profile.kind==='powershell'&&agentToken!==undefined;
     const current=()=>!runtime.disposed&&!runtime.stopping&&!this.closing&&!this.shutdownPrepared&&this.runtimes.get(info.id)===runtime;
     delete info.currentCwd;
     runtime.engine=new TerminalEngine({cols:info.cols,rows:info.rows,scrollback:this.settings.scrollback,
       notificationsEnabled:()=>!runtime.disposed&&!this.closing&&!this.shutdownPrepared&&this.runtimes.get(info.id)===runtime,
       onNotification:count=>{info.notificationCount=count;runtime.notificationChanged=true;},
       agentToken,
-      onAgentStatus:(status,count,provider='claude')=>{info.agentStatus=status;info.agentProvider=provider;if(count!==undefined)info.agentNotificationCount=count;runtime.notificationChanged=true;},
+      onAgentStatus:(status,count,provider='claude')=>{info.agentStatus=status;info.agentProvider=provider;if(count!==undefined)info.agentNotificationCount=count;runtime.notificationChanged=true;runtime.inbox?.statusChanged(status);},
       onCodexHooksReview:visible=>{if(visible)info.codexHooksReview=true;else delete info.codexHooksReview;runtime.notificationChanged=true;},
-      onAgentSession:session=>{if(current())this.recordAgentSession(info,session);},
+      onAgentSession:session=>{if(!current())return;this.recordAgentSession(info,session);if(session)runtime.inbox?.agentStarted();else runtime.inbox?.agentStopped();},
+      onAgentReport:()=>{if(current())runtime.inbox?.agentReported();},
       // The first prompt after a restore types the resume line and keeps the intent until
       // the CLI reports itself or exits; any other prompt means no agent is running.
-      onShellPrompt:()=>{if(!current())return;if(!this.dispatchResume(runtime))this.recordAgentSession(info,null);},
+      onShellPrompt:()=>{if(!current())return;runtime.inbox?.agentStopped();if(!this.dispatchResume(runtime))this.recordAgentSession(info,null);},
       onDirectory:directory=>{if(!runtime.disposed&&info.currentCwd!==directory){info.currentCwd=directory;runtime.directoryChanged=true;}},onResponse:(data:string)=>{try{if(runtime.pty && info.status==='running')runtime.pty.write(data);}catch{/* exit can race an emulator reply */}}});
     this.runtimes.set(info.id,runtime);
+    // Messages for this generation's agent live in host memory and end with it.
+    runtime.inbox=new AgentInbox({
+      write:data=>{if(!current()||info.status!=='running'||!runtime.pty)return false;try{runtime.pty.write(data);return true;}catch{return false;}},
+      facts:()=>({supported:runtime.agentShell===true,status:info.agentStatus,dnd:info.agentDnd===true}),
+      changed:()=>{const summary=runtime.inbox?.summary();if(summary)info.agentInbox=summary;else delete info.agentInbox;if(runtime.agentShell&&runtime.inbox?.agentRunning)info.agentReady=true;else delete info.agentReady;runtime.notificationChanged=true;this.scheduleFrame(runtime);},
+    });
     if(resumeCommand){const timer=setTimeout(()=>{if(!runtime.pendingResume||!current())return;this.abandonResume(runtime);this.notice('AGENT_RESUME_SKIPPED',`${info.title}: 셸 준비를 확인하지 못해 이전 대화를 자동으로 이어 가지 않았습니다. 필요하면 직접 다시 열어 주세요.`);},RESUME_PROMPT_TIMEOUT_MS);timer.unref?.();runtime.pendingResume={command:resumeCommand,timer};}
     try {
       if(history)await runtime.engine.restoreHistory(history);
@@ -758,7 +796,7 @@ export class HostCore {
     });
     runtime.pty.onExit(({exitCode})=>{
       if(runtime.disposed || this.runtimes.get(info.id)!==runtime)return;
-      info.status='exited';info.exitCode=exitCode;delete info.pid;delete info.agentStatus;delete info.agentProvider;delete info.agentNotificationCount;delete info.codexHooksReview;runtime.pty=undefined;this.revoke(runtime);this.cancelResume(runtime);
+      info.status='exited';info.exitCode=exitCode;delete info.pid;delete info.agentStatus;delete info.agentProvider;delete info.agentNotificationCount;delete info.codexHooksReview;runtime.inbox?.dispose();delete info.agentInbox;delete info.agentReady;runtime.pty=undefined;this.revoke(runtime);this.cancelResume(runtime);
       // A shell that ended by itself has no conversation to reopen. Shutdown keeps the saved one.
       if(!this.closing && !this.shutdownPrepared){info.resumeOnBoot=false;this.agentSessions.delete(info.id);}
       this.persist();this.broadcastState();
@@ -858,9 +896,9 @@ export class HostCore {
    */
   reportAgentSession(token:string,session:AgentSessionIdentity|null):boolean{
     const runtime=this.agentRuntime(token);if(!runtime)return false;
-    if(session===null){this.recordAgentSession(runtime.info,null);return true;}
+    if(session===null){this.recordAgentSession(runtime.info,null);runtime.inbox?.agentStopped();return true;}
     const valid=validAgentSession(session);if(!valid)return false;
-    this.recordAgentSession(runtime.info,valid);return true;
+    this.recordAgentSession(runtime.info,valid);runtime.inbox?.agentStarted();return true;
   }
   /**
    * Lifecycle end report (e.g. Codex SessionEnd). Clears the record only when it is
@@ -871,7 +909,7 @@ export class HostCore {
     const runtime=this.agentRuntime(token),valid=validAgentSession(session);if(!runtime||!valid)return false;
     const record=this.agentSessions.get(runtime.info.id);
     if(!record||record.generation!==runtime.info.generation||record.session.provider!==valid.provider||record.session.sessionId!==valid.sessionId)return false;
-    this.recordAgentSession(runtime.info,null);return true;
+    this.recordAgentSession(runtime.info,null);runtime.inbox?.agentStopped();return true;
   }
   /**
    * An event of a Codex turn from the managed hook (through the local IPC). token must be the per-shell
@@ -893,7 +931,7 @@ export class HostCore {
   private persisted():PersistedHost{
     const agentSessions:NonNullable<PersistedHost['agentSessions']>={};
     for(const info of this.terminals){const record=this.agentSessions.get(info.id);if(record&&record.generation===info.generation)agentSessions[info.id]={generation:record.generation,session:{...record.session}};}
-    return {schemaVersion:2,hostId:this.hostId,settings:this.settings,groups:this.groups,terminals:this.terminals.map(({controller,pid,...info})=>info),repositories:this.repositories,worktrees:this.worktrees,worktreeOperations:this.worktreeOperations,agentSessions};
+    return {schemaVersion:2,hostId:this.hostId,settings:this.settings,groups:this.groups,terminals:this.terminals.map(({controller,pid,agentInbox,agentReady,...info})=>info),repositories:this.repositories,worktrees:this.worktrees,worktreeOperations:this.worktreeOperations,agentSessions};
   }
   private async prepareShutdown():Promise<void>{
     if(this.projectTasks.size)throw new AppError('WORKTREE_BUSY','워크트리 작업이 끝난 뒤 정상 종료를 다시 시도해 주세요.');
@@ -932,8 +970,8 @@ export class HostCore {
   onState(listener:(state:HostState)=>void){this.stateListeners.add(listener);return()=>{this.stateListeners.delete(listener);};}
   private broadcastState(){const event={type:'state' as const,state:this.getState()};for(const client of this.clients.values())this.send(client,event);for(const listener of this.stateListeners){try{listener(event.state);}catch{/* a listener failure never blocks terminals */}}}
   private notice(code:string,message:string){for(const client of this.clients.values())this.send(client,{type:'notice',code,message});}
-  private async stopTerminal(info:TerminalInfo,preserveForBoot=false){if(!preserveForBoot){info.resumeOnBoot=false;delete info.restoreError;this.agentSessions.delete(info.id);}const r=this.runtimes.get(info.id);if(r){r.stopping=true;this.cancelResume(r);}if(!r){if(!preserveForBoot)info.status='exited';return;}if(r.pty){await r.stopPty?.();r.pty=undefined;}info.status='exited';delete info.pid;this.revoke(r);const frame=await this.frame(info);this.checkpoint(r,frame);this.broadcastFrame(frame);}
-  private async disposeRuntime(id:string){const r=this.runtimes.get(id);if(!r)return;r.stopping=true;if(r.timer)clearTimeout(r.timer);this.cancelResume(r);if(r.pty)await r.stopPty?.();r.disposed=true;await r.engine.dispose();this.runtimes.delete(id);}
+  private async stopTerminal(info:TerminalInfo,preserveForBoot=false){if(!preserveForBoot){info.resumeOnBoot=false;delete info.restoreError;this.agentSessions.delete(info.id);}const r=this.runtimes.get(info.id);if(r){r.stopping=true;this.cancelResume(r);}if(!r){if(!preserveForBoot)info.status='exited';return;}if(r.pty){await r.stopPty?.();r.pty=undefined;}r.inbox?.dispose();delete info.agentInbox;delete info.agentReady;info.status='exited';delete info.pid;this.revoke(r);const frame=await this.frame(info);this.checkpoint(r,frame);this.broadcastFrame(frame);}
+  private async disposeRuntime(id:string){const r=this.runtimes.get(id);if(!r)return;r.stopping=true;if(r.timer)clearTimeout(r.timer);this.cancelResume(r);if(r.pty)await r.stopPty?.();r.disposed=true;r.inbox?.dispose();await r.engine.dispose();this.runtimes.delete(id);}
   private async removeTerminal(info:TerminalInfo){this.agentSessions.delete(info.id);await this.disposeRuntime(info.id);for(const c of this.clients.values())c.attached.delete(info.id);const group=this.group(info.groupId);group.layout=removeLeaf(group.layout,info.id);group.revision++;this.terminals=this.terminals.filter(t=>t.id!==info.id);this.archivedFrames.delete(info.id);this.archivedSequences.delete(info.id);this.store.clearSnapshot(info.id);}
   async close():Promise<void>{
     if(this.closing)return;this.closing=true;if(this.leaseTimer)clearInterval(this.leaseTimer);await this.uploads.close();await this.queue;await Promise.allSettled([...this.projectTasks.values()]);await this.queue;
