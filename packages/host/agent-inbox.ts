@@ -77,12 +77,16 @@ export interface InboxFacts {
   status?: AgentStatus;
   dnd: boolean;
 }
+/** How a message left the inbox: sent with its Enter, cancelled, or not delivered (write failed, the agent or terminal ended first). */
+export type AgentMessageOutcome = 'delivered' | 'cancelled' | 'failed';
 export interface InboxIo {
   /** Writes to the terminal's PTY. False when it can no longer be written. */
   write(data: string): boolean;
   facts(): InboxFacts;
   /** The summary changed; the host broadcasts its state. */
   changed(): void;
+  /** A message left the inbox for good; each id settles exactly once. */
+  settled?(id: string, outcome: AgentMessageOutcome): void;
   now?(): number;
 }
 interface Pending { id: string; text: string; preview: string; createdAt: number; from: string; force: boolean }
@@ -103,6 +107,8 @@ export class AgentInbox {
   /** A person submitted something no hook has answered yet (e.g. a slash command that opened a picker). */
   private unconfirmedSubmit = false;
   private deliveringSince: number | undefined;
+  /** The pasted message whose Enter has not been sent yet. */
+  private submitting: string | undefined;
   private hold: AgentHoldReason | undefined;
   private delivered = 0;
   private timer: ReturnType<typeof setTimeout> | undefined;
@@ -125,18 +131,21 @@ export class AgentInbox {
   }
 
   /** Returns the new message id. The text must be cleaned by cleanAgentMessage and not empty. */
-  add(text: string, from: string, force = false): string {
-    const id = randomUUID();
+  add(text: string, from: string, force = false, id: string = randomUUID()): string {
     const preview = text.replace(/\r/g, ' ').slice(0, PREVIEW_CHARS);
     this.pending.push({id, text, preview, createdAt:this.now(), from:from.slice(0, 100), force});
     this.pump();
+    // The waiting list changed even when the hold did not.
+    this.io.changed();
     return id;
   }
   cancel(id: string): boolean {
     const index = this.pending.findIndex(message => message.id === id);
     if (index < 0) return false;
     this.pending.splice(index, 1);
+    this.settle(id, 'cancelled');
     this.pump();
+    this.io.changed();
     return true;
   }
   /** Sends the message even though someone may be typing; every other condition still applies. */
@@ -145,6 +154,7 @@ export class AgentInbox {
     if (!message) return false;
     message.force = true;
     this.pump();
+    this.io.changed();
     return true;
   }
 
@@ -179,11 +189,14 @@ export class AgentInbox {
     this.pump();
   }
 
+  /** Ends the wait for the agent's turn. A paste whose Enter was not sent yet is not delivered. */
   private endDelivery() {
     this.deliveringSince = undefined;
-    if (this.submitTimer) clearTimeout(this.submitTimer);
+    if (this.submitTimer) { clearTimeout(this.submitTimer); this.settle(this.submitting, 'failed'); }
     this.submitTimer = undefined;
+    this.submitting = undefined;
   }
+  private settle(id: string | undefined, outcome: AgentMessageOutcome) { if (id) this.io.settled?.(id, outcome); }
 
   private reason(facts: InboxFacts, force: boolean, now: number): AgentHoldReason | undefined {
     // Without a running agent nothing can be delivered, whatever else holds the message.
@@ -226,12 +239,15 @@ export class AgentInbox {
     this.pending.shift();
     this.deliveringSince = now;
     this.hold = 'delivering';
-    if (!this.io.write(PASTE_START + message.text + PASTE_END)) { this.endDelivery(); this.io.changed(); return; }
+    if (!this.io.write(PASTE_START + message.text + PASTE_END)) { this.endDelivery(); this.settle(message.id, 'failed'); this.io.changed(); return; }
+    this.submitting = message.id;
     this.submitTimer = setTimeout(() => {
       this.submitTimer = undefined;
+      this.submitting = undefined;
       // The prompt is the shell's again: Enter would run the pasted text as a command.
-      if (this.disposed || this.activeSince === undefined || !this.io.facts().supported) { this.endDelivery(); this.pump(); return; }
-      if (this.io.write('\r')) this.delivered += 1;
+      if (this.disposed || this.activeSince === undefined || !this.io.facts().supported) { this.endDelivery(); this.settle(message.id, 'failed'); this.pump(); return; }
+      if (this.io.write('\r')) { this.delivered += 1; this.settle(message.id, 'delivered'); }
+      else this.settle(message.id, 'failed');
       this.io.changed();
       this.pump();
     }, this.timing.submitDelayMs);
@@ -239,10 +255,13 @@ export class AgentInbox {
     this.io.changed();
   }
 
+  /** The terminal generation ended: whatever still waits is not delivered. */
   dispose() {
+    const waiting = this.pending.map(message => message.id);
     this.disposed = true;
     this.pending = [];
     if (this.timer) clearTimeout(this.timer);
     this.endDelivery();
+    for (const id of waiting) this.settle(id, 'failed');
   }
 }

@@ -107,6 +107,17 @@ export function teamRolePrompt(team: Pick<Team, 'name'>, members: readonly TeamM
   return lines.join('\n') + '\n\n';
 }
 
+/** Messages kept per team and the part of each shown in the conversation. */
+export const TEAM_MESSAGE_LOG = 100;
+export const TEAM_MESSAGE_PREVIEW = 200;
+/**
+ * A team message as it reaches the receiver's input box: the header the role prompt announces, then the
+ * text. The text is already cleaned (line breaks are CR inside the paste) and names hold no control characters.
+ */
+export function teamMessageText(from: string, to: string, text: string): string {
+  return '[몽글 팀 메시지] ' + from + ' → ' + to + '\r' + text;
+}
+
 /** What the prompt file holds: plain text for Claude, a TOML basic string for Codex's -c value. */
 export function rolePromptFile(provider: TeamMemberSpec['provider'], prompt: string): string {
   return provider === 'claude' ? prompt : JSON.stringify(prompt);

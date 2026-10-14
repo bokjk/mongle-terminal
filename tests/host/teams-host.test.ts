@@ -89,6 +89,22 @@ test('a team starts its members as PowerShell tabs, types each CLI with its role
   assert.deepEqual(typed(lead.terminalId), ["& \"C:\\fake\\claude.exe\" --model 'opus' --append-system-prompt-file '" + leadFile + "'\r"]);
   assert.deepEqual(typed(reviewer.terminalId), ["codex -m 'gpt-6-astra' -c ('developer_instructions=' + [IO.File]::ReadAllText('" + reviewerFile + "')) -s read-only -a never\r"]);
 
+  // The team conversation: a message reaches the member's running agent with the team header, and its fate is recorded.
+  await rejects('teams.message', { ...host, teamId: team.id, to: lead.id, text: '시작해 주세요' }, 'AGENT_NOT_RUNNING');
+  await rejects('teams.message', { ...host, teamId: team.id, to: randomUUID(), text: '누구?' }, 'TEAM_MEMBER_NOT_FOUND');
+  const leadToken = (core as any).runtimes.get(lead.terminalId).agentToken;
+  assert.equal(core.reportAgentSession(leadToken, { provider: 'claude', sessionId: randomUUID(), cwd: dataDir }), true);
+  const sent = await request('teams.message', { ...host, teamId: team.id, to: lead.id, text: ' 로그인 화면을\r\n고쳐 주세요 ' });
+  assert.deepEqual([sent.from, sent.to, sent.preview, sent.status, sent.device], ['user', lead.id, '로그인 화면을\n고쳐 주세요', 'waiting', 'Desktop view']);
+  const log = () => core.getState().teams![0].messages ?? [];
+  await until(() => log()[0]?.status === 'delivered', 'delivered once the agent settles, then recorded');
+  assert.ok(writes.get(lead.terminalId!)!.includes('\x1b[200~[몽글 팀 메시지] 사용자 → 설계\r로그인 화면을\r고쳐 주세요\x1b[201~'), 'the header the role prompt announces comes first');
+  const cancelled = await request('teams.message', { ...host, teamId: team.id, to: lead.id, text: '취소할 메시지' });
+  await request('agent.message.cancel', { id: lead.terminalId, generation: core.getState().terminals.find(item => item.id === lead.terminalId)!.generation, ...host, messageId: cancelled.id });
+  assert.equal(log()[1].status, 'cancelled', 'the inbox and the log share the message id');
+  const lost = await request('teams.message', { ...host, teamId: team.id, to: lead.id, text: '재시작 전에 보류된 메시지' });
+  assert.equal(log()[2].status, 'waiting', 'the previous delivery has not started a turn yet');
+
   // The reviewer's Codex reports its conversation; after a host restart it reopens with its role and read-only switch.
   const token = (core as any).runtimes.get(reviewer.terminalId).agentToken;
   const sessionId = randomUUID();
@@ -96,6 +112,7 @@ test('a team starts its members as PowerShell tabs, types each CLI with its role
   await core.close();
   core = create(); await core.init();
   assert.deepEqual(core.getState().teams?.map(item => item.name), ['결제 정리'], 'teams survive a restart');
+  assert.deepEqual(core.getState().teams![0].messages?.map(item => [item.id, item.status]), [[sent.id, 'delivered'], [cancelled.id, 'cancelled'], [lost.id, 'failed']], 'the log survives; a message the stopped host held was not delivered');
   await until(() => typed(reviewer.terminalId).length > 0, 'the resumed reviewer is typed');
   assert.deepEqual(typed(reviewer.terminalId), ['__MongleCodex resume ' + sessionId + " -m 'gpt-6-astra' -c ('developer_instructions=' + [IO.File]::ReadAllText('" + reviewerFile + "')) -s read-only -a never\r"]);
 
