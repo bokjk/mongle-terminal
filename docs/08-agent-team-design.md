@@ -158,8 +158,8 @@ sequenceDiagram
 2. **보내기:** `send_message(to, text)`를 부른다. 호스트는 셸마다 주는 비밀 토큰(`MONGLE_AGENT_TOKEN`)으로 보낸 구성원을 확인하므로 이름을 사칭할 수 없다.
 3. **배달:** 받는 쪽에 맞는 경로를 차례로 시도한다.
    - Codex: 공식 [`codex queue --thread <ID> --message ...`](https://learn.chatgpt.com/docs/developer-commands).
-   - Claude: Channels(연구 미리보기). 대화를 이어서 켤 때 수신 연결이 다시 맺어지지 않는다는 보고([#67024](https://github.com/anthropics/claude-code/issues/67024))가 있어 보조로 둔다.
-   - 공통 대체 경로: 보호된 터미널 입력. 붙여넣기(bracketed paste) 뒤 Enter를 따로 보낸다.
+   - Claude: 보호된 터미널 입력. 붙여넣기(bracketed paste) 뒤 Enter를 따로 보낸다. Channels(연구 미리보기)는 조직에서 켠 경우에만 쓰는 선택 경로다. 0단계에서 이 PC의 Claude Team 계정은 조직 정책으로 막혀 있었고, 대화를 이어서 켤 때 수신 연결이 다시 맺어지지 않는다는 보고([#67024](https://github.com/anthropics/claude-code/issues/67024))도 있다.
+   - Codex의 차례가 중단(`Interrupt`)되면 Codex 대기열은 다음 차례가 끝날 때까지 멈춘다. 이때는 보호된 터미널 입력으로 보내고, 이미 대기열에 들어간 메시지가 있으면 사용자에게 알린다.
 4. **보류:** 받는 쪽이 승인을 기다리거나, 사람이 그 터미널에 입력 중이거나, 방해 금지 중이거나, 아직 시작 중이면 보류한다. 터미널마다 한 번에 하나씩 보내고, 보내기 직전에 터미널 세대(`generation`)가 바뀌지 않았는지 다시 확인한다.
 5. **형식:** 보낸 사람, 받는 사람, 본문, 답장 방법을 붙인다. 본문의 제어 문자를 지워 형식을 위조하지 못하게 한다.
 6. **보고 누락:** 구성원이 응답을 마쳤는데(훅의 `Stop`) 보고가 없으면 팀장에게 알린다.
@@ -170,13 +170,13 @@ sequenceDiagram
 | 하는 일 | Claude Code | Codex |
 |---|---|---|
 | 모델 | `--model opus` 같은 최신 별칭 | `-m <모델>`, 목록은 app-server [`model/list`](https://learn.chatgpt.com/docs/app-server#list-models-modellist) |
-| 역할 지시문 | `--append-system-prompt` | `-c developer_instructions=...`(0단계에서 확인) |
-| 권한 제한 | `--permission-mode`, `--tools`, `--disallowed-tools` | `-s read-only` |
+| 역할 지시문 | `--append-system-prompt` | `-c developer_instructions=...` |
+| 권한 제한 | `--tools`, `--disallowed-tools`, `--permission-mode` | `-s read-only -a never` |
 | 몽글 MCP 연결 | `--mcp-config` | `-c mcp_servers...` |
 | 상태 | 기존 몽글 Claude 훅 | 기존 몽글 Codex 훅([0.3.21](validation/codex-status.md)) |
-| 실행 중 대화에 메시지 넣기 | Channels | `codex queue` |
+| 실행 중 대화에 메시지 넣기 | 보호된 터미널 입력(조직에서 켜면 Channels) | `codex queue` |
 
-2026-10-14에 이 PC의 Claude Code 2.1.296과 Codex 0.162.1 도움말에서 옵션 이름을 확인했다. 실제 동작은 0단계에서 확인한다.
+2026-10-14에 이 PC의 Claude Code 2.1.296과 Codex 0.162.1 도움말에서 옵션 이름을 확인했고, 같은 날 Claude Code 2.1.299와 Codex 0.162.1로 실제 동작을 확인했다([0단계 확인 실험](validation/agent-team-probe.md)). Codex는 `-s read-only`만 주면 사용자의 자동 검토 설정이 권한 상승을 승인해 파일을 고칠 수 있었다. 그래서 `-a never`를 함께 준다.
 
 1. 업체가 바깥 프로그램용으로 제공하는 연결만 쓴다. 화면 글자를 읽어 판단하지 않는다.
 2. 상태를 알 수 없으면 메시지를 넣지 않고 보류한 뒤 알린다. 터미널은 평소처럼 직접 쓸 수 있다.
@@ -185,13 +185,13 @@ sequenceDiagram
 5. 팀 설정은 실행 옵션으로 구성원에게만 적용한다. 사용자의 `~/.claude`·`~/.codex` 설정 파일을 팀 때문에 고치지 않는다.
 6. 대화를 이어서 켤 때 지시문을 다시 붙이고, 압축 신호(`SessionStart`의 시작 종류 `compact`)가 오면 짧은 역할 요약을 다시 알린다.
 
-Claude Code 2.1.296 도움말(`--system-prompt-snapshot`)은 기록한 시스템 프롬프트를 대화가 압축될 때까지 다시 쓴다고 설명한다. 압축 뒤 붙인 지시문이 사라졌다는 보고([#14340](https://github.com/anthropics/claude-code/issues/14340))도 있어 6번을 둔다.
+Claude Code 도움말(`--system-prompt-snapshot`)은 기록한 시스템 프롬프트를 대화가 압축될 때까지 다시 쓴다고 설명한다. 0단계에서 지시문을 붙여 켠 실행은 압축 뒤에도 지시문을 지켰다. 그러나 지시문 없이 이어 켠 실행에서 압축하자 지시문이 사라졌고, 그 뒤 다시 붙여도 돌아오지 않았다. 압축 뒤 지시문이 사라졌다는 보고([#14340](https://github.com/anthropics/claude-code/issues/14340))와 같은 현상이라 5번과 6번을 함께 둔다.
 
 ## 구현 순서
 
 | 단계 | 내용 | 완료 기준 |
 |---|---|---|
-| 0. 확인 실험 | 아래 "먼저 확인할 항목"을 격리된 시험 폴더에서 실제 CLI로 확인 | 결과와 확인하지 못한 범위를 `docs/validation/`에 기록 |
+| 0. 확인 실험 | 아래 "먼저 확인할 항목"을 격리된 시험 폴더에서 실제 CLI로 확인 | 2026-10-14 완료. [결과](validation/agent-team-probe.md) |
 | 1. 안전한 전달 | 호스트의 보호된 전달 경로와 보류함, 팀 없이 쓰는 "에이전트에게 메시지 보내기" | 제어권·사람 입력과 충돌하지 않음을 실제 몽글 창에서 확인 |
 | 2. 팀 실행 | 템플릿, 시작 전 점검, 워크트리·터미널·CLI 실행, 역할 전달, 팀 화면 | 시험 저장소에서 3명 팀이 역할을 지키며 일을 넘김 |
 | 3. 에이전트끼리 대화 | 몽글 MCP(`list_agents`, `send_message`), 보고 누락 알림 | 구성원이 스스로 보내고 받은 기록이 남음 |
@@ -201,15 +201,22 @@ Claude Code 2.1.296 도움말(`--system-prompt-snapshot`)은 기록한 시스템
 
 ## 먼저 확인할 항목
 
-- `codex queue`가 몽글의 `--no-daemon` 실행에 닿는지. 문서상 `codex agents`는 `--no-daemon`을 지원하지 않는다.
-- Claude Channels가 Windows 대화형 세션에서 메시지를 받는지, 이어서 켠 대화에서는 어떤지.
-- `--append-system-prompt`와 Codex `developer_instructions`가 실제로 적용되고, 이어 하기 뒤에도 유지되는지.
-- 읽기 전용 실행이 실제로 파일 수정을 막는지.
-- 모델 목록: Codex `model/list`, Claude Agent SDK `supportedModels()`가 로그인한 계정만으로 동작하는지.
+2026-10-14에 확인했다. 자세한 조건과 확인하지 못한 범위는 [0단계 확인 실험](validation/agent-team-probe.md)에 있다.
+
+| 항목 | 결과 |
+|---|---|
+| `codex queue`가 몽글의 `--no-daemon` 실행에 닿는지 | 닿는다. 쉬는 중이면 수 초 안에, 작업 중이면 차례가 끝난 뒤, 꺼져 있으면 다시 켤 때 전달한다. 사람 승인 창이 떠 있는 동안은 전달하지 않는다. 승인을 거절해 차례가 중단되면 다음 차례가 끝날 때까지 멈춘다. |
+| Claude Channels가 Windows 대화형 세션에서 메시지를 받는지 | 이 PC의 Claude Team 계정은 조직 정책(`channelsEnabled`)으로 막혀 확인하지 못했다. 보호된 터미널 입력은 동작했다. |
+| 역할 지시문이 적용되고 이어 하기 뒤에도 남는지 | 두 CLI 모두 적용되고 이어 하기 뒤에도 남았다. Claude는 지시문 없이 이어 켠 실행에서 압축하면 사라졌다. |
+| 읽기 전용 실행이 파일 수정을 막는지 | Claude `--tools Read,Grep,Glob`, Codex `-s read-only -a never`는 막았다. Codex `-s read-only`만으로는 자동 검토가 권한 상승을 승인해 막지 못했다. |
+| 모델 목록이 로그인한 계정만으로 되는지 | 된다. Codex `model/list` 7개, Claude `supportedModels()` 13개. |
+
+시작 전 점검에는 Codex 명령 실행 확인도 넣는다. 이 PC에서는 Codex 격리 실행 준비가 실패해, 설정을 바꾸기 전까지 명령이 하나도 실행되지 않았다.
 
 ## 위험과 제약
 
 - 여러 에이전트가 동시에 일하면 사용량이 늘어난다.
 - 워크트리를 나눠도 병합 충돌은 생길 수 있다. 병합은 사용자가 정한다.
 - 역할 지시문은 강제력이 없다. 꼭 지켜야 하는 규칙은 권한으로 막는다.
-- Claude Channels와 Claude 에이전트 팀은 미리보기·실험 단계라 바뀔 수 있다. 대체 경로 없이 기대지 않는다.
+- Claude Channels와 Claude 에이전트 팀은 미리보기·실험 단계라 바뀔 수 있고, 조직 정책으로 꺼져 있을 수 있다. 대체 경로 없이 기대지 않는다.
+- Claude에는 실행 중인 대화에 메시지를 넣는 공식 경로가 Channels뿐이다. 그래서 기본 경로가 터미널 입력이며, 보류 조건을 정확히 알아야 안전하다.
