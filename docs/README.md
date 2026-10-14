@@ -23,10 +23,11 @@
 | [05. 오픈소스 비교](05-open-source-comparison.md) | Herdr·Paseo·Orca·Wave·Tabby·WezTerm 비교와 적용 결정 |
 | [06. 검토 및 현재 검증 상태](06-review-and-status.md) | 설계 검토에서 발견한 사항, 수정 결과, 미검증 범위 |
 | [07. 워크트리 기능 설계안](07-worktrees-design.md) | 워크트리 기능의 설계 기준: 프로젝트 등록, 선택적 터미널 생성, 클릭 시 포커스, 저장·복구·삭제 |
+| [08. AI 팀 기능 설계안](08-agent-team-design.md) | 구현 전 설계 기준: Claude Code·Codex 팀 구성, 템플릿, 시작 전 점검, 에이전트끼리 메시지 전달·보류, 단계별 구현 순서 |
 
 ## 정한 방향
 
-- **기본은 터미널:** PowerShell·CMD, 설치된 WSL/Git Bash. CLI는 사용자가 직접 실행하며 별도 AI 채팅/agent 연동은 만들지 않는다.
+- **기본은 터미널:** PowerShell·CMD, 설치된 WSL/Git Bash. CLI는 사용자가 직접 실행하며 별도 AI 채팅/agent 연동은 만들지 않는다. 2026-10-14에 [08. AI 팀 기능 설계안](08-agent-team-design.md#방향-변경)에서 선택 기능인 AI 팀(CLI 실행과 메시지 전달)까지 범위를 넓혔다. 자체 AI 채팅이나 모델 API 직접 호출은 여전히 만들지 않는다.
 - **그룹과 분할:** 호스트를 선택하고 왼쪽 그룹, 오른쪽 가변 분할 패널을 사용한다. 그룹별 배치는 자동 저장한다.
 - **작업 유지:** GUI와 별도로 PTY 및 원격 endpoint를 소유하는 host를 실행한다. GUI 종료와 터미널 종료를 구분한다.
 - **모바일 포함:** 첫 버전에 Android/iOS 모바일 웹/PWA를 포함한다. 휴대폰에도 Tailscale이 필요하다.
