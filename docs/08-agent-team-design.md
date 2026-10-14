@@ -157,7 +157,7 @@ sequenceDiagram
 1. **동료 확인:** 구성원은 몽글 MCP의 `list_agents`로 동료의 이름·역할·모델·상태를 본다. 상태는 기존 Claude·Codex 훅에서 온다.
 2. **보내기:** `send_message(to, text)`를 부른다. 호스트는 셸마다 주는 비밀 토큰(`MONGLE_AGENT_TOKEN`)으로 보낸 구성원을 확인하므로 이름을 사칭할 수 없다.
 3. **배달:** 받는 쪽에 맞는 경로를 차례로 시도한다.
-   - Codex: 공식 [`codex queue --thread <ID> --message ...`](https://learn.chatgpt.com/docs/developer-commands).
+   - Codex: 공식 [`codex queue --thread <ID> --message ...`](https://learn.chatgpt.com/docs/developer-commands). 호스트가 셸과 같은 Codex 실행 파일·버전을 찾아 실행해야 해서(이 PC는 PATH의 첫 `codex.exe`가 Codex 앱 내장본), 1단계에서는 Codex도 아래 보호된 터미널 입력을 쓰고 3단계에서 붙인다.
    - Claude: 보호된 터미널 입력. 붙여넣기(bracketed paste) 뒤 Enter를 따로 보낸다. Channels(연구 미리보기)는 조직에서 켠 경우에만 쓰는 선택 경로다. 0단계에서 이 PC의 Claude Team 계정은 조직 정책으로 막혀 있었고, 대화를 이어서 켤 때 수신 연결이 다시 맺어지지 않는다는 보고([#67024](https://github.com/anthropics/claude-code/issues/67024))도 있다.
    - Codex의 차례가 중단(`Interrupt`)되면 Codex 대기열은 다음 차례가 끝날 때까지 멈춘다. 이때는 보호된 터미널 입력으로 보내고, 이미 대기열에 들어간 메시지가 있으면 사용자에게 알린다.
 4. **보류:** 받는 쪽이 승인을 기다리거나, 사람이 그 터미널에 입력 중이거나, 방해 금지 중이거나, 아직 시작 중이면 보류한다. 터미널마다 한 번에 하나씩 보내고, 보내기 직전에 터미널 세대(`generation`)가 바뀌지 않았는지 다시 확인한다.
