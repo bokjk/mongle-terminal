@@ -394,7 +394,7 @@ export function TerminalPane(props:PaneProps) {
     <header className={`pane-header ${props.tabs?'pane-tab-header':''}`} draggable={Boolean(props.dragEnabled)} onPointerDown={event=>{toolbarDrag.current=Boolean((event.target as Element).closest('.pane-toolbar,.new-tab,.terminal-tab-close'));props.onPanePointerStart?.();}} onDragStart={event=>{if(!props.dragEnabled||toolbarDrag.current||(event.target as Element).closest('.pane-toolbar,.new-tab,.terminal-tab-close')){event.preventDefault();return;}props.onPaneDragStart?.(event);}} onDragEnd={props.onPaneDragEnd}>
       {props.tabs?<>{props.dragEnabled&&<span className="pane-drag-handle" title="끌어서 영역과 모든 탭 배치" aria-label="패널 끌어서 배치"><GripVertical size={15}/></span>}{props.tabs}<button className="icon-button new-tab" aria-label="탭 추가" title={props.canAddTab?'이 영역에 새 탭 (Ctrl+Shift+T)':'탭 추가는 호스트 업데이트가 필요합니다'} disabled={!props.connected||!props.canAddTab} onClick={props.onNewTab}><span aria-hidden="true">+</span></button></>:props.dragEnabled?<><span className="pane-drag-handle" title="끌어서 패널 배치" aria-label="패널 끌어서 배치"><GripVertical size={15}/></span><span className="pane-title" onDoubleClick={props.onRename} onClick={focusTitle} title={`${displayedCwd} · 끌어서 패널 배치`}>{label}</span></>:<><SquareTerminal size={14}/><button className="pane-title" onPointerDown={event=>event.preventDefault()} onDoubleClick={props.onRename} onClick={focusTitle} title={displayedCwd}>{label}</button></>}
       {!props.tabs&&props.team?.badge}
-      {!props.tabs&&<span className="pane-meta">{info.status==='running'?(controlled?'제어 중':'보기 전용'):info.status==='interrupted'?'중단됨':'종료됨'}</span>}
+      {!props.tabs&&!props.team&&<span className="pane-meta">{info.status==='running'?(controlled?'제어 중':'보기 전용'):info.status==='interrupted'?'중단됨':'종료됨'}</span>}
       <div className="pane-toolbar" onPointerEnter={()=>worktreeLauncher.recheck()} onFocusCapture={()=>worktreeLauncher.recheck()}>
         {props.worktreeActions&&!narrow&&<button className="pane-worktree-add" title={worktreeLauncher.title} disabled={worktreeLauncher.disabled} onClick={()=>void worktreeLauncher.open()}><Plus size={13}/>워크트리</button>}
         {canMessage&&<button className="icon-button agent-message-button" title={`${agentName(info)}에게 메시지`} aria-label={`${agentName(info)}에게 메시지${waiting?` · 보낼 메시지 ${waiting}개`:''}`} disabled={!props.connected} onClick={()=>setMessageOpen(true)}><MessageSquareText size={14}/>{waiting>0&&<span className="agent-message-count-badge" aria-hidden="true">{waiting}</span>}</button>}
@@ -415,7 +415,7 @@ export function TerminalPane(props:PaneProps) {
           {info.status==='running'&&<button className="menu-item danger" onClick={props.onTerminate}>작업 종료 · 기록 유지</button>}
         </div></details>
         <button className="icon-button" title={props.maximized?'분할로 돌아가기':'최대화'} aria-label={props.maximized?'분할로 돌아가기':'최대화'} onClick={props.onMaximize}>{props.maximized?<Minimize2 size={14}/>:<Maximize2 size={14}/>}</button>
-        {!props.tabs&&<button className="icon-button" title="터미널 종료 및 패널 닫기" aria-label="터미널 닫기" onClick={props.onClose}><X size={14}/></button>}
+        {!props.tabs&&!props.team&&<button className="icon-button" title="터미널 종료 및 패널 닫기" aria-label="터미널 닫기" onClick={props.onClose}><X size={14}/></button>}
       </div>
     </header>
     {worktreeLauncher.dialog}

@@ -1115,6 +1115,11 @@ details.command-menu { flex: 0 0 auto; width: auto; max-height: none; overflow: 
 .team-pane-slot .pane-title { flex: 0 0 auto; max-width: 45%; }
 .team-chip.model { min-width: 0; overflow: hidden; text-overflow: ellipsis; flex-shrink: 1; }
 .team-chip.icon { padding: 2px 4px; }
+/* Narrow member panes keep the name, lead mark and model; the CLI name and search give way first. */
+.team-pane-slot { container-type: inline-size; }
+@container (max-width: 360px) {
+  .team-chip-provider, .pane-toolbar [aria-label='터미널 검색'] { display: none; }
+}
 @media (max-width: 1180px) {
   .team-panes:not(.single):not(.solo) { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1.6fr) minmax(0, 1fr); }
   .team-others { flex-direction: row; overflow-x: auto; overflow-y: hidden; }

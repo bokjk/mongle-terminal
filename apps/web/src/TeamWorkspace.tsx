@@ -20,7 +20,7 @@ export function TeamMemberBadge({team, memberId}: {team: Team; memberId: string}
   return <span className="team-member-badge">
     {index === 0 && <span className="team-chip lead"><Crown size={11} aria-hidden="true"/>팀장</span>}
     {index !== 0 && member.role !== 'custom' && !role.startsWith(member.name) && <span className="team-chip">{role}</span>}
-    <span className="team-chip model" title={modelLabel(member)}>{modelLabel(member)}</span>
+    <span className="team-chip model" title={modelLabel(member)}><span className="team-chip-provider">{member.provider === 'claude' ? 'Claude' : 'Codex'} · </span>{member.model || '기본 모델'}</span>
     {member.readOnly && <span className="team-chip icon" role="img" aria-label="읽기 전용" title="읽기 전용: 파일을 고치지 못하게 실행했습니다"><Lock size={11} aria-hidden="true"/></span>}
   </span>;
 }
