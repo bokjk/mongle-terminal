@@ -186,8 +186,9 @@ export class AgentInbox {
   }
 
   private reason(facts: InboxFacts, force: boolean, now: number): AgentHoldReason | undefined {
-    if (facts.dnd) return 'dnd';
+    // Without a running agent nothing can be delivered, whatever else holds the message.
     if (!facts.supported || this.activeSince === undefined) return 'no-agent';
+    if (facts.dnd) return 'dnd';
     if (this.deliveringSince !== undefined) return 'delivering';
     if (facts.status === 'attention') return 'attention';
     if (facts.status === 'working') return 'busy';

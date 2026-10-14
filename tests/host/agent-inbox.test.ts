@@ -104,6 +104,8 @@ test('do-not-disturb, cancel and the shell prompt stop delivery', async () => {
   assert.deepEqual(writes, [START + 'race' + END], 'no Enter once the prompt is the shell\'s: it would run the text');
   inbox.add('after', 'pc');
   assert.equal(inbox.summary()?.hold, 'no-agent');
+  facts.dnd = true; inbox.pump();
+  assert.equal(inbox.summary()?.hold, 'no-agent', 'an ended agent explains the wait before do-not-disturb does');
 });
 
 test('an unanswered delivery stops blocking after the acknowledgement window', async () => {
