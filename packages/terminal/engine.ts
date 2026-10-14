@@ -147,6 +147,7 @@ export class TerminalEngine {
     this.acceptCodex = event => {
       if (!live()) return false;
       const changed = report(codex.accept(event), 'codex');
+      options.onAgentReport?.();
       // Codex may have drawn its prompt before the report arrived.
       const shown = readCodexScreen(false);
       waitForCodexPrompt();
@@ -155,6 +156,7 @@ export class TerminalEngine {
     this.terminal.parser.registerOscHandler(777, data => {
       if (!this.closing && !this.restoringHistory && options.notificationsEnabled?.() !== false) {
         report(agent.accept(data), 'claude');
+        if (options.agentToken && data.startsWith('mongle-agent;' + options.agentToken + ';')) options.onAgentReport?.();
         // Back at the authenticated shell prompt: no Codex of this shell runs any more either.
         if (options.agentToken && data === 'mongle-shell;' + options.agentToken) { report(codex.reset(), 'codex'); waitForCodexPrompt(); }
       }

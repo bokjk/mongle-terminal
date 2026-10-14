@@ -419,6 +419,23 @@ button.pane-title { background: transparent; border: 0; text-align: left; paddin
 .codex-hooks-notice > svg { flex: 0 0 auto; margin-top: 1px; color: var(--accent-strong); }
 .codex-hooks-notice strong { font-weight: 600; }
 .upload-banner > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Messages waiting for the agent of this terminal. */
+.agent-message-button { position: relative; }
+.agent-message-count-badge { position: absolute; top: 1px; right: 0; min-width: 14px; height: 14px; padding: 0 3px; border-radius: 7px; color: var(--accent-text); background: var(--accent); font-size: 9px; font-weight: 600; line-height: 14px; text-align: center; }
+.connection-banner.agent-inbox-banner { color: var(--text); border-color: color-mix(in srgb, var(--accent) 28%, var(--border)); background: var(--accent-dim); }
+.agent-inbox-summary { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.agent-inbox-summary > svg { flex: 0 0 auto; color: var(--accent-strong); }
+.agent-inbox-summary strong { font-weight: 600; white-space: nowrap; }
+.agent-inbox-hold { color: var(--text-secondary); white-space: nowrap; }
+.agent-inbox-preview { min-width: 0; overflow: hidden; color: var(--text-muted); text-overflow: ellipsis; white-space: nowrap; }
+.agent-inbox-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 2px; }
+.agent-message-body { display: flex; flex-direction: column; gap: 10px; }
+.agent-message-body > .hint:first-child { font-size: 11px; }
+.agent-message-text { min-height: 128px; font-family: inherit; font-size: 12px; line-height: 1.6; }
+.agent-message-count { text-align: right; }
+.agent-message-count.over, .agent-message-warning { color: var(--warning); }
+.agent-message-dnd { display: flex; align-items: center; gap: 6px; margin: 0; color: var(--warning); font-size: 11px; }
+@media (max-width: 700px) { .agent-inbox-preview { display: none; } .agent-inbox-actions .button { min-height: 34px; } }
 .command-menu { position: relative; }
 .command-menu > summary { list-style: none; cursor: pointer; }
 .command-menu > summary::-webkit-details-marker { display: none; }

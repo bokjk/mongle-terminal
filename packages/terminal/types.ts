@@ -50,6 +50,8 @@ export interface TerminalEngineOptions {
   onAgentStatus?: (status: import('../protocol/index.js').AgentStatus, notificationCount?: number, provider?: import('./agent-status.js').AgentProvider) => void;
   /** Exact hook-verified Claude conversation, or null when it ended / the prompt returned. */
   onAgentSession?: (session: import('./agent-status.js').AgentSessionIdentity | null) => void;
+  /** A hook event of this shell's agent arrived, whether or not it changed the status. */
+  onAgentReport?: () => void;
   /** The shell printed its token-authenticated prompt marker. */
   onShellPrompt?: () => void;
   /** Codex's startup review of new or changed hooks is on screen (true) or gone again (false). */
