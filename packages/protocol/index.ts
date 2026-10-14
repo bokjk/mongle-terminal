@@ -36,7 +36,17 @@ export interface AgentInboxSummary { messages: AgentInboxMessage[]; hold?: Agent
  */
 export interface TerminalInfo { id: string; groupId: string; title: string; profileId: string; cwd: string; currentCwd?: string; generation: string; status: 'running' | 'exited' | 'interrupted'; cols: number; rows: number; pid?: number; exitCode?: number; controller?: Controller; historyAvailable?: boolean; resumeOnBoot?: boolean; restoreError?: string; worktreeId?: string; notificationCount?: number; agentStatus?: AgentStatus; agentProvider?: 'claude' | 'codex'; agentNotificationCount?: number; codexHooksReview?: boolean; agentDnd?: boolean; agentReady?: boolean; agentInbox?: AgentInboxSummary; }
 export interface HostSettings { name: string; recordHistory: boolean; scrollback: number; }
-export interface HostState { hostId: string; bootId: string; name: string; version: string; protocolVersion: number; capabilities?: string[]; groups: Group[]; terminals: TerminalInfo[]; profiles: ShellProfile[]; settings: HostSettings; claudeIntegration?: ClaudeIntegration; codexIntegration?: CodexIntegration; storageError?: string; repositories?: Repository[]; worktrees?: Worktree[]; worktreeOperations?: WorktreeOperation[]; }
+/** A role picked for a team member; it fills in default instructions and the read-only switch. */
+export type AgentRole = 'lead' | 'developer' | 'reviewer' | 'tester' | 'researcher' | 'custom';
+/** One member as written in a template or the start form. The first member of a team leads it. */
+export interface TeamMemberSpec { name: string; role: AgentRole; provider: 'claude' | 'codex'; model: string; reportTo: string; instructions: string; extra?: string; folder: 'base' | 'worktree'; readOnly: boolean }
+export interface TeamTemplate { id: string; name: string; builtIn?: true; members: TeamMemberSpec[] }
+/** A started member: the terminal and worktree it got, or why it did not start. */
+export interface TeamMember extends TeamMemberSpec { id: string; terminalId?: string; worktreeId?: string; error?: string }
+export interface Team { id: string; name: string; groupId: string; cwd: string; repositoryId?: string; createdAt: number; members: TeamMember[] }
+/** One line of the pre-start check. */
+export interface TeamCheck { id: string; label: string; status: 'ok' | 'warning' | 'error'; message: string }
+export interface HostState { hostId: string; bootId: string; name: string; version: string; protocolVersion: number; capabilities?: string[]; groups: Group[]; terminals: TerminalInfo[]; profiles: ShellProfile[]; settings: HostSettings; claudeIntegration?: ClaudeIntegration; codexIntegration?: CodexIntegration; storageError?: string; repositories?: Repository[]; worktrees?: Worktree[]; worktreeOperations?: WorktreeOperation[]; teams?: Team[]; }
 export interface ConnectionContext { id: string; deviceId: string; deviceName: string; owner: boolean; }
 export interface FileEntry { name: string; path: string; kind: 'directory' | 'file' | 'link' | 'other'; }
 export interface DirectoryListing { root: string; path: string; absolutePath: string; entries: FileEntry[]; truncated: boolean; }
