@@ -43,7 +43,13 @@ export interface TeamMemberSpec { name: string; role: AgentRole; provider: 'clau
 export interface TeamTemplate { id: string; name: string; builtIn?: true; members: TeamMemberSpec[] }
 /** A started member: the terminal and worktree it got, or why it did not start. */
 export interface TeamMember extends TeamMemberSpec { id: string; terminalId?: string; worktreeId?: string; error?: string }
-export interface Team { id: string; name: string; groupId: string; cwd: string; repositoryId?: string; createdAt: number; members: TeamMember[] }
+/**
+ * One message in a team's conversation, saved by the host (the latest 100). from is 'user' or a member id,
+ * to is a member id; preview holds at most the first 200 characters. waiting lasts until the receiver's
+ * inbox delivers, cancels or loses it (the terminal or the host stopped).
+ */
+export interface TeamMessage { id: string; from: string; device?: string; to: string; preview: string; createdAt: number; status: 'waiting' | 'delivered' | 'cancelled' | 'failed' }
+export interface Team { id: string; name: string; groupId: string; cwd: string; repositoryId?: string; createdAt: number; members: TeamMember[]; messages?: TeamMessage[] }
 /** One line of the pre-start check. */
 export interface TeamCheck { id: string; label: string; status: 'ok' | 'warning' | 'error'; message: string }
 export interface HostState { hostId: string; bootId: string; name: string; version: string; protocolVersion: number; capabilities?: string[]; groups: Group[]; terminals: TerminalInfo[]; profiles: ShellProfile[]; settings: HostSettings; claudeIntegration?: ClaudeIntegration; codexIntegration?: CodexIntegration; storageError?: string; repositories?: Repository[]; worktrees?: Worktree[]; worktreeOperations?: WorktreeOperation[]; teams?: Team[]; }

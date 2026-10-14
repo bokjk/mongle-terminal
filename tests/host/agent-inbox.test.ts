@@ -119,3 +119,40 @@ test('an unanswered delivery stops blocking after the acknowledgement window', a
   inbox.add('gone', 'pc');
   assert.equal(writes.length, 4, 'a disposed inbox writes nothing');
 });
+
+test('every message settles once: delivered with its Enter, cancelled, or lost when the agent or terminal ends', async () => {
+  const writes: string[] = [];
+  const facts: InboxFacts = { supported: true, dnd: false };
+  const settled: [string, string][] = [];
+  const inbox = new AgentInbox({ write: data => { writes.push(data); return true; }, facts: () => ({ ...facts }), changed: () => {}, settled: (id, outcome) => { settled.push([id, outcome]); } }, timing);
+  assert.equal(inbox.add('first', 'phone', false, 'given-id'), 'given-id', 'the caller may choose the id it records');
+  const cancelled = inbox.add('second', 'phone');
+  assert.equal(inbox.cancel(cancelled), true);
+  assert.deepEqual(settled, [[cancelled, 'cancelled']]);
+  inbox.agentStarted();
+  await until(() => settled.length === 2, 'the first message is delivered');
+  assert.deepEqual(settled[1], ['given-id', 'delivered']);
+  assert.deepEqual(writes, [START + 'first' + END, '\r']);
+  const waiting = inbox.add('third', 'phone');
+  assert.equal(inbox.summary()?.hold, 'delivering');
+  inbox.dispose();
+  assert.deepEqual(settled.at(-1), [waiting, 'failed'], 'what still waited when the terminal ended is not delivered');
+  assert.equal(new Set(settled.map(([id]) => id)).size, settled.length, 'no message settles twice');
+});
+
+test('a paste whose Enter never went out is reported as not delivered', async () => {
+  const facts: InboxFacts = { supported: true, dnd: false };
+  const settled: [string, string][] = [];
+  const writes: string[] = [];
+  const inbox = new AgentInbox({ write: data => { writes.push(data); return true; }, facts: () => ({ ...facts }), changed: () => {}, settled: (id, outcome) => { settled.push([id, outcome]); } }, { ...timing, submitDelayMs: 200 });
+  inbox.agentStarted();
+  await sleep(timing.startSettleMs + 10);
+  inbox.pump();
+  const id = inbox.add('pasted only', 'phone');
+  assert.equal(writes.length, 1, 'the paste went out');
+  inbox.agentStopped();
+  assert.deepEqual(settled, [[id, 'failed']], 'the shell has the prompt again, so the Enter is withheld');
+  await sleep(250);
+  assert.deepEqual(writes, [START + 'pasted only' + END], 'no Enter after the agent stopped');
+  assert.equal(settled.length, 1);
+});

@@ -5,7 +5,7 @@ import { join, dirname, basename } from 'node:path';
 import * as pty from 'node-pty';
 import { z } from 'zod';
 import { APP_VERSION, PROTOCOL_VERSION, AppError, GIT_COMMIT_PATTERN, appendTab, dimensionSchema, groupRepositoryIds, idSchema, leafIds, removeLeaf, splitLeaf } from '../protocol/index.js';
-import type { ConnectionContext, Group, HostSettings, HostState, LayoutNode, PresentationSnapshot, Send, ShellProfile, SnapshotEvent, TerminalInfo, Repository, Worktree, WorktreeOperation, ProjectInspection, Team, TeamCheck, TeamMember, TeamMemberSpec, TeamTemplate } from '../protocol/index.js';
+import type { ConnectionContext, Group, HostSettings, HostState, LayoutNode, PresentationSnapshot, Send, ShellProfile, SnapshotEvent, TerminalInfo, Repository, Worktree, WorktreeOperation, ProjectInspection, Team, TeamCheck, TeamMember, TeamMemberSpec, TeamMessage, TeamTemplate } from '../protocol/index.js';
 import { HostStore, type PersistedHost, type PersistedSnapshot } from '../storage/index.js';
 import { agentInputSignal, validAgentSession, validCodexEvent, type AgentSessionIdentity } from '../terminal/agent-status.js';
 import { AGENT_PIPE_NAME, agentResumeCommand, isTerminalReportOnly, resolveAgentExecutable } from '../shell-profiles/agent-resume.js';
@@ -18,8 +18,8 @@ import { readPdfChunk } from './pdf-files.js';
 import { Uploads, UPLOAD_CHUNK_BYTES, UPLOAD_MAX_BYTES } from './uploads.js';
 import { inspectGit, readGitDiff, readGitReview } from './git.js';
 import { inspectProject, inspectKnownRepository, validateWorktree, prepareWorktree, addWorktree, removeWorktree, samePath, worktreeSlug } from './worktrees.js';
-import { AgentInbox, AGENT_INBOX_MAX, AGENT_MESSAGE_MAX_CHARS, cleanAgentMessage } from './agent-inbox.js';
-import { BUILT_IN_TEMPLATES, TEAM_EXTRA_MAX, TEAM_INSTRUCTIONS_MAX, rolePromptFile, teamLaunchCommand, teamMemberFlags, teamProblems, teamRolePrompt } from './teams.js';
+import { AgentInbox, AGENT_INBOX_MAX, AGENT_MESSAGE_MAX_CHARS, cleanAgentMessage, type AgentMessageOutcome } from './agent-inbox.js';
+import { BUILT_IN_TEMPLATES, TEAM_EXTRA_MAX, TEAM_INSTRUCTIONS_MAX, TEAM_MESSAGE_LOG, TEAM_MESSAGE_PREVIEW, rolePromptFile, teamLaunchCommand, teamMemberFlags, teamMessageText, teamProblems, teamRolePrompt } from './teams.js';
 import { TeamStore } from './team-store.js';
 import { defaultTeamEnvironment, type TeamEnvironment } from './team-environment.js';
 
@@ -91,6 +91,11 @@ export class HostCore {
     this.store = new HostStore(this.options.dataDir);
     this.teamStore = new TeamStore(this.options.dataDir);
     this.teams = this.teamStore.teams().filter(team => typeof team?.id === 'string' && Array.isArray(team.members));
+    // Inboxes live in memory: a message still waiting when the host stopped was never delivered.
+    for (const team of this.teams) if (team.messages?.some(message => message.status === 'waiting')) {
+      for (const message of team.messages) if (message.status === 'waiting') message.status = 'failed';
+      this.teamStore.saveTeam(team);
+    }
     const saved = this.store.load();
     this.profiles = await detectShellProfiles();
     this.hostId = saved?.hostId || randomUUID();
@@ -276,6 +281,24 @@ export class HostCore {
     }
     if(method==='teams.check'){const p=teamStartSchema.parse(params);this.requireHost(p);return this.teamChecks(p.groupId,p.cwd,p.name,p.members.map(normalizeTeamMember));}
     if(method==='teams.start')return this.startTeam(teamStartSchema.parse(params),client);
+    if(method==='teams.message'){
+      const p=hostRef.extend({teamId:idSchema,to:idSchema,text:z.string().min(1).max(AGENT_MESSAGE_MAX_CHARS*2)}).strict().parse(params);
+      this.requireHost(p);this.requireClient(client);
+      const team=this.teams.find(item=>item.id===p.teamId);if(!team)throw new AppError('TEAM_NOT_FOUND','팀을 찾을 수 없습니다.');
+      const member=team.members.find(item=>item.id===p.to);if(!member)throw new AppError('TEAM_MEMBER_NOT_FOUND','받을 구성원을 찾을 수 없습니다.');
+      const runtime=member.terminalId?this.runtimes.get(member.terminalId):undefined,inbox=runtime?.inbox;
+      if(!runtime||runtime.info.status!=='running'||!inbox||!runtime.agentShell)throw new AppError('AGENT_NOT_RUNNING',member.name+'의 터미널이 실행 중이 아닙니다.');
+      const text=cleanAgentMessage(p.text);
+      if(!text)throw new AppError('INVALID_REQUEST','보낼 내용을 입력해 주세요.');
+      if(text.length>AGENT_MESSAGE_MAX_CHARS)throw new AppError('AGENT_MESSAGE_TOO_LONG','메시지는 '+AGENT_MESSAGE_MAX_CHARS.toLocaleString('ko-KR')+'자까지 보낼 수 있습니다.');
+      if(!inbox.agentRunning)throw new AppError('AGENT_NOT_RUNNING',member.name+'의 터미널에서 실행 중인 Claude Code·Codex를 아직 확인하지 못했습니다. 에이전트가 시작된 뒤 다시 보내 주세요.');
+      if(inbox.size>=AGENT_INBOX_MAX)throw new AppError('AGENT_INBOX_FULL',member.name+'에게 보류 중인 메시지가 '+AGENT_INBOX_MAX+'개입니다. 전달되거나 취소된 뒤 다시 보내 주세요.');
+      const entry:TeamMessage={id:randomUUID(),from:'user',device:client.ctx.deviceName.slice(0,100),to:member.id,preview:text.replace(/\r/g,'\n').slice(0,TEAM_MESSAGE_PREVIEW),createdAt:Date.now(),status:'waiting'};
+      team.messages=[...(team.messages??[]),entry].slice(-TEAM_MESSAGE_LOG);
+      inbox.add(teamMessageText('사용자',member.name,text),client.ctx.deviceName,false,entry.id);
+      this.teamStore?.saveTeam(team);this.broadcastState();
+      return structuredClone(entry);
+    }
     if(method==='teams.remove'){
       const p=z.object({teamId:idSchema}).strict().parse(params);
       return this.projectCommit(async()=>{
@@ -292,6 +315,17 @@ export class HostCore {
   private requireHost(p:{hostId:string;bootId:string}){if(p.hostId!==this.hostId||p.bootId!==this.bootId)throw new AppError('HOST_CHANGED','호스트가 바뀌었습니다. 다시 연결해 주세요.');}
   private teamFolder(teamId:string){return join(this.options.dataDir,'agent-teams',teamId);}
   private promptFile(teamId:string,member:Pick<TeamMember,'id'|'provider'>){return join(this.teamFolder(teamId),member.id+(member.provider==='claude'?'.md':'.toml'));}
+  /** A team message left its receiver's inbox: record how, once. */
+  private teamMessageSettled(id:string,outcome:AgentMessageOutcome){
+    for(const team of this.teams){
+      const message=team.messages?.find(item=>item.id===id);if(!message)continue;
+      if(message.status==='waiting'){message.status=outcome;try{this.teamStore?.saveTeam(team);}catch{/* closing: the next start marks waiting messages failed */}this.teamLogChanged();}
+      return;
+    }
+  }
+  private teamLogBroadcast=false;
+  /** Inboxes settle in the middle of terminal events; views learn of it once those finish. */
+  private teamLogChanged(){if(this.teamLogBroadcast||this.closing)return;this.teamLogBroadcast=true;queueMicrotask(()=>{this.teamLogBroadcast=false;this.broadcastState();});}
   private teamMember(terminalId:string){for(const team of this.teams){const member=team.members.find(item=>item.terminalId===terminalId);if(member)return {team,member};}}
   private teamEnvironment():TeamEnvironment{return {...defaultTeamEnvironment,...this.options.teamEnvironment};}
   /** The pre-start check: shell, each CLI and its login, folder, Git for worktrees, limits and read-only members. */
@@ -920,6 +954,7 @@ export class HostCore {
       write:data=>{if(!current()||info.status!=='running'||!runtime.pty)return false;try{runtime.pty.write(data);return true;}catch{return false;}},
       facts:()=>({supported:runtime.agentShell===true,status:info.agentStatus,dnd:info.agentDnd===true}),
       changed:()=>{const summary=runtime.inbox?.summary();if(summary)info.agentInbox=summary;else delete info.agentInbox;if(runtime.agentShell&&runtime.inbox?.agentRunning)info.agentReady=true;else delete info.agentReady;runtime.notificationChanged=true;this.scheduleFrame(runtime);},
+      settled:(id,outcome)=>this.teamMessageSettled(id,outcome),
     });
     if(resumeCommand){const timer=setTimeout(()=>{if(!runtime.pendingResume||!current())return;this.abandonResume(runtime);this.notice('AGENT_RESUME_SKIPPED',`${info.title}: 셸 준비를 확인하지 못해 이전 대화를 자동으로 이어 가지 않았습니다. 필요하면 직접 다시 열어 주세요.`);},RESUME_PROMPT_TIMEOUT_MS);timer.unref?.();runtime.pendingResume={command:resumeCommand,timer};}
     try {
