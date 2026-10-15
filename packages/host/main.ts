@@ -88,6 +88,7 @@ try {
       end:(token,session)=>!closing&&owner.endAgentSession(token,session),
       status:(token,event)=>!closing&&owner.reportAgentStatus(token,event),
       claudeStart:(token,session)=>!closing&&owner.reportClaudeStart(token,session),
+      team:(key,request)=>closing?{ok:false,error:'몽글터미널이 종료하는 중입니다.'}:owner.teamRelay(key,request),
     });
     // Shells read the pipe name from this process before any terminal starts (core.init).
     process.env.MONGLE_AGENT_PIPE = agentPipe.name;

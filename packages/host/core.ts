@@ -5,7 +5,7 @@ import { join, dirname, basename } from 'node:path';
 import * as pty from 'node-pty';
 import { z } from 'zod';
 import { APP_VERSION, PROTOCOL_VERSION, AppError, GIT_COMMIT_PATTERN, appendTab, dimensionSchema, groupRepositoryIds, idSchema, leafIds, removeLeaf, splitLeaf } from '../protocol/index.js';
-import type { ConnectionContext, Group, HostSettings, HostState, LayoutNode, PresentationSnapshot, Send, ShellProfile, SnapshotEvent, TerminalInfo, Repository, Worktree, WorktreeOperation, ProjectInspection, Team, TeamCheck, TeamMember, TeamMemberSpec, TeamMessage, TeamTemplate } from '../protocol/index.js';
+import type { ConnectionContext, Group, HostSettings, HostState, LayoutNode, PresentationSnapshot, Send, ShellProfile, SnapshotEvent, TerminalInfo, Repository, Worktree, WorktreeOperation, ProjectInspection, Team, TeamCheck, TeamMember, TeamMemberSpec, TeamMessage, TeamModels, TeamScope, TeamScopeFolder, TeamTemplate } from '../protocol/index.js';
 import { HostStore, type PersistedHost, type PersistedSnapshot } from '../storage/index.js';
 import { agentInputSignal, validAgentSession, validCodexEvent, type AgentSessionIdentity } from '../terminal/agent-status.js';
 import { AGENT_PIPE_NAME, agentResumeCommand, isTerminalReportOnly, resolveAgentExecutable } from '../shell-profiles/agent-resume.js';
@@ -19,7 +19,10 @@ import { Uploads, UPLOAD_CHUNK_BYTES, UPLOAD_MAX_BYTES } from './uploads.js';
 import { inspectGit, readGitDiff, readGitReview } from './git.js';
 import { inspectProject, inspectKnownRepository, validateWorktree, prepareWorktree, addWorktree, removeWorktree, samePath, worktreeSlug } from './worktrees.js';
 import { AgentInbox, AGENT_INBOX_MAX, AGENT_MESSAGE_MAX_CHARS, cleanAgentMessage, type AgentMessageOutcome } from './agent-inbox.js';
-import { BUILT_IN_TEMPLATES, TEAM_EXTRA_MAX, TEAM_INSTRUCTIONS_MAX, TEAM_MESSAGE_LOG, TEAM_MESSAGE_PREVIEW, rolePromptFile, teamLaunchCommand, teamMemberFlags, teamMessageText, teamProblems, teamRolePrompt } from './teams.js';
+import { BUILT_IN_TEMPLATES, ROLE_DEFAULTS, TEAM_EXTRA_MAX, TEAM_INSTRUCTIONS_MAX, TEAM_MESSAGE_LOG, TEAM_MESSAGE_PREVIEW, rolePromptFile, safeCliPath, teamLaunchCommand, teamMemberFlags, teamMessageText, teamProblems, teamRelayConfig, teamRolePrompt } from './teams.js';
+import { TEAM_RELAY_SOURCE } from './team-relay-source.js';
+import type { TeamRelayAnswer, TeamRelayRequest } from './agent-pipe.js';
+import { alignBranch, branchPlan, scopeFolder, validBranchName, type BranchPlan } from './team-scope.js';
 import { TeamStore } from './team-store.js';
 import { defaultTeamEnvironment, type TeamEnvironment } from './team-environment.js';
 
@@ -40,8 +43,24 @@ type Lease = { connectionId: string; deviceName: string; epoch: number; expires:
 type Runtime = { info: TerminalInfo; engine: TerminalEngine; pty?: pty.IPty; stopPty?:()=>Promise<void>; seq: number; epoch: number; lease?: Lease; timer?: ReturnType<typeof setTimeout>; framePending?: boolean; frameDirty?: boolean; checkpointAt: number; lastFrame?: SnapshotEvent; disposed: boolean; stopping?: boolean; pendingBytes: number; directoryChanged?: boolean; notificationChanged?: boolean; agentToken?: string; pendingResume?: { command: string; timer: ReturnType<typeof setTimeout> }; inbox?: AgentInbox; agentShell?: boolean; pendingLaunch?: { command: string; timer: ReturnType<typeof setTimeout> }; promptIdle?: boolean };
 const messageRef = terminalRef.extend({messageId:z.string().uuid()}).strict();
 const teamMemberSchema = z.object({name:z.string().max(100),role:z.enum(['lead','developer','reviewer','tester','researcher','custom']),provider:z.enum(['claude','codex']),model:z.string().max(80),reportTo:z.string().max(100),instructions:z.string().max(TEAM_INSTRUCTIONS_MAX),extra:z.string().max(TEAM_EXTRA_MAX).optional(),folder:z.enum(['base','worktree']),readOnly:z.boolean()}).strict();
-const teamStartSchema = hostRef.extend({groupId:idSchema,name:z.string().max(100),cwd:cwdSchema,members:z.array(teamMemberSchema).min(1).max(10)}).strict();
+const teamScopeSchema = z.object({start:cwdSchema,folders:z.array(cwdSchema).min(1).max(8),branch:z.string().trim().min(1).max(200).optional()}).strict();
+const teamStartSchema = hostRef.extend({groupId:idSchema,name:z.string().max(100),cwd:cwdSchema,members:z.array(teamMemberSchema).min(1).max(10),scope:teamScopeSchema.optional()}).strict();
 const normalizeTeamMember = (member:z.infer<typeof teamMemberSchema>):TeamMemberSpec => {const extra=member.extra?.trim();return {...member,name:member.name.trim(),reportTo:member.reportTo.trim(),...(extra?{extra}:{extra:undefined})};};
+const worktreeRootOf = (root:string) => join(dirname(root),`${basename(root)}.worktrees`);
+/** Where worktree members branch from, or why the team folder cannot give them a worktree. */
+type TeamSource = {repository:Repository;attach:boolean} | {reason:string};
+/** A folder of the team's scope as the check found it, with what aligning its branch would do. */
+type ScopedFolder = {folder:TeamScopeFolder;plan?:BranchPlan};
+/** Failures that are not about the folder: the request stops instead of reporting the folder. */
+const HOST_FAILURES = new Set(['WORKTREE_BUSY','HOST_UNAVAILABLE','NOT_CONNECTED']);
+const TEAM_MODELS_FRESH_MS = 10 * 60_000;
+/** A team folder that cannot hold worktrees only changes where members work; busy or closing hosts still stop the request. */
+const TEAM_GIT_REASONS:Record<string,string> = {
+  NOT_REPOSITORY:'작업 폴더가 Git 저장소가 아니라서 새 워크트리를 만들 수 없습니다.',
+  NO_COMMIT:'작업 폴더의 Git 저장소에 아직 커밋이 없어 새 워크트리를 만들 수 없습니다. 첫 커밋을 만들면 쓸 수 있습니다.',
+  GIT_UNAVAILABLE:'Git을 찾지 못해 새 워크트리를 만들 수 없습니다.',
+};
+const TEAM_GIT_FALLBACK = new Set([...Object.keys(TEAM_GIT_REASONS),'WORKTREE_UNSUPPORTED','FILES_PROTECTED','FILES_UNSUPPORTED','FILES_UNAVAILABLE']);
 /** Host-private: the exact agent conversation last verified in a terminal generation. Never in TerminalInfo/state. */
 type AgentSessionRecord = { generation: string; session: AgentSessionIdentity };
 const RESUME_PROMPT_TIMEOUT_MS = 15_000;
@@ -145,7 +164,7 @@ export class HostCore {
     return result;
   }
   getState(): HostState {
-    return structuredClone({ hostId:this.hostId, bootId:this.bootId, name:this.settings.name, version:APP_VERSION, protocolVersion:PROTOCOL_VERSION, capabilities:['agent.messages','agent.teams','control.acquire-if-free','files.read','files.edit','files.pdf','files.upload','git.read','git.diff','git.review','layout.tabs','notifications.push','pairing.remote-approve','worktrees.manage','worktrees.terminal-context'], groups:this.groups, terminals:this.terminals, repositories:this.repositories,worktrees:this.worktrees,worktreeOperations:this.worktreeOperations,teams:this.teams,profiles:this.profiles, settings:this.settings, ...(this.options.claudeIntegration ? {claudeIntegration:this.options.claudeIntegration} : {}), ...(this.options.codexIntegration ? {codexIntegration:this.options.codexIntegration} : {}), ...(this.storageError ? {storageError:this.storageError} : {}) });
+    return structuredClone({ hostId:this.hostId, bootId:this.bootId, name:this.settings.name, version:APP_VERSION, protocolVersion:PROTOCOL_VERSION, capabilities:['agent.messages','agent.teams','agent.teams.scope','agent.teams.models','control.acquire-if-free','files.read','files.edit','files.pdf','files.upload','git.read','git.diff','git.review','layout.tabs','notifications.push','pairing.remote-approve','worktrees.manage','worktrees.terminal-context'], groups:this.groups, terminals:this.terminals, repositories:this.repositories,worktrees:this.worktrees,worktreeOperations:this.worktreeOperations,teams:this.teams,profiles:this.profiles, settings:this.settings, ...(this.options.claudeIntegration ? {claudeIntegration:this.options.claudeIntegration} : {}), ...(this.options.codexIntegration ? {codexIntegration:this.options.codexIntegration} : {}), ...(this.storageError ? {storageError:this.storageError} : {}) });
   }
   connect(ctx: ConnectionContext, send: Send): void {
     if (!this.initialized || this.closing || this.shutdownPrepared) throw new AppError('HOST_UNAVAILABLE','호스트가 준비되지 않았습니다.');
@@ -279,7 +298,29 @@ export class HostCore {
       if(!store.templates().some(item=>item.id===p.id))throw new AppError('TEMPLATE_READ_ONLY','기본 제공 템플릿은 지울 수 없습니다.');
       store.deleteTemplate(p.id);return {deleted:true};
     }
-    if(method==='teams.check'){const p=teamStartSchema.parse(params);this.requireHost(p);return this.teamChecks(p.groupId,p.cwd,p.name,p.members.map(normalizeTeamMember));}
+    if(method==='teams.models'){
+      this.requireHost(hostRef.strict().parse(params));
+      // Each CLI's own list, asked again after a while so an updated CLI's models show up without a host restart.
+      if(!this.teamModels||Date.now()-this.teamModels.at>TEAM_MODELS_FRESH_MS){
+        const env=this.teamEnvironment();
+        this.teamModels={at:Date.now(),list:Promise.all([env.models('claude'),env.models('codex')]).then(([claude,codex])=>({claude:claude??[],codex:codex??[]}))};
+      }
+      return structuredClone(await this.teamModels.list);
+    }
+    if(method==='teams.scope'){
+      const p=hostRef.extend({groupId:idSchema,paths:z.array(cwdSchema).min(1).max(8).optional()}).strict().parse(params);this.requireHost(p);
+      const group=this.group(p.groupId),folders:TeamScopeFolder[]=[];
+      // Folders the user adds are reported; offered ones that cannot be opened are left out.
+      if(p.paths){for(const folder of p.paths)folders.push(await this.projectRead(()=>scopeFolder(folder,this.options.dataDir),client));return {folders};}
+      const candidates=[group.cwd,...groupRepositoryIds(group).map(id=>this.repositories.find(item=>item.id===id)?.root),...this.terminals.filter(item=>item.groupId===group.id).map(item=>item.currentCwd??item.cwd)].filter((item):item is string=>Boolean(item));
+      for(const candidate of candidates.slice(0,32)){
+        if(folders.length>=12)break;
+        try{const folder=await this.projectRead(()=>scopeFolder(candidate,this.options.dataDir),client);if(!folders.some(item=>samePath(item.path,folder.path)))folders.push(folder);}
+        catch(error){if(error instanceof AppError&&HOST_FAILURES.has(error.code))throw error;}
+      }
+      return {folders};
+    }
+    if(method==='teams.check'){const p=teamStartSchema.parse(params);this.requireHost(p);const {ready,checks}=await this.teamChecks(p.groupId,p.scope?.start??p.cwd,p.name,p.members.map(normalizeTeamMember),client,p.scope);return {ready,checks};}
     if(method==='teams.start')return this.startTeam(teamStartSchema.parse(params),client);
     if(method==='teams.message'){
       const p=hostRef.extend({teamId:idSchema,to:idSchema,text:z.string().min(1).max(AGENT_MESSAGE_MAX_CHARS*2)}).strict().parse(params);
@@ -306,6 +347,7 @@ export class HostCore {
         if(!team)throw new AppError('TEAM_NOT_FOUND','팀을 찾을 수 없습니다.');
         // The terminals stay as ordinary terminals; only the team record and its prompt files go.
         this.teams=this.teams.filter(item=>item!==team);store.deleteTeam(team.id);
+        for(const member of team.members)this.relayKeys.delete(member.id);
         await rm(this.teamFolder(team.id),{recursive:true,force:true});
         this.broadcastState();return {removed:true};
       });
@@ -323,13 +365,116 @@ export class HostCore {
       return;
     }
   }
+  /** member id -> the key its relay names it with, for this boot. The key file is rewritten whenever the member's CLI is started. */
+  private relayKeys=new Map<string,{key:string;teamId:string}>();
+  /**
+   * Writes a member's relay files (the shared relay script, the member's key and its CLI's MCP entry) and returns
+   * the entry's path. Undefined without the host's agent pipe or when a path cannot be passed safely: the member
+   * then starts without the relay and its role prompt says so.
+   */
+  private async writeTeamRelay(team:Team,member:TeamMember):Promise<string|undefined>{
+    const pipe=process.env.MONGLE_AGENT_PIPE||'';if(!AGENT_PIPE_NAME.test(pipe))return;
+    const folder=this.teamFolder(team.id),script=join(this.options.dataDir,'agent-teams','mongle-team-relay.cjs'),keyFile=join(folder,member.id+'.relay.json');
+    const config=teamRelayConfig(member.provider,process.execPath,script,keyFile);if(!config)return;
+    let entry=this.relayKeys.get(member.id);
+    if(!entry||entry.teamId!==team.id){entry={key:randomBytes(32).toString('hex'),teamId:team.id};this.relayKeys.set(member.id,entry);}
+    try{
+      await mkdir(folder,{recursive:true});
+      if(await readFile(script,'utf8').catch(()=>'')!==TEAM_RELAY_SOURCE)await writeFile(script,TEAM_RELAY_SOURCE,{encoding:'utf8',mode:0o600});
+      await writeFile(keyFile,JSON.stringify({pipe,key:entry.key})+'\n',{encoding:'utf8',mode:0o600});
+      const file=join(folder,member.id+(member.provider==='claude'?'.mcp.json':'.mcp.toml'));
+      await writeFile(file,config,{encoding:'utf8',mode:0o600});
+      return file;
+    }catch{return;}
+  }
+  private relayOwner(key:string){
+    if(typeof key!=='string'||!/^[a-f0-9]{64}$/.test(key))return;
+    const expected=Buffer.from(key);
+    for(const [memberId,entry] of this.relayKeys){
+      if(!timingSafeEqual(Buffer.from(entry.key),expected))continue;
+      const team=this.teams.find(item=>item.id===entry.teamId),member=team?.members.find(item=>item.id===memberId);
+      return team&&member?{team,member}:undefined;
+    }
+  }
+  /** What a member sees of its team: each member, its role and report target, and what it is doing now. */
+  private teamRoster(team:Team,self:TeamMember):string{
+    const doing=(member:TeamMember)=>{
+      const runtime=member.terminalId?this.runtimes.get(member.terminalId):undefined;
+      if(!runtime||runtime.info.status!=='running')return '터미널 닫힘';
+      if(!runtime.inbox?.agentRunning)return runtime.promptIdle?'CLI 꺼짐':'시작하는 중';
+      const status=runtime.info.agentStatus;
+      return status==='working'?'일하는 중':status==='attention'?'사용자 확인 대기':status==='error'?'오류로 멈춤':'쉬는 중';
+    };
+    const lines=team.members.map((member,index)=>{
+      const waiting=member.terminalId?this.runtimes.get(member.terminalId)?.inbox?.size??0:0;
+      return '- '+member.name+(member===self?' (나)':'')+': '+ROLE_DEFAULTS[member.role].label+(index===0?', 팀장':'')+', '+(member.provider==='claude'?'Claude Code':'Codex')+(member.model?' '+member.model:'')+(member.readOnly?', 읽기 전용':'')+'. 지금: '+doing(member)+(waiting?', 받을 메시지 '+waiting+'개':'')+'. 끝나면 '+(member.reportTo==='user'?'사용자':member.reportTo)+'에게 보고';
+    });
+    return ['팀: '+team.name,...lines,'사용자에게 보고하려면 to에 "사용자"를 씁니다.'].join('\n');
+  }
+  /**
+   * A member's team relay asks for its team or sends a message as that member. The key names the sender, so a
+   * member cannot speak for another. Messages to a member go through its inbox like the user's; a report to the
+   * user is only recorded in the team conversation. Every answer is written for the CLI that asked.
+   */
+  teamRelay(key:string,request:TeamRelayRequest):TeamRelayAnswer{
+    const fail=(error:string):TeamRelayAnswer=>({ok:false,error});
+    if(this.closing||this.shutdownPrepared)return fail('몽글터미널이 종료하는 중입니다.');
+    const owner=this.relayOwner(key);
+    if(!owner)return fail('몽글 팀 연결이 끝났습니다. 팀이 해제되었거나 몽글터미널이 다시 시작되었습니다. 사용자에게 알려 주세요.');
+    const {team,member}=owner;
+    if(request.op==='list')return {ok:true,text:this.teamRoster(team,member)};
+    const to=request.to.trim(),user=['사용자','user','나'].includes(to.toLowerCase());
+    const target=user?undefined:team.members.find(item=>item.name===to)??team.members.find(item=>item.name.toLowerCase()===to.toLowerCase());
+    if(!user&&!target)return fail('"'+to.slice(0,40)+'"라는 구성원이 없습니다. 받을 수 있는 이름: '+[...team.members.filter(item=>item!==member).map(item=>item.name),'사용자'].join(', '));
+    if(target===member)return fail('자기 자신에게는 보낼 수 없습니다.');
+    const text=cleanAgentMessage(request.text);
+    if(!text)return fail('보낼 내용이 비어 있습니다.');
+    if(text.length>AGENT_MESSAGE_MAX_CHARS)return fail('메시지는 '+AGENT_MESSAGE_MAX_CHARS+'자까지 보낼 수 있습니다. 긴 내용은 파일에 쓰고 그 파일 위치를 보내 주세요.');
+    const entry:TeamMessage={id:randomUUID(),from:member.id,to:target?target.id:'user',preview:text.replace(/\r/g,'\n').slice(0,TEAM_MESSAGE_PREVIEW),createdAt:Date.now(),status:target?'waiting':'delivered'};
+    if(!target){
+      team.messages=[...(team.messages??[]),entry].slice(-TEAM_MESSAGE_LOG);
+      this.teamStore?.saveTeam(team);this.broadcastState();
+      return {ok:true,text:'사용자에게 보고했습니다. 몽글 팀 대화에 남았습니다.'};
+    }
+    const runtime=target.terminalId?this.runtimes.get(target.terminalId):undefined,inbox=runtime?.inbox;
+    if(!runtime||runtime.info.status!=='running'||!inbox||!runtime.agentShell)return fail(target.name+'의 터미널이 닫혀 있어 보낼 수 없습니다. 사용자에게 알려 주세요.');
+    if(!inbox.agentRunning&&runtime.promptIdle)return fail(target.name+'의 CLI가 꺼져 있어 보낼 수 없습니다. 사용자에게 알려 주세요.');
+    if(inbox.size>=AGENT_INBOX_MAX)return fail(target.name+'에게 아직 전달되지 않은 메시지가 '+AGENT_INBOX_MAX+'개 있습니다. 전달된 뒤 다시 보내 주세요.');
+    team.messages=[...(team.messages??[]),entry].slice(-TEAM_MESSAGE_LOG);
+    inbox.add(teamMessageText(member.name,target.name,text),member.name,false,entry.id);
+    this.teamStore?.saveTeam(team);this.broadcastState();
+    return {ok:true,text:target.name+'에게 보냈습니다. '+target.name+'이(가) 하던 일이 있으면 그 일을 마친 뒤 입력창에 들어갑니다. 답이나 보고는 새 메시지로 들어오니, 기다리는 동안 같은 차례에서 다시 확인하지 말고 차례를 끝내세요.'};
+  }
   private teamLogBroadcast=false;
   /** Inboxes settle in the middle of terminal events; views learn of it once those finish. */
   private teamLogChanged(){if(this.teamLogBroadcast||this.closing)return;this.teamLogBroadcast=true;queueMicrotask(()=>{this.teamLogBroadcast=false;this.broadcastState();});}
   private teamMember(terminalId:string){for(const team of this.teams){const member=team.members.find(item=>item.terminalId===terminalId);if(member)return {team,member};}}
   private teamEnvironment():TeamEnvironment{return {...defaultTeamEnvironment,...this.options.teamEnvironment};}
+  private teamModels?:{at:number;list:Promise<TeamModels>};
+  /**
+   * The repository worktree members branch from, found from the team folder: a project of this group that
+   * holds the folder, else the folder's own repository (linked to the group when the team starts), else the
+   * group's only project. Without one, the reason says why; those members then share the team folder.
+   */
+  private async teamRepository(group:Group,cwd:string,client:Client):Promise<TeamSource> {
+    const linked=groupRepositoryIds(group).map(id=>this.repositories.find(item=>item.id===id)).filter((item):item is Repository=>Boolean(item));
+    const directory=await realpath(cwd).catch(()=>cwd);
+    const holding=linked.filter(repository=>within(repository.root,directory)||this.worktrees.some(item=>item.repositoryId===repository.id&&item.status==='ready'&&within(item.path,directory)));
+    if(holding.length===1)return {repository:holding[0],attach:false};
+    let reason:string;
+    try{
+      const inspection=await this.projectRead(()=>inspectProject(cwd,this.options.dataDir),client);
+      const known=this.repositories.find(item=>samePath(item.commonDir,inspection.commonDir));
+      if(known&&linked.includes(known))return {repository:known,attach:false};
+      return {repository:known??{id:'',commonDir:inspection.commonDir,root:inspection.root,baseRef:inspection.baseRef,worktreeRoot:worktreeRootOf(inspection.root),checkedAt:0},attach:true};
+    }catch(error){
+      if(!(error instanceof AppError)||!TEAM_GIT_FALLBACK.has(error.code))throw error;
+      reason=linked.length>1&&error.code==='NOT_REPOSITORY'?'작업 폴더가 이 그룹의 어느 프로젝트에도 속하지 않아 새 워크트리를 만들 저장소를 정할 수 없습니다.':TEAM_GIT_REASONS[error.code]??'새 워크트리를 만들 수 없습니다. '+error.message;
+    }
+    return linked.length===1?{repository:linked[0],attach:false}:{reason};
+  }
   /** The pre-start check: shell, each CLI and its login, folder, Git for worktrees, limits and read-only members. */
-  private async teamChecks(groupId:string,cwd:string,name:string,members:TeamMemberSpec[]):Promise<{ready:boolean;checks:TeamCheck[]}> {
+  private async teamChecks(groupId:string,cwd:string,name:string,members:TeamMemberSpec[],client:Client,scope?:z.infer<typeof teamScopeSchema>):Promise<{ready:boolean;checks:TeamCheck[];source?:TeamSource;scoped?:ScopedFolder[]}> {
     const env=this.teamEnvironment(),checks:TeamCheck[]=[],group=this.group(groupId);
     const profile=this.profiles.find(item=>item.kind==='powershell');
     checks.push(profile?{id:'shell',label:'PowerShell',status:'ok',message:'구성원 터미널을 '+profile.name+'로 엽니다.'}:{id:'shell',label:'PowerShell',status:'error',message:'PowerShell을 찾지 못했습니다. 팀 구성원은 PowerShell 터미널에서만 실행합니다.'});
@@ -343,21 +488,54 @@ export class HostCore {
       else if(!linked)checks.push({id:provider,label,status:'warning',message:named+'를 실행할 수 있지만 몽글 연동이 준비되지 않아 작업 상태와 메시지 전달을 쓸 수 없습니다.'});
       else checks.push({id:provider,label,status:'ok',message:named+' · '+(loggedIn?'로그인됨':'로그인 상태는 확인하지 못함')});
     }
-    try{await resolveShellLaunch(profile??this.profiles[0],cwd);checks.push({id:'folder',label:'작업 폴더',status:'ok',message:cwd});}
+    try{await resolveShellLaunch(profile??this.profiles[0],cwd);checks.push({id:'folder',label:scope?'시작 폴더':'작업 폴더',status:'ok',message:cwd});}
     catch{checks.push({id:'folder',label:'작업 폴더',status:'error',message:'작업 폴더를 열 수 없습니다. 폴더가 있는지 확인해 주세요.'});}
-    const worktrees=members.filter(item=>item.folder==='worktree').length;
-    if(worktrees){
-      const ids=groupRepositoryIds(group);
-      if(ids.length!==1)checks.push({id:'git',label:'Git',status:'error',message:'구성원별 워크트리를 만들려면 이 그룹에서 프로젝트(Git 저장소) 하나를 먼저 열어 주세요.'});
-      else{const repository=this.repository(ids[0]),changes=await env.gitChanges(cwd);checks.push({id:'git',label:'Git',status:changes?'warning':'ok',message:'새 워크트리 '+worktrees+'개를 '+repository.worktreeRoot+'에 만듭니다.'+(changes?' 저장하지 않은 변경 '+changes+'개는 새 워크트리에 들어가지 않습니다.':'')});}
+    const scoped=scope?await this.teamScopeChecks(scope,checks,client):undefined;
+    const worktreeMembers=members.filter(item=>item.folder==='worktree');
+    let source:TeamSource|undefined;
+    if(worktreeMembers.length){
+      source=scoped&&scoped.length>1?{reason:'여러 폴더를 함께 쓰는 팀에서는 아직 새 워크트리를 만들지 않습니다.'}:await this.teamRepository(group,cwd,client);
+      if('reason' in source)checks.push({id:'git',label:'Git',status:'warning',message:source.reason+' 새 워크트리로 고른 '+worktreeMembers.map(item=>item.name).join(', ')+'도 기본 폴더에서 일합니다. 같은 파일을 동시에 고치지 않도록 일을 나눠 주세요.'});
+      else{const changes=await env.gitChanges(cwd);checks.push({id:'git',label:'Git',status:changes?'warning':'ok',message:'새 워크트리 '+worktreeMembers.length+'개를 '+source.repository.worktreeRoot+'에 만듭니다.'+(source.attach?' 작업 폴더의 저장소('+basename(source.repository.root)+')를 이 그룹의 프로젝트로 연결합니다.':'')+(changes?' 저장하지 않은 변경 '+changes+'개는 새 워크트리에 들어가지 않습니다.':'')});}
     }
     const inGroup=this.terminals.filter(item=>item.groupId===group.id).length,running=this.terminals.filter(item=>item.status==='running').length;
     if(inGroup+members.length>16||running+members.length>32||this.terminals.length+members.length>128)checks.push({id:'limit',label:'터미널 수',status:'error',message:'터미널 한도를 넘습니다. 사용하지 않는 터미널을 정리해 주세요.'});
     const readOnly=members.filter(item=>item.readOnly).map(item=>item.name);
     if(readOnly.length)checks.push({id:'permissions',label:'권한',status:'ok',message:readOnly.join(', ')+': 읽기 전용으로 실행해 파일을 고치지 못하게 합니다.'});
     for(const problem of teamProblems(name,members))checks.push({id:'team',label:'팀 구성',status:'error',message:problem});
-    return {ready:!checks.some(item=>item.status==='error'),checks};
+    return {ready:!checks.some(item=>item.status==='error'),checks,...(source?{source}:{}),...(scoped?{scoped}:{})};
   }
+  /**
+   * One check line per folder of the team's scope: what it is, and with a branch to align, what Git would do
+   * there and whether it would refuse. Reads only; the branches move when the team starts.
+   */
+  private async teamScopeChecks(scope:z.infer<typeof teamScopeSchema>,checks:TeamCheck[],client:Client):Promise<ScopedFolder[]> {
+    const scoped:ScopedFolder[]=[],branch=scope.branch;
+    let branchValid:boolean|undefined;
+    for(const [index,requested] of scope.folders.entries()){
+      const id='scope:'+index;
+      let folder:TeamScopeFolder;
+      try{folder=await this.projectRead(()=>scopeFolder(requested,this.options.dataDir),client);}
+      catch(error){if(error instanceof AppError&&HOST_FAILURES.has(error.code))throw error;checks.push({id,label:basename(requested)||requested,status:'error',message:'폴더를 열 수 없습니다. '+(error instanceof AppError?error.message:'폴더가 있는지 확인해 주세요.')});continue;}
+      if(scoped.some(item=>samePath(item.folder.path,folder.path)))continue;
+      if(!safeCliPath(folder.path)){checks.push({id,label:folder.name,status:'error',message:'경로에 따옴표나 $ 같은 글자가 있어 CLI에 넘길 수 없습니다.'});continue;}
+      if(!folder.git){scoped.push({folder});checks.push({id,label:folder.name,status:'ok',message:'Git 저장소가 아닌 폴더'+(branch?'라 브랜치는 바꾸지 않습니다.':'입니다.')});continue;}
+      if(branch&&branchValid===undefined){
+        branchValid=await this.projectRead(()=>validBranchName(folder.path,branch),client);
+        if(!branchValid)checks.push({id:'branch',label:'브랜치',status:'error',message:'"'+branch+'"은 Git 브랜치 이름으로 쓸 수 없습니다. 공백이나 ~ ^ : ? * [ \\ 없이, -로 시작하지 않게 써 주세요.'});
+      }
+      if(!branch||!branchValid){scoped.push({folder});checks.push({id,label:folder.name,status:'ok',message:'지금 브랜치 '+(folder.branch??'(분리된 HEAD)')+'에서 일합니다.'});continue;}
+      const plan=await this.projectRead(()=>branchPlan(folder.path,branch),client);
+      scoped.push({folder,plan});
+      const move=plan.action==='stay'?'이미 '+branch+' 브랜치입니다.':(plan.current??'(분리된 HEAD)')+' → '+branch+(plan.action==='create'?' (새로 만듦)':plan.action==='track'?' ('+plan.remote+'에서 받아 옴)':' (있는 브랜치로 바꿈)');
+      const carry=plan.action!=='stay'&&plan.changes?' · 저장하지 않은 변경 '+plan.changes+'개도 함께 옮겨집니다.':'';
+      checks.push({id,label:folder.name,status:plan.problem?'error':carry?'warning':'ok',message:plan.problem?move+'. '+plan.problem:move+carry});
+    }
+    if(branch&&branchValid===undefined&&scoped.length)checks.push({id:'branch',label:'브랜치',status:'warning',message:'작업 범위에 Git 저장소가 없어 브랜치는 바꾸지 않습니다.'});
+    return scoped;
+  }
+  /** The team's folders a member's CLI is given besides the one it starts in; a worktree member has its own copy instead. */
+  private teamFolders(team:Team,member:TeamMemberSpec){const scope=team.scope;return scope&&member.folder!=='worktree'?scope.folders.filter(folder=>!within(scope.start,folder)):[];}
   /**
    * Starts every member in order: its worktree (through the normal worktree job) or the base folder, a
    * PowerShell tab beside the lead, then its CLI with the role prompt, typed after the shell's first prompt.
@@ -365,15 +543,35 @@ export class HostCore {
    */
   private async startTeam(p:z.infer<typeof teamStartSchema>,client:Client):Promise<Team> {
     this.requireHost(p);
-    const members=p.members.map(normalizeTeamMember),check=await this.teamChecks(p.groupId,p.cwd,p.name,members);
+    const members=p.members.map(normalizeTeamMember),cwd=p.scope?.start??p.cwd,check=await this.teamChecks(p.groupId,cwd,p.name,members,client,p.scope);
     if(!check.ready)throw new AppError('TEAM_NOT_READY',check.checks.filter(item=>item.status==='error').map(item=>item.message).join(' '));
     if(this.teams.length>=50)throw new AppError('LIMIT_REACHED','팀은 50개까지 둘 수 있습니다. 쓰지 않는 팀을 정리해 주세요.');
     const claudePath=members.some(item=>item.provider==='claude')?await this.teamEnvironment().executable('claude'):undefined;
-    const group=this.group(p.groupId),profile=this.profiles.find(item=>item.kind==='powershell')!;
-    const repositoryId=members.some(item=>item.folder==='worktree')?groupRepositoryIds(group)[0]:undefined;
-    const team:Team={id:randomUUID(),name:p.name.trim(),groupId:group.id,cwd:p.cwd,...(repositoryId?{repositoryId}:{}),createdAt:Date.now(),members:members.map(item=>({...item,id:randomUUID()}))};
+    const profile=this.profiles.find(item=>item.kind==='powershell')!,source=check.source,scoped=check.scoped,branch=p.scope?.branch;
+    // Every branch is aligned before any member starts; a refusal stops the team and says what already moved.
+    if(scoped&&branch){
+      const moved:string[]=[];
+      for(const item of scoped){
+        if(!item.plan||item.plan.action==='stay')continue;
+        try{await this.projectRead(()=>alignBranch(item.folder.path,branch,item.plan!),client);moved.push(item.folder.name);}
+        catch(error){if(error instanceof AppError&&HOST_FAILURES.has(error.code))throw error;throw new AppError('TEAM_BRANCH_FAILED',item.folder.name+'에서 브랜치를 "'+branch+'"(으)로 바꾸지 못해 팀을 시작하지 않았습니다.'+(moved.length?' '+moved.join(', ')+'은(는) 이미 바꿨습니다.':'')+' 그 폴더의 Git 상태를 확인한 뒤 다시 시도해 주세요.');}
+      }
+    }
+    const start=await realpath(cwd).catch(()=>cwd);
+    const scope:TeamScope|undefined=scoped?{start,folders:scoped.map(item=>item.folder.path),...(branch&&scoped.some(item=>item.plan)?{branch}:{})}:undefined;
+    // As the check said: without a usable repository, worktree members work in the team folder.
+    if(source&&'reason' in source)for(const member of members)if(member.folder==='worktree')member.folder='base';
+    let repositoryId=source&&'repository' in source&&!source.attach?source.repository.id:undefined;
+    if(source&&'repository' in source&&source.attach){
+      const target=this.group(p.groupId);
+      repositoryId=(await this.projectRequest('projects.attach',{hostId:this.hostId,bootId:this.bootId,path:cwd,groupId:target.id,revision:target.revision},client.ctx) as {repository:Repository}).repository.id;
+    }
+    const group=this.group(p.groupId);
+    const team:Team={id:randomUUID(),name:p.name.trim(),groupId:group.id,cwd,...(repositoryId?{repositoryId}:{}),...(scope?{scope}:{}),createdAt:Date.now(),members:members.map(item=>({...item,id:randomUUID()}))};
     await mkdir(this.teamFolder(team.id),{recursive:true});
-    for(const [index,member] of team.members.entries())await writeFile(this.promptFile(team.id,member),rolePromptFile(member.provider,teamRolePrompt(team,team.members,index)),'utf8');
+    const relays=new Map<string,string>();
+    for(const member of team.members){const file=await this.writeTeamRelay(team,member);if(file)relays.set(member.id,file);}
+    for(const [index,member] of team.members.entries())await writeFile(this.promptFile(team.id,member),rolePromptFile(member.provider,teamRolePrompt(team,team.members,index,{relay:relays.has(member.id)})),'utf8');
     const save=()=>this.projectCommit(()=>{this.teamStore?.saveTeam(team);this.broadcastState();});
     await this.projectCommit(()=>{this.requireClient(client);this.teams.push(team);this.teamStore?.saveTeam(team);this.broadcastState();});
     let anchor:string|undefined;
@@ -387,12 +585,12 @@ export class HostCore {
           const done=this.operation(op.id);
           if(done.status!=='succeeded'||!done.terminalId)throw new AppError('TEAM_WORKTREE_FAILED',done.message||'워크트리를 만들지 못했습니다.');
           member.worktreeId=done.worktreeId;terminalId=done.terminalId;
-        }else terminalId=(await this.handle('terminals.create',{groupId:group.id,profileId:profile.id,cwd:p.cwd,...(anchor?{tabTarget:anchor}:{})},client.ctx) as TerminalInfo).id;
+        }else terminalId=(await this.handle('terminals.create',{groupId:group.id,profileId:profile.id,cwd,...(anchor?{tabTarget:anchor}:{})},client.ctx) as TerminalInfo).id;
         anchor??=terminalId;member.terminalId=terminalId;
         await this.projectCommit(()=>{
           const info=this.terminal(terminalId),runtime=this.runtimes.get(terminalId);
           info.title=member.name;
-          const command=runtime?.agentShell?teamLaunchCommand(member,this.promptFile(team.id,member),claudePath):undefined;
+          const command=runtime?.agentShell?teamLaunchCommand(member,this.promptFile(team.id,member),claudePath,this.teamFolders(team,member),relays.get(member.id)):undefined;
           if(!runtime||!command)throw new AppError('TEAM_LAUNCH_UNSUPPORTED','PowerShell 터미널에서만 구성원 CLI를 실행할 수 있습니다.');
           this.queueLaunch(runtime,command);this.persist();
         });
@@ -438,7 +636,7 @@ export class HostCore {
         if(p.groupId)this.revision(group!,p.revision??-1);
         if(!repository){
           if(this.repositories.length>=100)throw new AppError('LIMIT_REACHED','프로젝트는 호스트당 100개까지 등록할 수 있습니다.');
-          repository={id:randomUUID(),commonDir:inspection.commonDir,root:inspection.root,baseRef:inspection.baseRef,worktreeRoot:join(dirname(inspection.root),`${basename(inspection.root)}.worktrees`),checkedAt:Date.now()};this.repositories.push(repository);
+          repository={id:randomUUID(),commonDir:inspection.commonDir,root:inspection.root,baseRef:inspection.baseRef,worktreeRoot:worktreeRootOf(inspection.root),checkedAt:Date.now()};this.repositories.push(repository);
         }
         if(!group){
           if(this.groups.length>=100)throw new AppError('LIMIT_REACHED','그룹 개수 한도에 도달했습니다.');
@@ -892,7 +1090,12 @@ export class HostCore {
       let command=resume?.cwd?agentResumeCommand(profile,resume,executable,{codexWrapper}):undefined;
       // A team member reopens with its model, role prompt and read-only switch, so a later compaction keeps the role.
       const membership=this.teamMember(info.id);
-      if(command&&resume&&membership&&membership.member.provider===resume.provider&&profile.kind==='powershell'){const flags=teamMemberFlags(membership.member,this.promptFile(membership.team.id,membership.member));if(flags)command=command.slice(0,-1)+' '+flags+'\r';}
+      if(command&&resume&&membership&&membership.member.provider===resume.provider&&profile.kind==='powershell'){
+        const {team,member}=membership,relay=await this.writeTeamRelay(team,member),promptFile=this.promptFile(team.id,member);
+        // A team started before the relay existed gets the current role prompt, which names it.
+        await writeFile(promptFile,rolePromptFile(member.provider,teamRolePrompt(team,team.members,team.members.indexOf(member),{relay:Boolean(relay)})),'utf8').catch(()=>{});
+        const flags=teamMemberFlags(member,promptFile,this.teamFolders(team,member),relay);if(flags)command=command.slice(0,-1)+' '+flags+'\r';
+      }
       let launch:Awaited<ReturnType<typeof resolveShellLaunch>>|undefined;
       if(command&&resume?.cwd){try{launch=await resolveShellLaunch(profile,resume.cwd);}catch{command=undefined;}}
       else command=undefined;

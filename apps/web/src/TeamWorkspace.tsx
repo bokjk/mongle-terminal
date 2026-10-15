@@ -1,9 +1,9 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { BookmarkPlus, Bot, Crown, GitFork, Lock, MessagesSquare, Send, Users, X } from 'lucide-react';
+import { Fragment, useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
+import { BookmarkPlus, Bot, Crown, FolderTree, GitBranch, GitFork, Lock, MessagesSquare, Send, Users, X } from 'lucide-react';
 import type { HostState, Team, TeamMessage, TerminalInfo } from '../../../packages/protocol/index';
 import { AGENT_MESSAGE_LIMIT } from './AgentMessage';
 import { aggregateTerminalStatus, terminalStatus, terminalStatusDescription, TerminalStatusBadge, type TerminalNotices } from './TerminalStatus';
-import { canCancelTeamMessage, memberTerminal, modelLabel, ROLE_DEFAULTS, teamFlow, teamMessageStatus, teamSendBlocker } from './team-model';
+import { canCancelTeamMessage, clampTeamLead, memberTerminal, modelLabel, moveTeamRow, ROLE_DEFAULTS, TEAM_LEAD_DEFAULT, teamFlow, teamLayout, teamMessageStatus, teamSendBlocker, type TeamLayout } from './team-model';
 
 type Request = <T = unknown>(method: string, params?: unknown) => Promise<T>;
 const message = (error: unknown) => error instanceof Error ? error.message : '요청을 완료하지 못했습니다.';
@@ -37,25 +37,84 @@ export function TeamWorkspace({state, team, maximized, renderPane, request, onSe
   onSaveTemplate(): void; onRemove(): void;
 }) {
   const [lead, ...others] = team.members;
-  const pane = (member: Team['members'][number], className: string) => {
+  const [layouts, setLayouts] = useState<Record<string, TeamLayout>>({});
+  const layout = teamLayout(layouts[team.id] ?? savedLayout(team.id), others.length);
+  const update = (next: TeamLayout) => {
+    setLayouts(all => ({...all, [team.id]: next}));
+    try { localStorage.setItem(LAYOUT_KEY + team.id, JSON.stringify(next)); } catch { /* the size still applies until the app closes */ }
+  };
+  const narrow = useNarrow();
+  const panesRef = useRef<HTMLDivElement>(null);
+  const pane = (member: Team['members'][number], className: string, style?: CSSProperties) => {
     const terminal = memberTerminal(state, member);
-    if (terminal) return <div key={member.id} className={className}>{renderPane(terminal.id)}</div>;
-    return <div key={member.id} className={className}><section className="pane team-member-missing" aria-label={member.name + ' 패널'}>
+    if (terminal) return <div key={member.id} className={className} style={style}>{renderPane(terminal.id)}</div>;
+    return <div key={member.id} className={className} style={style}><section className="pane team-member-missing" aria-label={member.name + ' 패널'}>
       <header className="pane-header"><Bot size={14}/><span className="pane-title">{member.name}</span></header>
       <p className="hint">{member.error || '이 구성원의 터미널이 닫혔습니다.'}</p>
     </section></div>;
   };
+  const dragLead = (event: PointerEvent<HTMLDivElement>) => {
+    if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
+    const box = panesRef.current?.getBoundingClientRect();
+    if (box) update({...layout, lead: clampTeamLead(narrow ? (event.clientY - box.top) / box.height : (event.clientX - box.left) / box.width)});
+  };
+  const keyLead = (event: KeyboardEvent<HTMLDivElement>) => {
+    const step = {ArrowLeft: -.05, ArrowUp: -.05, ArrowRight: .05, ArrowDown: .05}[event.key as string];
+    if (step === undefined && event.key !== 'Home') return;
+    event.preventDefault();
+    update({...layout, lead: event.key === 'Home' ? TEAM_LEAD_DEFAULT : clampTeamLead(layout.lead + step!)});
+  };
+  /** The divider above member at: it splits that member and the one before it. */
+  const dragRow = (event: PointerEvent<HTMLDivElement>, at: number) => {
+    if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
+    const above = event.currentTarget.previousElementSibling?.getBoundingClientRect(), below = event.currentTarget.nextElementSibling?.getBoundingClientRect();
+    if (above && below && below.bottom > above.top) update({...layout, rows: moveTeamRow(layout.rows, at - 1, (event.clientY - above.top) / (below.bottom - above.top))});
+  };
+  const keyRow = (event: KeyboardEvent<HTMLDivElement>, at: number) => {
+    const step = {ArrowUp: -.05, ArrowDown: .05}[event.key as string];
+    if (step === undefined && event.key !== 'Home') return;
+    event.preventDefault();
+    const share = layout.rows[at - 1] / (layout.rows[at - 1] + layout.rows[at]);
+    update({...layout, rows: moveTeamRow(layout.rows, at - 1, event.key === 'Home' ? .5 : share + step!)});
+  };
+  const capture = (event: PointerEvent<HTMLDivElement>) => { if (event.button === 0) event.currentTarget.setPointerCapture(event.pointerId); };
+  const release = (event: PointerEvent<HTMLDivElement>) => { if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); };
   const focused = maximized && team.members.find(member => member.terminalId === maximized);
   return <div className="team-workspace">
-    <div className={'team-panes' + (focused ? ' single' : '') + (others.length ? '' : ' solo')}>
+    <div ref={panesRef} className={'team-panes' + (focused ? ' single' : '') + (others.length ? '' : ' solo')} style={{'--team-lead': layout.lead + 'fr', '--team-rest': (1 - layout.lead) + 'fr'} as CSSProperties}>
       {focused ? pane(focused, 'team-pane-slot team-lead-slot') : <>
         {pane(lead, 'team-pane-slot team-lead-slot')}
-        {others.length > 0 && <div className="team-others">{others.map(member => pane(member, 'team-pane-slot'))}</div>}
+        {others.length > 0 && <>
+          <div role="separator" className="team-divider team-divider-lead" aria-label={narrow ? '팀장 칸 높이' : '팀장 칸 너비'} aria-orientation={narrow ? 'horizontal' : 'vertical'} aria-valuemin={25} aria-valuemax={80} aria-valuenow={Math.round(layout.lead * 100)} tabIndex={0} title="끌어서 크기 조절 · 두 번 클릭하면 처음 크기"
+            onDoubleClick={() => update({...layout, lead: TEAM_LEAD_DEFAULT})} onKeyDown={keyLead} onPointerDown={capture} onPointerMove={dragLead} onPointerUp={release}/>
+          <div className="team-others">{others.map((member, index) => <Fragment key={member.id}>
+            {index > 0 && <div role="separator" className="team-divider team-divider-row" aria-label={others[index - 1].name + '와 ' + member.name + ' 칸 높이'} aria-orientation="horizontal" aria-valuemin={15} aria-valuemax={85} aria-valuenow={Math.round(layout.rows[index - 1] / (layout.rows[index - 1] + layout.rows[index]) * 100)} tabIndex={0} title="끌어서 크기 조절 · 두 번 클릭하면 반반"
+              onDoubleClick={() => update({...layout, rows: moveTeamRow(layout.rows, index - 1, .5)})} onKeyDown={event => keyRow(event, index)} onPointerDown={capture} onPointerMove={event => dragRow(event, index)} onPointerUp={release}/>}
+            {pane(member, 'team-pane-slot', {'--team-row': layout.rows[index]} as CSSProperties)}
+          </Fragment>)}</div>
+        </>}
       </>}
     </div>
     <TeamChat state={state} team={team} request={request} onSelect={onSelect} onError={onError}/>
     <TeamBar team={team} state={state} onSaveTemplate={onSaveTemplate} onRemove={onRemove}/>
   </div>;
+}
+
+const LAYOUT_KEY = 'mongle.team.layout.';
+function savedLayout(teamId: string): unknown {
+  try { return JSON.parse(localStorage.getItem(LAYOUT_KEY + teamId) ?? 'null'); } catch { return undefined; }
+}
+/** The team screen stacks the lead above the others in a narrow window (the CSS breakpoint below). */
+function useNarrow() {
+  const query = '(max-width: 1180px)';
+  const [narrow, setNarrow] = useState(() => typeof matchMedia === 'function' && matchMedia(query).matches);
+  useEffect(() => {
+    if (typeof matchMedia !== 'function') return;
+    const list = matchMedia(query), change = () => setNarrow(list.matches);
+    change(); list.addEventListener('change', change);
+    return () => list.removeEventListener('change', change);
+  }, []);
+  return narrow;
 }
 
 /** What was sent to whom and what became of it, and the box to send the next message (to the lead by default). */
@@ -85,9 +144,9 @@ export function TeamChat({state, team, request, onSelect, onError}: {state: Host
   }
   const nameOf = (id: string) => id === 'user' ? '나' : team.members.find(member => member.id === id)?.name ?? '나간 구성원';
   return <section className="team-chat" aria-label="팀 대화">
-    <header className="team-chat-header"><MessagesSquare size={14} aria-hidden="true"/><strong>팀 대화</strong><span className="hint">보낸 메시지와 전달 상태</span></header>
+    <header className="team-chat-header"><MessagesSquare size={14} aria-hidden="true"/><strong>팀 대화</strong><span className="hint">사용자와 구성원이 주고받은 메시지와 전달 상태</span></header>
     <ol className="team-chat-log" ref={log} aria-live="polite">
-      {!messages.length && <li className="team-chat-empty hint">아직 보낸 메시지가 없습니다. 팀장에게 할 일을 알려 주세요. 구성원에게 직접 보낼 수도 있습니다.</li>}
+      {!messages.length && <li className="team-chat-empty hint">아직 메시지가 없습니다. 팀장에게 할 일을 알려 주세요. 팀장이 구성원에게 일을 맡기고 구성원이 보고하는 메시지도 여기에 남습니다.</li>}
       {messages.map(item => {
         const member = team.members.find(candidate => candidate.id === item.to);
         const terminal = member ? memberTerminal(state, member) : undefined;
@@ -117,9 +176,10 @@ export function TeamChat({state, team, request, onSelect, onError}: {state: Host
 /** One line at the bottom: the team, its size, who reports to whom, and saving it as a template. */
 export function TeamBar({team, state, onSaveTemplate, onRemove}: {team: Team; state: HostState; onSaveTemplate(): void; onRemove(): void}) {
   const worktrees = team.members.filter(member => member.folder === 'worktree').length;
-  const group = state.groups.find(item => item.id === team.groupId);
+  const group = state.groups.find(item => item.id === team.groupId), scope = team.scope;
   return <footer className="team-bar">
     <span className="team-bar-name"><Users size={14} aria-hidden="true"/><strong>{team.name}</strong><span className="hint">구성원 {team.members.length}명{worktrees ? ' · 워크트리 ' + worktrees + '개' : ''}{group ? ' · ' + group.name : ''}</span></span>
+    {scope && (scope.folders.length > 1 || scope.branch) && <span className="team-scope-summary" aria-label="작업 범위" title={'작업 범위: ' + scope.folders.join(', ') + (scope.branch ? '\n브랜치: ' + scope.branch : '')}><FolderTree size={13} aria-hidden="true"/>{scope.folders.map(folder => folder.split(/[\\/]/).filter(Boolean).pop()).join(' · ')}{scope.branch && <span className="team-chip"><GitBranch size={11} aria-hidden="true"/>{scope.branch}</span>}</span>}
     <span className="team-flow" aria-label="일 흐름" title={'일 흐름: ' + teamFlow(team.members).map(item => item.from + ' → ' + item.to).join(', ')}><GitFork size={13} aria-hidden="true"/>{teamFlow(team.members).map(item => <span key={item.from} className="team-chip">{item.from} → {item.to}</span>)}</span>
     <button type="button" className="button subtle" onClick={onSaveTemplate}><BookmarkPlus size={14}/>템플릿으로 저장</button>
     <details className="command-menu"><summary className="icon-button" aria-label={team.name + ' 팀 메뉴'}>···</summary><div>

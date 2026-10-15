@@ -12,7 +12,7 @@ const flags = ['--no-pager', '-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmon
 export const samePath = (a: string, b: string) => path.relative(a, b) === '';
 const validPath = (value: string) => localPath(value) && !/[\x00-\x1f]/.test(value) && !value.split(/[\\/]/).some(part => /^(con|prn|aux|nul|com[0-9]|lpt[0-9])(?:\.|$)/i.test(part) || /[. ]$/.test(part));
 
-async function git(cwd: string, args: string[], mutation = false): Promise<string> {
+export async function git(cwd: string, args: string[], mutation = false): Promise<string> {
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.toUpperCase().startsWith('GIT_')));
   Object.assign(env, {GIT_TERMINAL_PROMPT:'0',GIT_NO_LAZY_FETCH:'1',GIT_LITERAL_PATHSPECS:'1'});
   try {
