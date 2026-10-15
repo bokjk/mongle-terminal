@@ -961,7 +961,7 @@ export class HostCore {
       if(history)await runtime.engine.restoreHistory(history);
       const environment=safeShellEnvironment();
       if(agentToken)environment.MONGLE_AGENT_TOKEN=agentToken;
-      const integration=shellIntegration(profile,launch.args,environment);
+      const integration=shellIntegration(profile,launch.args,environment,{codexWrapper:this.options.codexIntegration?.status==='installed'});
       runtime.pty=pty.spawn(launch.executable,integration.args,{name:'xterm-256color',cols:info.cols,rows:info.rows,cwd:launch.cwd,env:integration.env,useConpty:true,useConptyDll:true});
       runtime.stopPty=installPtyLifecycle(runtime.pty);
     } catch {
@@ -1056,7 +1056,7 @@ export class HostCore {
   /** Types the single pending resume line once, right after the new shell's first authenticated prompt. */
   private dispatchResume(runtime:Runtime):boolean{
     const pending=runtime.pendingResume;if(!pending)return false;
-    this.cancelResume(runtime);
+    this.cancelResume(runtime);runtime.promptIdle=false;
     if(runtime.info.status!=='running'||!runtime.pty)return true;
     try{runtime.pty.write(pending.command);}catch{/* the shell exited; nothing is retried */}
     return true;
@@ -1081,6 +1081,21 @@ export class HostCore {
     if(session===null){this.recordAgentSession(runtime.info,null);runtime.inbox?.agentStopped();return true;}
     const valid=validAgentSession(session);if(!valid)return false;
     this.recordAgentSession(runtime.info,valid);runtime.inbox?.agentStarted();return true;
+  }
+  /**
+   * Claude's SessionStart from the managed hook through the local pipe. Claude Code's fullscreen UI drops
+   * terminal sequences written before it draws, so this start may never reach the terminal. The pipe is not
+   * ordered with terminal output, so a report counts only while the shell has not shown its prompt since the
+   * last input: a late one can never let a message be pasted into the shell. It records the conversation and
+   * marks the agent ready; Claude's status still comes only from the terminal, in order.
+   */
+  reportClaudeStart(token:string,session:AgentSessionIdentity):boolean{
+    const runtime=this.agentRuntime(token),valid=validAgentSession(session);
+    if(!runtime||!valid||valid.provider!=='claude'||!runtime.agentShell||runtime.promptIdle)return false;
+    this.recordAgentSession(runtime.info,valid);
+    if(!runtime.info.agentProvider){runtime.info.agentProvider='claude';runtime.notificationChanged=true;this.scheduleFrame(runtime);}
+    runtime.inbox?.agentStarted();
+    return true;
   }
   /**
    * Lifecycle end report (e.g. Codex SessionEnd). Clears the record only when it is

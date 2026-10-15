@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { spawn } from 'node:child_process';
+import net from 'node:net';
+import { randomBytes } from 'node:crypto';
 import { mkdtemp, readFile, writeFile, readdir, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
@@ -52,6 +54,43 @@ test('disabled/malformed/locked settings and unsupported versions are left untou
   assert.equal((await installClaudeIntegration({configDir,version:'2.1.10'})).status,'unavailable');
   assert.equal(supportsClaudeHooks(undefined),false);
   assert.throws(()=>mergeClaudeHooks({allowManagedHooksOnly:true},'node','script'));
+});
+
+test('SessionStart also reaches the host pipe; other events, other pipes and a silent host never hold Claude',async t=>{
+  const configDir=await directory(t);await installClaudeIntegration({configDir,version:'2.1.292'});
+  const script=path.join(configDir,'mongle-terminal-hook.cjs'),token='a'.repeat(64),id='01a1168a-fd50-7563-b070-9ee8d4a2dc42';
+  const pipeName=()=>'\\\\.\\pipe\\mongle-agent-'+randomBytes(16).toString('hex');
+  // A server that never answers keeps its side of each connection open; teardown cuts them so close() returns.
+  const listen=async(handler:(socket:net.Socket)=>void)=>{const name=pipeName(),sockets=new Set<net.Socket>(),server=net.createServer(socket=>{sockets.add(socket);handler(socket);});await new Promise<void>(resolve=>server.listen(name,()=>resolve()));t.after(()=>new Promise<void>(resolve=>{for(const socket of sockets)socket.destroy();server.close(()=>resolve());}));return name;};
+  const lines:string[]=[];
+  // Like the host: one line, then the host ends the connection.
+  const host=await listen(socket=>{let data='';socket.setEncoding('utf8');socket.on('error',()=>{});socket.on('data',chunk=>{data+=chunk;if(data.includes('\n')){lines.push(data);socket.end();}});});
+  const silent=await listen(socket=>{socket.on('error',()=>{});});
+  const run=(value:unknown,pipe?:string)=>new Promise<{out:string;err:string;code:number|null;ms:number}>((resolve,reject)=>{
+    const env:NodeJS.ProcessEnv={...process.env,MONGLE_AGENT_TOKEN:token};delete env.MONGLE_AGENT_PIPE;if(pipe)env.MONGLE_AGENT_PIPE=pipe;
+    const started=Date.now(),child=spawn(process.execPath,[script],{env,windowsHide:true});
+    let out='',err='';child.stdout.on('data',v=>out+=v);child.stderr.on('data',v=>err+=v);
+    child.on('error',reject);child.on('exit',code=>resolve({out,err,code,ms:Date.now()-started}));
+    child.stdin.on('error',()=>{});child.stdin.end(JSON.stringify(value));
+  });
+  const start={hook_event_name:'SessionStart',session_id:id,source:'startup',cwd:'D:\\work',transcript_path:'PRIVATE_PATH'};
+  const result=await run(start,host);
+  assert.equal(result.code,0);assert.equal(result.err,'');
+  assert.deepEqual(Object.keys(JSON.parse(result.out)),['terminalSequence'],'the terminal report is unchanged');
+  for(let i=0;i<50&&!lines.length;i++)await new Promise(r=>setTimeout(r,20));
+  assert.deepEqual(lines.map(line=>JSON.parse(line)),[{v:2,provider:'claude',token,event:'SessionStart',sessionId:id,cwd:'D:\\work',source:'startup'}]);
+  assert.ok(!lines[0].includes('PRIVATE_'));
+  await run({...start,hook_event_name:'UserPromptSubmit',prompt:'PRIVATE_PROMPT'},host);
+  await run({...start,agent_id:'child'},host);
+  await run(start,'\\\\.\\pipe\\other-program');
+  await new Promise(r=>setTimeout(r,150));
+  assert.equal(lines.length,1,'only the main conversation\'s start, only to a Mongle pipe');
+  for(const pipe of [silent,'\\\\.\\pipe\\mongle-agent-'+'0'.repeat(32)]){
+    const late=await run(start,pipe);
+    assert.equal(late.code,0);assert.equal(late.err,'');
+    assert.deepEqual(Object.keys(JSON.parse(late.out)),['terminalSequence']);
+    assert.ok(late.ms<1800,'a silent or missing host never holds Claude past its 2-second hook timeout ('+late.ms+'ms)');
+  }
 });
 
 test('installed helper is inert outside Mongle, filters child events and keeps private input out of output',async t=>{

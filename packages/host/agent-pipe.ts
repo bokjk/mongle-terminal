@@ -9,6 +9,8 @@ export interface AgentPipeTarget {
   end(token: string, session: AgentSessionIdentity): boolean;
   /** HostCore.reportAgentStatus: an event of the shell's live Codex conversation. */
   status?(token: string, event: CodexAgentEvent): boolean;
+  /** HostCore.reportClaudeStart: the managed Claude hook's SessionStart. */
+  claudeStart?(token: string, session: AgentSessionIdentity): boolean;
 }
 
 const MAX_MESSAGE = 4096, MAX_TRACKED = 256;
@@ -20,6 +22,9 @@ const MAX_MESSAGE = 4096, MAX_TRACKED = 256;
  * forwarded only when they name the same wrapped run and conversation this pipe
  * last accepted for that shell, so a late end or report of an older run cannot
  * erase a newer record or change its status.
+ *
+ * The managed Claude hook sends only its SessionStart here, as message version 2 (so hosts that know only
+ * version 1 never take it for a Codex start). Claude's other events arrive in order through the terminal.
  */
 export async function startAgentPipe(target: AgentPipeTarget, options: {name?: string} = {}) {
   const name = options.name ?? `\\\\.\\pipe\\mongle-agent-${randomBytes(16).toString('hex')}`;
@@ -31,6 +36,12 @@ export async function startAgentPipe(target: AgentPipeTarget, options: {name?: s
     if (closed) return;
     let value: any;
     try { value = JSON.parse(line); } catch { return; }
+    if (value && value.v === 2 && value.provider === 'claude') {
+      if (value.event !== 'SessionStart' || typeof value.token !== 'string' || !/^[a-f0-9]{64}$/.test(value.token)) return;
+      if (typeof value.sessionId !== 'string' || !SESSION_UUID.test(value.sessionId)) return;
+      target.claudeStart?.(value.token, {provider:'claude', sessionId:value.sessionId, ...(validCwd(value.cwd) ? {cwd:value.cwd} : {})});
+      return;
+    }
     if (!value || value.v !== 1 || typeof value.token !== 'string' || !/^[a-f0-9]{64}$/.test(value.token)) return;
     if (typeof value.run !== 'string' || !/^[a-f0-9]{32}$/.test(value.run)) return;
     if (typeof value.sessionId !== 'string' || !SESSION_UUID.test(value.sessionId)) return;
