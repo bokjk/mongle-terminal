@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -70,7 +70,7 @@ test('a team starts its members as PowerShell tabs, types each CLI with its role
   assert.equal(shared.source, undefined, 'only the result reaches the view');
   const sharedGit = shared.checks.find((item: any) => item.id === 'git');
   assert.equal(sharedGit.status, 'warning');
-  assert.match(sharedGit.message, /개발, 검토도 기본 폴더에서 함께 일합니다/);
+  assert.match(sharedGit.message, /개발, 검토도 함께 쓰는 폴더에서 일합니다/);
   const ready = await request('teams.check', { ...host, groupId, name: '팀', cwd: dataDir, members: mine.members });
   assert.equal(ready.ready, true);
   assert.deepEqual(ready.checks.map((item: any) => [item.id, item.status]), [['shell', 'ok'], ['claude', 'ok'], ['codex', 'ok'], ['folder', 'ok'], ['permissions', 'ok']]);
@@ -155,7 +155,7 @@ test('worktree members branch from the team folder\'s repository, linking it to 
   // A plain folder: the team still starts and the worktree member works in the team folder.
   const plainCheck = await request('teams.check', { ...host, groupId, name: '일반', cwd: plain, members });
   assert.equal(plainCheck.ready, true, JSON.stringify(plainCheck.checks));
-  assert.deepEqual([gitRow(plainCheck).status, /Git 저장소가 아니라서.*개발도 기본 폴더에서 함께 일합니다/.test(gitRow(plainCheck).message)], ['warning', true], gitRow(plainCheck).message);
+  assert.deepEqual([gitRow(plainCheck).status, /Git 저장소가 아니라서.*개발도 함께 쓰는 폴더에서 일합니다/.test(gitRow(plainCheck).message)], ['warning', true], gitRow(plainCheck).message);
   const plainTeam: Team = await request('teams.start', { ...host, groupId, name: '일반', cwd: plain, members });
   assert.deepEqual(plainTeam.members.map(item => [item.folder, item.worktreeId, item.error]), [['base', undefined, undefined], ['base', undefined, undefined]]);
   assert.equal(path.resolve(core.getState().terminals.find(item => item.id === plainTeam.members[1].terminalId)!.cwd), path.resolve(plain));
@@ -187,4 +187,91 @@ test('worktree members branch from the team folder\'s repository, linking it to 
   // Next time the linked project is used directly.
   const again = await request('teams.check', { ...host, groupId, name: '팀 2', cwd: repo, members });
   assert.doesNotMatch(gitRow(again).message, /연결합니다/);
+});
+
+test('a team across folders aligns one branch in every repository and gives each CLI the other folders', { timeout: 120000 }, async t => {
+  const root = await mkdtemp(path.join(tmpdir(), 'mongle-team-scope-'));
+  const dataDir = path.join(root, 'data'), front = path.join(root, 'front'), back = path.join(root, 'back'), notes = path.join(root, 'notes');
+  const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', ...args], { cwd, windowsHide: true, encoding: 'utf8' });
+  for (const [repo, file] of [[front, 'a.txt'], [back, 'b.txt']]) { await mkdir(repo); git(repo, 'init', '-q', '-b', 'main'); await writeFile(path.join(repo, file), 'one'); git(repo, 'add', '.'); git(repo, 'commit', '-qm', 'init'); }
+  // The backend already has the branch, with b.txt changed on it.
+  git(back, 'switch', '-q', '-c', 'feature/login'); await writeFile(path.join(back, 'b.txt'), 'two'); git(back, 'commit', '-qam', 'login'); git(back, 'switch', '-q', 'main');
+  await mkdir(notes); await writeFile(path.join(front, 'draft.txt'), 'untracked');
+  const program = path.join(root, 'shell.cjs');
+  await writeFile(program, "process.stdin.resume();setTimeout(()=>process.stdout.write('\\x1b]777;mongle-shell;'+process.env.MONGLE_AGENT_TOKEN+'\\x07'),300);setInterval(()=>{},1000);");
+  const writes = new Map<string, string[]>();
+  const core = new HostCore({ dataDir, claudeIntegration: { status: 'ready' }, teamEnvironment: { ...environment, gitChanges: async () => 0 } });
+  const internal = core as any, original = internal.startTerminal.bind(core);
+  internal.startTerminal = async (info: TerminalInfo, profile: ShellProfile, launch: { cwd: string }, history?: PresentationSnapshot, command?: string) => {
+    await original(info, { ...profile, kind: 'powershell' }, { executable: process.execPath, args: [program, '--'], cwd: launch.cwd }, history, command);
+    const runtime = internal.runtimes.get(info.id), write = runtime.pty.write.bind(runtime.pty);
+    writes.set(info.id, []);
+    runtime.pty.write = (data: string) => { writes.get(info.id)!.push(data); return write(data); };
+  };
+  t.after(async () => { await core.close(); assert.equal(path.dirname(path.resolve(root)), path.resolve(tmpdir())); await rm(root, { recursive: true, force: true }); });
+  await core.init();
+  const ctx: ConnectionContext = { id: randomUUID(), deviceId: randomUUID(), deviceName: 'Desktop view', owner: true };
+  core.connect(ctx, () => {});
+  const request = (method: string, params: unknown = {}) => core.handle(method, params, ctx);
+  const host = { hostId: core.getState().hostId, bootId: core.getState().bootId };
+  const groupId = core.getState().groups[0].id;
+  const [realFront, realBack, realNotes] = await Promise.all([front, back, notes].map(folder => realpath(folder)));
+  assert.ok(core.getState().capabilities?.includes('agent.teams.scope'));
+
+  // Offered folders: the group's terminals lead to their repositories; added folders are reported as they are.
+  const terminal = await request('terminals.create', { groupId, profileId: core.getState().profiles[0].id, cwd: path.join(back) });
+  const offered = (await request('teams.scope', { ...host, groupId })).folders;
+  assert.ok(offered.some((item: any) => item.path === realBack && item.git && item.branch === 'main'), JSON.stringify(offered));
+  await request('terminals.close', { id: terminal.id, hostId: host.hostId, bootId: host.bootId, generation: terminal.generation }).catch(() => {});
+  const added = (await request('teams.scope', { ...host, groupId, paths: [front, notes] })).folders;
+  assert.deepEqual(added.map((item: any) => [item.path, item.name, item.git, item.branch, item.changes]), [[realFront, 'front', true, 'main', 1], [realNotes, 'notes', false, undefined, undefined]]);
+  assert.ok(added[0].repository, 'working trees of one repository can be told apart');
+
+  const members = [member({}), member({ name: '개발', role: 'developer', provider: 'codex', model: 'gpt-6.1-sol', reportTo: '설계', folder: 'worktree', instructions: ROLE_DEFAULTS.developer.instructions }), member({ name: '검토', role: 'reviewer', provider: 'codex', model: 'gpt-6-astra', reportTo: '설계', readOnly: true, instructions: ROLE_DEFAULTS.reviewer.instructions })];
+  const scope = { start: front, folders: [front, back, notes], branch: 'feature/login' };
+  const payload = (extra = {}) => ({ ...host, groupId, name: '로그인', cwd: front, members, scope: { ...scope, ...extra } });
+  const row = (check: any, label: string) => check.checks.find((item: any) => item.label === label);
+
+  // A local change that the branch also changes stops the check; Git would refuse to switch.
+  await writeFile(path.join(back, 'b.txt'), 'local');
+  const refused = await request('teams.check', payload());
+  assert.equal(refused.ready, false);
+  assert.match(row(refused, 'back').message, /main → feature\/login \(있는 브랜치로 바꿈\)\. 저장하지 않은 변경이 이 브랜치와 겹치는 파일 1개\(b\.txt\)/);
+  assert.equal(row(refused, 'back').status, 'error');
+  git(back, 'checkout', '--', 'b.txt');
+  // A merge in progress also stops it.
+  await writeFile(path.join(back, '.git', 'MERGE_HEAD'), git(back, 'rev-parse', 'HEAD'));
+  assert.match(row(await request('teams.check', payload()), 'back').message, /병합이나 리베이스 같은 Git 작업이 진행 중/);
+  await rm(path.join(back, '.git', 'MERGE_HEAD'));
+  for (const bad of ['bad name', '-x', 'a..b']) {
+    const invalid = await request('teams.check', payload({ branch: bad }));
+    assert.equal(invalid.ready, false, bad);
+    assert.equal(row(invalid, '브랜치').status, 'error', bad);
+  }
+
+  const check = await request('teams.check', payload());
+  assert.equal(check.ready, true, JSON.stringify(check.checks));
+  assert.deepEqual(['시작 폴더', 'front', 'back', 'notes', 'Git'].map(label => [label, row(check, label)?.status]), [['시작 폴더', 'ok'], ['front', 'warning'], ['back', 'ok'], ['notes', 'ok'], ['Git', 'warning']]);
+  assert.match(row(check, 'front').message, /^main → feature\/login \(새로 만듦\) · 저장하지 않은 변경 1개도 함께 옮겨집니다\.$/);
+  assert.match(row(check, 'notes').message, /Git 저장소가 아닌 폴더라 브랜치는 바꾸지 않습니다/);
+  assert.match(row(check, 'Git').message, /여러 폴더를 함께 쓰는 팀에서는 아직 새 워크트리를 만들지 않습니다\. 새 워크트리로 고른 개발도 함께 쓰는 폴더에서 일합니다/);
+  assert.equal(git(front, 'branch', '--show-current').trim(), 'main', 'the check moves nothing');
+
+  const team: Team = await request('teams.start', payload());
+  assert.deepEqual(team.scope, { start: realFront, folders: [realFront, realBack, realNotes], branch: 'feature/login' });
+  assert.deepEqual([front, back].map(repo => git(repo, 'branch', '--show-current').trim()), ['feature/login', 'feature/login']);
+  assert.equal(await readFile(path.join(front, 'draft.txt'), 'utf8'), 'untracked', 'uncommitted work comes along');
+  assert.deepEqual(team.members.map(item => [item.name, item.folder, item.worktreeId, item.error]), [['설계', 'base', undefined, undefined], ['개발', 'base', undefined, undefined], ['검토', 'base', undefined, undefined]]);
+  const [lead, developer, reviewer] = team.members;
+  const typed = (id: string | undefined) => (writes.get(id!) ?? []).filter(data => !data.startsWith('\x1b'));
+  const deadline = Date.now() + 8000;
+  while (team.members.some(item => typed(item.terminalId).length === 0)) { assert.ok(Date.now() < deadline, 'each CLI line is typed'); await new Promise(resolve => setTimeout(resolve, 20)); }
+  const others = (folders: string[]) => folders.map(folder => "'" + folder + "'");
+  assert.ok(typed(lead.terminalId)[0].includes("--add-dir " + others([realBack, realNotes]).join(' ') + ' --append-system-prompt-file'), typed(lead.terminalId)[0]);
+  assert.ok(typed(developer.terminalId)[0].startsWith("codex -m 'gpt-6.1-sol' --add-dir " + others([realBack]) + ' --add-dir ' + others([realNotes]) + ' -c '), typed(developer.terminalId)[0]);
+  assert.doesNotMatch(typed(reviewer.terminalId)[0], /--add-dir/, 'a read-only Codex gets no writable folder');
+  const terminals = core.getState().terminals;
+  assert.ok(team.members.every(item => path.resolve(terminals.find(terminal => terminal.id === item.terminalId)!.cwd) === path.resolve(front)), 'every member starts in the start folder');
+  const prompt = await readFile(path.join(dataDir, 'agent-teams', team.id, lead.id + '.md'), 'utf8');
+  assert.ok(prompt.includes('- back: ' + realBack) && prompt.includes('"feature/login" 브랜치에서 일합니다'), prompt);
 });

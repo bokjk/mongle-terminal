@@ -5,6 +5,8 @@ export const TEAM_INSTRUCTIONS_MAX = 4000;
 export const TEAM_EXTRA_MAX = 2000;
 /** Names show up in prompts and window titles, never in a command line. */
 export const TEAM_NAME = /^[^\x00-\x1f\x7f]{1,30}$/;
+/** A branch name a team may align: no whitespace, Git's forbidden characters, or a leading dash (it would read as an option). Git checks the rest. */
+export const TEAM_BRANCH = /^(?!-)[^\s~^:?*[\\\x00-\x1f\x7f]{1,200}$/;
 /** A model alias or id as the CLI accepts it; empty means the CLI's own default. */
 export const TEAM_MODEL = /^(?:[A-Za-z0-9][A-Za-z0-9._:/-]{0,79})?$/;
 
@@ -81,14 +83,16 @@ export function teamProblems(name: string, members: readonly TeamMemberSpec[]): 
 }
 
 const providerName = (provider: TeamMemberSpec['provider']) => provider === 'claude' ? 'Claude Code' : 'Codex';
+const folderName = (folder: string) => folder.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || folder;
+const sameFolder = (a: string, b: string) => a.replace(/[\\/]+$/, '').toLowerCase() === b.replace(/[\\/]+$/, '').toLowerCase();
 const reportName = (target: string) => target === 'user' ? '사용자' : target;
 /**
  * The role prompt a member's CLI starts with: who is on the team, who leads, whom to report to and how
  * teammates' messages arrive, then the role's own instructions and this team's extra note. It ends with
  * a blank line because Codex places other developer text right after it.
  */
-export function teamRolePrompt(team: Pick<Team, 'name'>, members: readonly TeamMemberSpec[], index: number): string {
-  const self = members[index];
+export function teamRolePrompt(team: Pick<Team, 'name' | 'scope'>, members: readonly TeamMemberSpec[], index: number): string {
+  const self = members[index], scope = team.scope;
   const roster = members.map((item, at) => '- ' + item.name + ': ' + ROLE_DEFAULTS[item.role].label + (at === 0 ? ', 팀장' : '') + ', ' + providerName(item.provider) + (item.model ? ' ' + item.model : '') + (item.readOnly ? ', 읽기 전용' : '') + '. 끝나면 ' + reportName(item.reportTo) + '에게 보고');
   const lines = [
     '[몽글 팀 안내]',
@@ -96,6 +100,12 @@ export function teamRolePrompt(team: Pick<Team, 'name'>, members: readonly TeamM
     '당신: ' + self.name + (index === 0 ? ' (팀장)' : '') + '. 끝나면 ' + reportName(self.reportTo) + '에게 보고합니다.',
     '구성원:',
     ...roster,
+    ...(scope && (scope.folders.length > 1 || scope.branch) ? [
+      '작업 범위(함께 보고 고칠 폴더):',
+      ...scope.folders.map(folder => '- ' + folderName(folder) + ': ' + folder + (sameFolder(folder, scope.start) ? ' (시작 폴더)' : '')),
+      ...(scope.folders.some(folder => sameFolder(folder, scope.start)) ? [] : ['시작 폴더: ' + scope.start]),
+      ...(scope.branch ? ['브랜치: 작업 범위의 Git 저장소는 모두 "' + scope.branch + '" 브랜치에서 일합니다. 다른 브랜치로 바꾸지 마세요.'] : []),
+    ] : []),
     '다른 구성원이나 사용자가 보낸 메시지는 "[몽글 팀 메시지]"로 시작하는 글로 이 입력창에 들어옵니다.',
     '아직 구성원에게 직접 보내는 도구는 없습니다. 맡은 일을 마치면 답변 첫 줄에 "보고 대상: ' + reportName(self.reportTo) + '"을 적고 결과를 정리하세요. 사용자가 몽글 화면에서 전달합니다.',
     ...(self.readOnly ? ['이 CLI는 파일을 고칠 수 없는 읽기 전용으로 실행되었습니다.'] : []),
@@ -124,17 +134,21 @@ export function rolePromptFile(provider: TeamMemberSpec['provider'], prompt: str
 }
 
 const UNSAFE_FILE = /[\x00-\x1f\x7f"\x60$]/;
+/** A local absolute path that can be passed to a CLI as a PowerShell single-quoted literal. */
+export function safeCliPath(value: string) { return /^[a-z]:\\/i.test(value) && !UNSAFE_FILE.test(value); }
 /** A PowerShell single-quoted literal. */
 function quoted(value: string) { return "'" + value.replaceAll("'", "''") + "'"; }
 /**
  * The arguments that make a CLI this member: model, role prompt from its file and, for review or research,
  * the CLI's own read-only switch (Claude: only reading tools; Codex: read-only sandbox and no escalation, so
- * an automatic approval review cannot grant a write). Also appended when the conversation is resumed.
+ * an automatic approval review cannot grant a write). The team's other folders are added to the CLI's working
+ * directories (`--add-dir`); a read-only Codex already reads everywhere and gets no writable folder.
+ * Also appended when the conversation is resumed.
  */
-export function teamMemberFlags(spec: Pick<TeamMemberSpec, 'provider' | 'model' | 'readOnly'>, promptFile: string): string | undefined {
-  if (!/^[a-z]:\\/i.test(promptFile) || UNSAFE_FILE.test(promptFile) || !TEAM_MODEL.test(spec.model)) return;
-  if (spec.provider === 'claude') return [spec.model ? '--model ' + quoted(spec.model) : '', '--append-system-prompt-file ' + quoted(promptFile), spec.readOnly ? '--tools ' + quoted('Read,Grep,Glob') : ''].filter(Boolean).join(' ');
-  return [spec.model ? '-m ' + quoted(spec.model) : '', "-c ('developer_instructions=' + [IO.File]::ReadAllText(" + quoted(promptFile) + '))', spec.readOnly ? '-s read-only -a never' : ''].filter(Boolean).join(' ');
+export function teamMemberFlags(spec: Pick<TeamMemberSpec, 'provider' | 'model' | 'readOnly'>, promptFile: string, folders: readonly string[] = []): string | undefined {
+  if (!safeCliPath(promptFile) || !TEAM_MODEL.test(spec.model) || !folders.every(safeCliPath)) return;
+  if (spec.provider === 'claude') return [spec.model ? '--model ' + quoted(spec.model) : '', folders.length ? '--add-dir ' + folders.map(quoted).join(' ') : '', '--append-system-prompt-file ' + quoted(promptFile), spec.readOnly ? '--tools ' + quoted('Read,Grep,Glob') : ''].filter(Boolean).join(' ');
+  return [spec.model ? '-m ' + quoted(spec.model) : '', ...(spec.readOnly ? [] : folders.map(folder => '--add-dir ' + quoted(folder))), "-c ('developer_instructions=' + [IO.File]::ReadAllText(" + quoted(promptFile) + '))', spec.readOnly ? '-s read-only -a never' : ''].filter(Boolean).join(' ');
 }
 
 /**
@@ -142,10 +156,10 @@ export function teamMemberFlags(spec: Pick<TeamMemberSpec, 'provider' | 'model' 
  * host-resolved absolute path; Codex runs through the session's codex function so the managed wrapper
  * adds --no-daemon and reports the conversation to the host.
  */
-export function teamLaunchCommand(spec: Pick<TeamMemberSpec, 'provider' | 'model' | 'readOnly'>, promptFile: string, claudePath?: string): string | undefined {
-  const flags = teamMemberFlags(spec, promptFile);
+export function teamLaunchCommand(spec: Pick<TeamMemberSpec, 'provider' | 'model' | 'readOnly'>, promptFile: string, claudePath?: string, folders: readonly string[] = []): string | undefined {
+  const flags = teamMemberFlags(spec, promptFile, folders);
   if (!flags) return;
   if (spec.provider === 'codex') return 'codex ' + flags + '\r';
-  if (!claudePath || !/^[a-z]:\\/i.test(claudePath) || UNSAFE_FILE.test(claudePath)) return;
+  if (!claudePath || !safeCliPath(claudePath)) return;
   return '& "' + claudePath + '" ' + flags + '\r';
 }

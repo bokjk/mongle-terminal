@@ -2,9 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import type { HostState, Team, TeamMessage, TerminalInfo } from '../../packages/protocol/index.js';
+import type { HostState, Team, TeamMessage, TeamScopeFolder, TerminalInfo } from '../../packages/protocol/index.js';
 import { BUILT_IN_TEMPLATES, ROLE_DEFAULTS } from '../../packages/host/teams.js';
-import { addMember, canCancelTeamMessage, draftsFrom, makeLead, modelSuggestions, removeMember, renameMember, specsFrom, teamFlow, teamMessageStatus, teamOfTerminal, teamSendBlocker, withRole } from '../../apps/web/src/team-model.js';
+import { addMember, addScopeFolder, branchMoves, canCancelTeamMessage, draftsFrom, makeLead, modelSuggestions, removeMember, renameMember, scopeDraft, scopeProblems, specsFrom, teamFlow, teamMessageStatus, teamOfTerminal, teamSendBlocker, toggleScopeFolder, withRole } from '../../apps/web/src/team-model.js';
+import { TeamScopePicker } from '../../apps/web/src/TeamScope.js';
 import { TeamBar, TeamChat, TeamSidebarList } from '../../apps/web/src/TeamWorkspace.js';
 
 const terminal = (id: string, extra: Partial<TerminalInfo> = {}): TerminalInfo => ({ id, groupId: 'g', title: id, profileId: 'pwsh', cwd: 'C:/w', generation: '1', status: 'running', cols: 80, rows: 24, ...extra });
@@ -96,4 +97,37 @@ test('the team screen shows the conversation, the work flow and the member list'
   assert.match(list, /Claude · opus/);
   assert.match(list, /Codex · gpt-6-astra/);
   assert.doesNotMatch(renderToStaticMarkup(createElement(TeamSidebarList, { state: state(terminals), activeTeamId: '', activeId: '', notices: new Map(), onOpen: () => {}, onSelectMember: () => {} })), /Claude · opus/, 'members show only for the open team');
+});
+test('a team scope starts in the group folder, takes one working tree per repository and shows the branch it aligns', () => {
+  const folders: TeamScopeFolder[] = [
+    { path: 'D:\\work', name: 'work', git: false },
+    { path: 'D:\\work\\front', name: 'front', git: true, branch: 'main', changes: 2, repository: 'D:\\work\\front\\.git' },
+    { path: 'D:\\work\\front.worktrees\\login', name: 'login', git: true, branch: 'login', changes: 0, repository: 'D:\\work\\front\\.git' },
+    { path: 'D:\\work\\back', name: 'back', git: true, branch: 'feature/login', changes: 0, repository: 'D:\\work\\back\\.git' },
+    { path: 'C:\\Users\\me', name: 'me', git: false },
+  ];
+  let scope = scopeDraft(folders);
+  assert.deepEqual([scope.start, scope.checked], ['D:\\work', ['D:\\work', 'D:\\work\\front', 'D:\\work\\back']], 'one working tree per repository; other plain folders wait to be checked');
+  scope = toggleScopeFolder(scope, 'D:\\work');
+  assert.equal(scope.start, 'D:\\work\\front', 'unchecking the start moves it to the first checked folder');
+  scope = { ...scope, align: true, branch: 'feature/login' };
+  assert.deepEqual(branchMoves(scope), [{ name: 'front', from: 'main', to: 'feature/login', same: false }, { name: 'back', from: 'feature/login', to: 'feature/login', same: true }]);
+  assert.deepEqual(scopeProblems(scope), []);
+  assert.match(scopeProblems({ ...scope, branch: ' ' })[0], /브랜치 이름을 써/);
+  assert.match(scopeProblems({ ...scope, branch: 'bad name' })[0], /공백/);
+  assert.match(scopeProblems(toggleScopeFolder(scope, 'D:\\work\\front.worktrees\\login')).join(), /front, login: 같은 저장소/);
+  assert.deepEqual(scopeProblems({ ...scope, align: false, branch: '' }), [], 'keeping each branch needs no name');
+  assert.match(scopeProblems({ ...scope, checked: [] })[0], /하나 이상/);
+  const added = addScopeFolder(scope, { path: 'D:\\work\\ai', name: 'ai', git: true, branch: 'main', changes: 0, repository: 'D:\\work\\ai\\.git' });
+  assert.ok(added.checked.includes('D:\\work\\ai'));
+  assert.equal(addScopeFolder(added, added.folders[5]).folders.length, 6, 'a folder is shown once');
+
+  const markup = renderToStaticMarkup(createElement(TeamScopePicker, { scope, loading: false, error: '', onChange: () => {}, onToggle: () => {}, onAdd: async () => {} }));
+  assert.match(markup, /폴더 2개 · front에서 시작/);
+  assert.match(markup, /변경 2/);
+  assert.match(markup, /Git 아님/);
+  assert.match(markup, /aria-checked="true"[^>]*>모두 같은 브랜치로 맞추기/);
+  assert.match(markup, /체크한 Git 저장소 2곳을 이 브랜치로 맞춥니다/);
+  assert.match(markup, /이미 feature\/login/);
+  assert.doesNotMatch(renderToStaticMarkup(createElement(TeamScopePicker, { scope: { ...scope, checked: ['D:\\work'], start: 'D:\\work' }, loading: false, error: '', onChange: () => {}, onToggle: () => {}, onAdd: async () => {} })), /맞추기/, 'no branch choice without a checked repository');
 });

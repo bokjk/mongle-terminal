@@ -55,6 +55,23 @@ test('launch and resume arguments carry the model, the prompt file and the CLI\'
   assert.equal(teamMemberFlags(spec({ model: 'a b' }), file), undefined);
 });
 
+test('a team across folders gives each CLI its other folders and names them and the branch in the role prompt', () => {
+  const folders = ['C:\\work\\back', "C:\\work\\o'ai"];
+  assert.equal(teamLaunchCommand(spec({ provider: 'claude', model: 'opus', readOnly: false }), 'C:\\d\\m.md', 'C:\\bin\\claude.exe', folders),
+    "& \"C:\\bin\\claude.exe\" --model 'opus' --add-dir 'C:\\work\\back' 'C:\\work\\o''ai' --append-system-prompt-file 'C:\\d\\m.md'\r");
+  assert.equal(teamMemberFlags(spec({ model: '', readOnly: false }), 'C:\\d\\m.toml', folders), "--add-dir 'C:\\work\\back' --add-dir 'C:\\work\\o''ai' -c ('developer_instructions=' + [IO.File]::ReadAllText('C:\\d\\m.toml'))");
+  assert.equal(teamMemberFlags(spec(), 'C:\\d\\m.toml', folders), "-m 'gpt-6-astra' -c ('developer_instructions=' + [IO.File]::ReadAllText('C:\\d\\m.toml')) -s read-only -a never", 'a read-only Codex reads everywhere and gets no writable folder');
+  assert.equal(teamMemberFlags(spec(), 'C:\\d\\m.toml', ['C:\\w\\$(evil)']), undefined);
+  assert.equal(teamMemberFlags(spec(), 'C:\\d\\m.toml', ['relative']), undefined);
+  const members = BUILT_IN_TEMPLATES[0].members;
+  const prompt = teamRolePrompt({ name: '로그인', scope: { start: 'C:\\work\\front', folders: ['C:\\work\\front', 'C:\\work\\back'], branch: 'feature/login' } }, members, 1);
+  assert.match(prompt, /작업 범위\(함께 보고 고칠 폴더\):\n- front: C:\\work\\front \(시작 폴더\)\n- back: C:\\work\\back\n브랜치: .*"feature\/login" 브랜치에서 일합니다/);
+  const fromParent = teamRolePrompt({ name: '로그인', scope: { start: 'C:\\work', folders: ['C:\\work\\front', 'C:\\work\\back'] } }, members, 0);
+  assert.match(fromParent, /시작 폴더: C:\\work\n/);
+  assert.doesNotMatch(fromParent, /브랜치:/);
+  assert.doesNotMatch(teamRolePrompt({ name: '혼자', scope: { start: 'C:\\w', folders: ['C:\\w'] } }, members, 0), /작업 범위/, 'one folder needs no scope section');
+});
+
 test('teams and user templates live in their own store and survive a reopen', async t => {
   const dir = await mkdtemp(path.join(tmpdir(), 'mongle-team-store-'));
   t.after(() => rm(dir, { recursive: true, force: true }));

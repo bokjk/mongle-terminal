@@ -1,6 +1,6 @@
 // What the AI team screens decide, kept apart from React so it stays easy to test.
-import { ROLE_DEFAULTS, TEAM_MAX_MEMBERS, teamProblems } from '../../../packages/host/teams';
-import type { AgentRole, HostState, Team, TeamMemberSpec, TeamMessage, TeamTemplate, TerminalInfo } from '../../../packages/protocol/index';
+import { ROLE_DEFAULTS, TEAM_BRANCH, TEAM_MAX_MEMBERS, teamProblems } from '../../../packages/host/teams';
+import type { AgentRole, HostState, Team, TeamMemberSpec, TeamMessage, TeamScopeFolder, TeamTemplate, TerminalInfo } from '../../../packages/protocol/index';
 import { agentHoldDescription } from './AgentMessage';
 
 export { ROLE_DEFAULTS, TEAM_MAX_MEMBERS, teamProblems };
@@ -70,6 +70,60 @@ export function addMember(drafts: readonly MemberDraft[]): MemberDraft[] {
 export function makeLead(drafts: readonly MemberDraft[], index: number): MemberDraft[] {
   if (index <= 0) return [...drafts];
   return [drafts[index], ...drafts.filter((_, at) => at !== index)];
+}
+
+/**
+ * The folders a team works across while it is being set up. checked keeps the offered order; start is the
+ * checked folder the CLIs open in; align puts every checked Git folder on one branch when the team starts.
+ */
+export interface ScopeDraft { folders: TeamScopeFolder[]; checked: string[]; start: string; align: boolean; branch: string }
+const repositoryOf = (folder: TeamScopeFolder) => folder.repository ?? folder.path;
+/**
+ * A new team's scope: it starts in the group's own folder (offered first) and takes every repository found,
+ * one working tree each, because one branch cannot be checked out in two working trees.
+ */
+export function scopeDraft(folders: readonly TeamScopeFolder[]): ScopeDraft {
+  const start = folders[0]?.path ?? '', taken = new Set<string>(), checked: string[] = [];
+  for (const folder of folders) {
+    if (folder.path !== start && (!folder.git || taken.has(repositoryOf(folder)))) continue;
+    checked.push(folder.path);
+    if (folder.git) taken.add(repositoryOf(folder));
+  }
+  return { folders: [...folders], checked, start, align: false, branch: '' };
+}
+/** Checking or unchecking a folder; the start moves to the first checked folder when its own is unchecked. */
+export function toggleScopeFolder(scope: ScopeDraft, path: string): ScopeDraft {
+  const on = !scope.checked.includes(path);
+  const checked = scope.folders.map(folder => folder.path).filter(item => item === path ? on : scope.checked.includes(item));
+  return { ...scope, checked, start: checked.includes(scope.start) ? scope.start : checked[0] ?? '' };
+}
+/** A folder the user added: shown once, and checked. */
+export function addScopeFolder(scope: ScopeDraft, folder: TeamScopeFolder): ScopeDraft {
+  const known = scope.folders.some(item => item.path === folder.path);
+  const folders = known ? scope.folders : [...scope.folders, folder];
+  const checked = folders.map(item => item.path).filter(item => item === folder.path || scope.checked.includes(item));
+  return { ...scope, folders, checked, start: scope.start || folder.path };
+}
+export const checkedFolders = (scope: ScopeDraft) => scope.folders.filter(folder => scope.checked.includes(folder.path));
+/** "main → feature/login" for each checked Git folder; the check then says what Git will actually do. */
+export function branchMoves(scope: ScopeDraft): { name: string; from: string; to: string; same: boolean }[] {
+  const to = scope.branch.trim();
+  return checkedFolders(scope).filter(folder => folder.git).map(folder => ({ name: folder.name, from: folder.branch ?? '분리된 HEAD', to, same: folder.branch === to }));
+}
+/** What keeps the scope from being checked, in the user's words. */
+export function scopeProblems(scope: ScopeDraft): string[] {
+  const problems: string[] = [], branch = scope.branch.trim(), git = checkedFolders(scope).filter(folder => folder.git);
+  if (!scope.checked.length) problems.push('작업 범위에서 폴더를 하나 이상 골라 주세요.');
+  if (!scope.align || !git.length) return problems;
+  if (!branch) problems.push('맞출 브랜치 이름을 써 주세요.');
+  else if (!TEAM_BRANCH.test(branch)) problems.push('브랜치 이름에는 공백이나 ~ ^ : ? * [ \\ 를 쓸 수 없고, -로 시작할 수 없습니다.');
+  const seen = new Map<string, string>();
+  for (const folder of git) {
+    const other = seen.get(repositoryOf(folder));
+    if (other) problems.push(other + ', ' + folder.name + ': 같은 저장소의 작업 폴더라 한 브랜치로 함께 맞출 수 없습니다. 하나만 골라 주세요.');
+    else seen.set(repositoryOf(folder), folder.name);
+  }
+  return problems;
 }
 
 /** "설계 → 나", "개발 → 검토": who reports to whom, in member order. */

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { BookmarkPlus, Bot, Crown, GitFork, Lock, MessagesSquare, Send, Users, X } from 'lucide-react';
+import { BookmarkPlus, Bot, Crown, FolderTree, GitBranch, GitFork, Lock, MessagesSquare, Send, Users, X } from 'lucide-react';
 import type { HostState, Team, TeamMessage, TerminalInfo } from '../../../packages/protocol/index';
 import { AGENT_MESSAGE_LIMIT } from './AgentMessage';
 import { aggregateTerminalStatus, terminalStatus, terminalStatusDescription, TerminalStatusBadge, type TerminalNotices } from './TerminalStatus';
@@ -117,9 +117,10 @@ export function TeamChat({state, team, request, onSelect, onError}: {state: Host
 /** One line at the bottom: the team, its size, who reports to whom, and saving it as a template. */
 export function TeamBar({team, state, onSaveTemplate, onRemove}: {team: Team; state: HostState; onSaveTemplate(): void; onRemove(): void}) {
   const worktrees = team.members.filter(member => member.folder === 'worktree').length;
-  const group = state.groups.find(item => item.id === team.groupId);
+  const group = state.groups.find(item => item.id === team.groupId), scope = team.scope;
   return <footer className="team-bar">
     <span className="team-bar-name"><Users size={14} aria-hidden="true"/><strong>{team.name}</strong><span className="hint">구성원 {team.members.length}명{worktrees ? ' · 워크트리 ' + worktrees + '개' : ''}{group ? ' · ' + group.name : ''}</span></span>
+    {scope && (scope.folders.length > 1 || scope.branch) && <span className="team-scope-summary" aria-label="작업 범위" title={'작업 범위: ' + scope.folders.join(', ') + (scope.branch ? '\n브랜치: ' + scope.branch : '')}><FolderTree size={13} aria-hidden="true"/>{scope.folders.map(folder => folder.split(/[\\/]/).filter(Boolean).pop()).join(' · ')}{scope.branch && <span className="team-chip"><GitBranch size={11} aria-hidden="true"/>{scope.branch}</span>}</span>}
     <span className="team-flow" aria-label="일 흐름" title={'일 흐름: ' + teamFlow(team.members).map(item => item.from + ' → ' + item.to).join(', ')}><GitFork size={13} aria-hidden="true"/>{teamFlow(team.members).map(item => <span key={item.from} className="team-chip">{item.from} → {item.to}</span>)}</span>
     <button type="button" className="button subtle" onClick={onSaveTemplate}><BookmarkPlus size={14}/>템플릿으로 저장</button>
     <details className="command-menu"><summary className="icon-button" aria-label={team.name + ' 팀 메뉴'}>···</summary><div>

@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, Check, ChevronDown, ChevronRight, Crown, LoaderCircle, Plus, RotateCcw, Star, Users, X, XCircle } from 'lucide-react';
-import type { Group, HostState, Team, TeamCheck, TeamTemplate } from '../../../packages/protocol/index';
+import type { Group, HostState, Team, TeamCheck, TeamScopeFolder, TeamTemplate } from '../../../packages/protocol/index';
 import { Modal } from './Modal';
-import { addMember, DEFAULT_TEMPLATE_KEY, draftsFrom, makeLead, modelSuggestions, removeMember, renameMember, ROLE_DEFAULTS, ROLES, specsFrom, TEAM_MAX_MEMBERS, teamProblems, withRole, type MemberDraft } from './team-model';
+import { addMember, addScopeFolder, DEFAULT_TEMPLATE_KEY, draftsFrom, makeLead, modelSuggestions, removeMember, renameMember, ROLE_DEFAULTS, ROLES, scopeDraft, scopeProblems, specsFrom, TEAM_MAX_MEMBERS, teamProblems, toggleScopeFolder, withRole, type MemberDraft, type ScopeDraft } from './team-model';
+import { TeamScopePicker } from './TeamScope';
 
 type Request = <T = unknown>(method: string, params?: unknown) => Promise<T>;
 const message = (error: unknown) => error instanceof Error ? error.message : '요청을 완료하지 못했습니다.';
@@ -10,9 +11,9 @@ function storedDefault(): string { try { return JSON.parse(localStorage.getItem(
 
 /**
  * Starting work with an AI team: pick a template, adjust its members, then a pre-start check that must
- * pass before the team starts. The team works in the chosen group's folder.
+ * pass before the team starts. The team works across the folders chosen in its scope (older hosts: the group's folder).
  */
-export function TeamSetup({state, groupId, request, onClose, onStarted}: {state: HostState; groupId: string; request: Request; onClose(): void; onStarted(team: Team): void}) {
+export function TeamSetup({state, groupId, request, onClose, onStarted, pickDirectory}: {state: HostState; groupId: string; request: Request; onClose(): void; onStarted(team: Team): void; pickDirectory?(current?: string): Promise<string | null>}) {
   const groups = state.groups;
   const [target, setTarget] = useState(groups.some(group => group.id === groupId) ? groupId : groups[0]?.id ?? '');
   const group: Group | undefined = groups.find(item => item.id === target);
@@ -29,6 +30,27 @@ export function TeamSetup({state, groupId, request, onClose, onStarted}: {state:
   const [error, setError] = useState('');
   const [saving, setSaving] = useState<string>();
   const host = {hostId: state.hostId, bootId: state.bootId};
+  const scopeSupported = state.capabilities?.includes('agent.teams.scope') === true;
+  const [scope, setScope] = useState<ScopeDraft>();
+  const [scopeLoading, setScopeLoading] = useState(false);
+  const [scopeError, setScopeError] = useState('');
+  useEffect(() => {
+    if (!scopeSupported || !target) return;
+    let alive = true;
+    setScope(undefined); setScopeError(''); setScopeLoading(true);
+    request<{folders: TeamScopeFolder[]}>('teams.scope', {...host, groupId: target})
+      .then(result => { if (alive) setScope(scopeDraft(result.folders)); })
+      .catch(error => { if (alive) setScopeError(message(error)); })
+      .finally(() => { if (alive) setScopeLoading(false); });
+    return () => { alive = false; };
+  }, [target]);
+  const changeScope = (change: Partial<ScopeDraft>) => { setCheck(undefined); setScope(value => value && {...value, ...change}); };
+  async function addFolder(path: string) {
+    const [folder] = (await request<{folders: TeamScopeFolder[]}>('teams.scope', {...host, groupId: target, paths: [path]})).folders;
+    if (folder) { setCheck(undefined); setScope(value => value && addScopeFolder(value, folder)); }
+  }
+  /** Several folders share one working copy each; members then all work in them, never in their own worktree. */
+  const shared = (scope?.checked.length ?? 0) > 1;
 
   function choose(template: TeamTemplate) {
     setTemplateId(template.id); setMembers(draftsFrom(template.members)); setOpen(undefined); setCheck(undefined);
@@ -51,13 +73,17 @@ export function TeamSetup({state, groupId, request, onClose, onStarted}: {state:
   }
   const edit = (index: number, change: Partial<MemberDraft>) => { setCheck(undefined); setMembers(list => list.map((item, at) => at === index ? {...item, ...change} : item)); };
   const specs = useMemo(() => specsFrom(members), [members]);
-  const problems = useMemo(() => teamProblems(name, specs), [name, specs]);
-  const worktrees = members.some(member => member.folder === 'worktree');
+  const problems = useMemo(() => [...teamProblems(name, specs), ...(scope ? scopeProblems(scope) : [])], [name, specs, scope]);
+  /** The scope must be loaded before a newer host can check it. */
+  const scopeWaiting = scopeSupported && !scope;
+  const worktrees = !shared && members.some(member => member.folder === 'worktree');
   const selected = templates?.find(item => item.id === templateId);
-  const payload = () => ({...host, groupId: target, name: name.trim(), cwd: group?.cwd ?? '', members: specs});
+  const payload = () => scope
+    ? {...host, groupId: target, name: name.trim(), cwd: scope.start, members: shared ? specs.map(member => ({...member, folder: 'base' as const})) : specs, scope: {start: scope.start, folders: scope.checked, ...(scope.align && scope.branch.trim() ? {branch: scope.branch.trim()} : {})}}
+    : {...host, groupId: target, name: name.trim(), cwd: group?.cwd ?? '', members: specs};
 
   async function runCheck() {
-    if (!group || problems.length || busy) return;
+    if (!group || problems.length || scopeWaiting || busy) return;
     setBusy('check'); setError(''); setStep('check');
     try { setCheck(await request<{ready: boolean; checks: TeamCheck[]}>('teams.check', payload())); }
     catch (error) { setCheck(undefined); setError(message(error)); }
@@ -95,13 +121,14 @@ export function TeamSetup({state, groupId, request, onClose, onStarted}: {state:
               <select className="select" value={target} onChange={event => { setTarget(event.target.value); setCheck(undefined); }}>
                 {groups.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
               </select>
-              <span className="hint" title={group?.cwd}>{group ? '작업 폴더: ' + group.cwd : '그룹을 먼저 만들어 주세요.'}</span>
+              <span className="hint" title={group?.cwd}>{!group ? '그룹을 먼저 만들어 주세요.' : scopeSupported ? '이 그룹의 폴더가 아래 작업 범위에 나옵니다.' : '작업 폴더: ' + group.cwd}</span>
             </label>
             <label className="field"><span className="field-label">팀 이름</span>
               <input className="input" value={name} maxLength={30} placeholder="예: 로그인 개선" onChange={event => { setName(event.target.value); setNameEdited(true); }}/>
               <span className="hint">왼쪽 AI 팀 목록과 구성원에게 알려 주는 이름입니다.</span>
             </label>
           </div>
+          {scopeSupported && <TeamScopePicker scope={scope} loading={scopeLoading} error={scopeError} onChange={changeScope} onToggle={path => { setCheck(undefined); setScope(value => value && toggleScopeFolder(value, path)); }} onAdd={addFolder} pickDirectory={pickDirectory}/>}
           <fieldset className="team-templates">
             <legend className="field-label">템플릿</legend>
             {!templates && !error && <p className="hint"><LoaderCircle size={13} className="spin"/> 템플릿을 불러오는 중…</p>}
@@ -129,7 +156,7 @@ export function TeamSetup({state, groupId, request, onClose, onStarted}: {state:
                   <span role="cell"><select className="select" aria-label={member.name + ' 도구'} value={member.provider} onChange={event => edit(index, {provider: event.target.value as MemberDraft['provider'], model: ''})}><option value="claude">Claude Code</option><option value="codex">Codex</option></select></span>
                   <span role="cell"><input className="input" aria-label={member.name + ' 모델'} list={listId} value={member.model} maxLength={80} placeholder="도구 기본값" onChange={event => edit(index, {model: event.target.value.trim()})}/><datalist id={listId}>{modelSuggestions(member.provider, templates ?? []).map(model => <option key={model} value={model}/>)}</datalist></span>
                   <span role="cell"><select className="select" aria-label={member.name + ' 끝나면 보고'} value={member.reportKey} onChange={event => edit(index, {reportKey: event.target.value})}><option value="user">나</option>{members.filter((other, at) => at !== index).map(other => <option key={other.key} value={other.key}>{other.name.trim() || '(이름 없음)'}</option>)}{member.reportKey === '' && <option value="">{member.reportTo} (없음)</option>}</select></span>
-                  <span role="cell"><select className="select" aria-label={member.name + ' 작업 폴더'} value={member.folder} onChange={event => edit(index, {folder: event.target.value as MemberDraft['folder']})}><option value="base">기본 폴더</option><option value="worktree">새 워크트리</option></select></span>
+                  <span role="cell"><select className="select" aria-label={member.name + ' 작업 폴더'} value={shared ? 'base' : member.folder} disabled={shared} title={shared ? '여러 폴더를 함께 쓰는 팀은 구성원 모두가 같은 폴더에서 일합니다' : undefined} onChange={event => edit(index, {folder: event.target.value as MemberDraft['folder']})}><option value="base">함께 쓰기</option><option value="worktree">새 워크트리</option></select></span>
                   <span role="cell" className="team-member-check"><input type="checkbox" aria-label={member.name + ' 읽기 전용'} checked={member.readOnly} onChange={event => edit(index, {readOnly: event.target.checked})}/></span>
                   <span role="cell" className="team-member-actions">
                     <button type="button" className="icon-button" aria-expanded={expanded} aria-label={member.name + ' 지시문 ' + (expanded ? '접기' : '펼치기')} title="역할 지시문과 덧붙일 말" onClick={() => setOpen(expanded ? undefined : member.key)}>{expanded ? <ChevronDown size={15}/> : <ChevronRight size={15}/>}</button>
@@ -157,7 +184,8 @@ export function TeamSetup({state, groupId, request, onClose, onStarted}: {state:
               ? <button type="button" className="button subtle team-save-template" disabled={!members.length} onClick={() => setSaving(selected && !selected.builtIn ? selected.name : name.trim())}>템플릿으로 저장</button>
               : <span className="team-save-form"><input className="input" aria-label="템플릿 이름" autoFocus maxLength={30} value={saving} onChange={event => setSaving(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); void saveTemplate(); } }}/><button type="button" className="button" disabled={!saving.trim() || busy === 'save'} onClick={() => void saveTemplate()}>저장</button><button type="button" className="icon-button" aria-label="템플릿 저장 취소" onClick={() => setSaving(undefined)}><X size={14}/></button></span>}
           </div>
-          {worktrees && <p className="hint">새 워크트리를 고른 구성원은 작업 폴더의 Git 저장소에서 브랜치를 따로 받아 일합니다. 작업 폴더가 Git 저장소가 아니거나 아직 커밋이 없으면 기본 폴더에서 함께 일합니다. 결과는 Git 변경 검토에서 구성원별로 확인하고, 합칠지는 직접 정합니다.</p>}
+          {worktrees && <p className="hint">새 워크트리를 고른 구성원은 작업 폴더의 Git 저장소에서 브랜치를 따로 받아 일합니다. 작업 폴더가 Git 저장소가 아니거나 아직 커밋이 없으면 다른 구성원과 같은 폴더에서 일합니다. 결과는 Git 변경 검토에서 구성원별로 확인하고, 합칠지는 직접 정합니다.</p>}
+          {shared && <p className="hint">여러 폴더를 함께 쓰는 팀은 구성원 모두가 같은 폴더에서 일합니다. 팀장이 일을 나눠 같은 파일을 동시에 고치지 않게 하고, 검토는 읽기 전용으로 둡니다. 템플릿의 워크트리 설정은 그대로 저장됩니다.</p>}
           {problems.length > 0 && <ul className="team-problems" role="status">{problems.map(problem => <li key={problem}><AlertTriangle size={13}/>{problem}</li>)}</ul>}
         </> : <>
           <p className="hint team-check-intro">{name.trim()} · 구성원 {members.length}명 · {group?.name}. 필수 항목이 모두 통과해야 팀을 시작할 수 있습니다. 모델 요청은 보내지 않습니다.</p>
@@ -173,7 +201,7 @@ export function TeamSetup({state, groupId, request, onClose, onStarted}: {state:
       </div>
       <div className="modal-footer">
         {step === 'compose'
-          ? <><button type="button" className="button" onClick={onClose}>취소</button><button className="button primary" disabled={!group || !members.length || problems.length > 0 || Boolean(busy)}>다음: 시작 전 점검</button></>
+          ? <><button type="button" className="button" onClick={onClose}>취소</button><button className="button primary" disabled={!group || !members.length || problems.length > 0 || scopeWaiting || Boolean(busy)}>다음: 시작 전 점검</button></>
           : <><button type="button" className="button" disabled={busy === 'start'} onClick={() => { setStep('compose'); setError(''); }}>이전</button><button type="button" className="button" disabled={Boolean(busy)} onClick={() => void runCheck()}>다시 확인</button><button className="button primary" disabled={!check?.ready || Boolean(busy)}><Users size={14}/>{busy === 'start' ? '시작하는 중…' : '팀 시작'}</button></>}
       </div>
     </form>
