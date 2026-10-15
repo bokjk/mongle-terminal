@@ -47,7 +47,7 @@ OpenRig 코드를 그대로 복사하지 않는다. 작은 조각을 가져오�
 | 사용자 요구 | 왼쪽 목록은 새 작업 → 프로젝트 → 일반 터미널 → AI 팀 순서다. |
 | 사용자 요구 | 팀 화면은 팀장 터미널을 크게 두고 터미널을 맨 위에 둔다. 자주 바꾸지 않는 팀 정보는 맨 아래 한 줄에 둔다. |
 | 제안 기본값 | 첫 번째 구성원이 팀장이다. 사용자의 메시지는 기본으로 팀장에게 간다. |
-| 제안 기본값 | 팀장은 기본 작업 폴더, 나머지 구성원은 새 워크트리에서 일한다. |
+| 제안 기본값 | 팀장은 기본 작업 폴더, 나머지 구성원은 새 워크트리에서 일한다. 2026-10-15 변경: 사용자 의견에 따라 모두 기본 폴더에서 시작하고 새 워크트리는 구성원별로 고른다([작업 범위](validation/agent-team-scope.md)). |
 | 제안 기본값 | 검토·조사 역할은 읽기 전용으로 실행한다. 지시문이 아니라 CLI 실행 옵션으로 막는다. |
 | 제안 기본값 | 한 팀은 최대 6명이다. |
 | 제안 기본값 | 기본 제공 템플릿은 덮어쓰지 않고, 고친 구성은 새 템플릿으로 저장한다. |
@@ -104,7 +104,7 @@ OpenRig 코드를 그대로 복사하지 않는다. 작은 조각을 가져오�
 | 끝나면 보고 | 템플릿 값 | 다른 구성원 또는 사용자. 팀 화면의 "일 흐름"이 된다. |
 | 역할 지시문 | 역할 기본값 | 펼쳐서 고친다. |
 | 덧붙일 말 | 없음 | 이번 팀에만 쓰는 추가 설명. |
-| 작업 폴더 | 팀장은 기본 폴더, 나머지는 새 워크트리 | |
+| 작업 폴더 | 모두 기본 폴더(2026-10-15 변경, 처음 제안은 팀장 말고 새 워크트리) | |
 | 권한 | 역할 기본값 | 기본(도구 설정을 따름) 또는 읽기 전용. |
 
 ### 기본 역할
@@ -155,7 +155,7 @@ sequenceDiagram
 ```
 
 1. **동료 확인:** 구성원은 몽글 MCP의 `list_agents`로 동료의 이름·역할·모델·상태를 본다. 상태는 기존 Claude·Codex 훅에서 온다.
-2. **보내기:** `send_message(to, text)`를 부른다. 호스트는 셸마다 주는 비밀 토큰(`MONGLE_AGENT_TOKEN`)으로 보낸 구성원을 확인하므로 이름을 사칭할 수 없다.
+2. **보내기:** `send_message(to, text)`를 부른다. 호스트는 구성원마다 주는 비밀 키로 보낸 구성원을 확인하므로 이름을 사칭할 수 없다. 구현은 셸 토큰(`MONGLE_AGENT_TOKEN`) 대신 팀 폴더의 키 파일을 MCP 서버 인자로 넘긴다. Codex는 MCP 서버에 넘길 환경 변수를 따로 정해야 하고, 키는 실행부를 켤 때마다 새로 만든다([구현](validation/agent-team-relay.md)).
 3. **배달:** 받는 쪽에 맞는 경로를 차례로 시도한다.
    - Codex: 공식 [`codex queue --thread <ID> --message ...`](https://learn.chatgpt.com/docs/developer-commands). 호스트가 셸과 같은 Codex 실행 파일·버전을 찾아 실행해야 해서(이 PC는 PATH의 첫 `codex.exe`가 Codex 앱 내장본), 1단계에서는 Codex도 아래 보호된 터미널 입력을 쓰고 3단계에서 붙인다.
    - Claude: 보호된 터미널 입력. 붙여넣기(bracketed paste) 뒤 Enter를 따로 보낸다. Channels(연구 미리보기)는 조직에서 켠 경우에만 쓰는 선택 경로다. 0단계에서 이 PC의 Claude Team 계정은 조직 정책으로 막혀 있었고, 대화를 이어서 켤 때 수신 연결이 다시 맺어지지 않는다는 보고([#67024](https://github.com/anthropics/claude-code/issues/67024))도 있다.
@@ -169,7 +169,7 @@ sequenceDiagram
 
 | 하는 일 | Claude Code | Codex |
 |---|---|---|
-| 모델 | `--model opus` 같은 최신 별칭 | `-m <모델>`, 목록은 app-server [`model/list`](https://learn.chatgpt.com/docs/app-server#list-models-modellist) |
+| 모델 | `--model opus` 같은 최신 별칭. 목록 명령이 없어 구현은 `--help`의 `--model` 설명에 나온 별칭을 쓴다 | `-m <모델>`, 목록은 app-server [`model/list`](https://learn.chatgpt.com/docs/app-server#list-models-modellist). 구현은 세션 없이 모델 카탈로그를 출력하는 `codex debug models`를 쓴다 |
 | 역할 지시문 | `--append-system-prompt` | `-c developer_instructions=...` |
 | 권한 제한 | `--tools`, `--disallowed-tools`, `--permission-mode` | `-s read-only -a never` |
 | 몽글 MCP 연결 | `--mcp-config` | `-c mcp_servers...` |
@@ -194,7 +194,7 @@ Claude Code 도움말(`--system-prompt-snapshot`)은 기록한 시스템 프롬�
 | 0. 확인 실험 | 아래 "먼저 확인할 항목"을 격리된 시험 폴더에서 실제 CLI로 확인 | 2026-10-14 완료. [결과](validation/agent-team-probe.md) |
 | 1. 안전한 전달 | 호스트의 보호된 전달 경로와 보류함, 팀 없이 쓰는 "에이전트에게 메시지 보내기" | 제어권·사람 입력과 충돌하지 않음을 실제 몽글 창에서 확인 |
 | 2. 팀 실행 | 템플릿, 시작 전 점검, 워크트리·터미널·CLI 실행, 역할 전달, 팀 화면 | 시험 저장소에서 3명 팀이 역할을 지키며 일을 넘김 |
-| 3. 에이전트끼리 대화 | 몽글 MCP(`list_agents`, `send_message`), 보고 누락 알림 | 구성원이 스스로 보내고 받은 기록이 남음 |
+| 3. 에이전트끼리 대화 | 몽글 MCP(`list_agents`, `send_message`), 보고 누락 알림 | 구성원이 스스로 보내고 받은 기록이 남음. 2026-10-15 MCP 구현(0.3.25 배포 준비), 보고 누락 알림은 남음 |
 | 4. 마무리 | 하던 작업을 팀으로 전환, 휴대폰 화면, 템플릿 관리 | 휴대폰에서 승인·지시가 가능함 |
 
 화면을 만드는 단계는 [AGENTS.md](../AGENTS.md) 규칙에 따라 Mobbin 사례를 먼저 확인하고, 실제 앱 조작 검증은 아스트라(`gpt-6-astra`)가 맡는다. 사용자에게 보이는 단계는 README·CHANGELOG·사용자 안내를 함께 고친다. 각 단계는 `dev` 대상 PR 하나로 낸다.

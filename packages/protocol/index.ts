@@ -41,6 +41,9 @@ export type AgentRole = 'lead' | 'developer' | 'reviewer' | 'tester' | 'research
 /** One member as written in a template or the start form. The first member of a team leads it. */
 export interface TeamMemberSpec { name: string; role: AgentRole; provider: 'claude' | 'codex'; model: string; reportTo: string; instructions: string; extra?: string; folder: 'base' | 'worktree'; readOnly: boolean }
 export interface TeamTemplate { id: string; name: string; builtIn?: true; members: TeamMemberSpec[] }
+/** A model a CLI offers, named the way its own catalog names it. */
+export interface TeamModel { id: string; label: string; description?: string }
+export type TeamModels = Record<TeamMemberSpec['provider'], TeamModel[]>;
 /** A started member: the terminal and worktree it got, or why it did not start. */
 export interface TeamMember extends TeamMemberSpec { id: string; terminalId?: string; worktreeId?: string; error?: string }
 /**
@@ -49,7 +52,11 @@ export interface TeamMember extends TeamMemberSpec { id: string; terminalId?: st
  * inbox delivers, cancels or loses it (the terminal or the host stopped).
  */
 export interface TeamMessage { id: string; from: string; device?: string; to: string; preview: string; createdAt: number; status: 'waiting' | 'delivered' | 'cancelled' | 'failed' }
-export interface Team { id: string; name: string; groupId: string; cwd: string; repositoryId?: string; createdAt: number; members: TeamMember[]; messages?: TeamMessage[] }
+/** A folder a team can work in: the top of a Git working tree with its branch and uncommitted changes, or a plain folder. */
+export interface TeamScopeFolder { path: string; name: string; git: boolean; branch?: string; changes?: number; /** The repository's shared Git folder; working trees of one repository share it. */ repository?: string }
+/** The folders a team works across: members start in `start` and are given the others; its Git folders may share one branch. */
+export interface TeamScope { start: string; folders: string[]; branch?: string }
+export interface Team { id: string; name: string; groupId: string; cwd: string; repositoryId?: string; scope?: TeamScope; createdAt: number; members: TeamMember[]; messages?: TeamMessage[] }
 /** One line of the pre-start check. */
 export interface TeamCheck { id: string; label: string; status: 'ok' | 'warning' | 'error'; message: string }
 export interface HostState { hostId: string; bootId: string; name: string; version: string; protocolVersion: number; capabilities?: string[]; groups: Group[]; terminals: TerminalInfo[]; profiles: ShellProfile[]; settings: HostSettings; claudeIntegration?: ClaudeIntegration; codexIntegration?: CodexIntegration; storageError?: string; repositories?: Repository[]; worktrees?: Worktree[]; worktreeOperations?: WorktreeOperation[]; teams?: Team[]; }
