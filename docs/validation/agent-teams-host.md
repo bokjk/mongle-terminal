@@ -1,6 +1,6 @@
 # AI 팀 실행 (호스트)
 
-2026-10-15, Windows x64. **0.3.24 배포 준비** 상태다. 배포 검사는 [0.3.24 배포 검증](public-release-0.3.24.md)에 기록한다. AI 팀 기능의 2단계 중 호스트 부분이다([설계안](../08-agent-team-design.md)). 팀 화면과 새 작업 흐름은 [AI 팀 화면](agent-teams-ui.md)에 있다.
+2026-10-15, Windows x64. **0.3.24에 공개**했다. 배포 검사와 공개 파일 검증은 [0.3.24 배포 검증](public-release-0.3.24.md#final)에 기록한다. AI 팀 기능의 2단계 중 호스트 부분이다([설계안](../08-agent-team-design.md)). 팀 화면과 새 작업 흐름은 [AI 팀 화면](agent-teams-ui.md)에 있다.
 
 ## 동작
 
