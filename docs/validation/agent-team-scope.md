@@ -1,6 +1,6 @@
 # AI 팀의 작업 범위와 브랜치 맞추기
 
-2026-10-15, Windows x64. **미배포.** [AI 팀 실행부](agent-teams-host.md)와 [AI 팀 화면](agent-teams-ui.md)에 더한 기능이다.
+2026-10-15, Windows x64. **0.3.25 배포 준비.** 배포 검사는 [0.3.25 배포 검증](public-release-0.3.25.md)에 기록한다. [AI 팀 실행부](agent-teams-host.md)와 [AI 팀 화면](agent-teams-ui.md)에 더한 기능이다.
 
 ## 왜 만들었나
 
