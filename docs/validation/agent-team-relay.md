@@ -1,6 +1,6 @@
 # AI 팀 구성원끼리 메시지와 팀 화면 크기 조절
 
-2026-10-15, Windows x64. **미배포.** [설계안](../08-agent-team-design.md) 3단계의 몽글 MCP와, [AI 팀 화면](agent-teams-ui.md)의 크기 조절이다.
+2026-10-15, Windows x64. **0.3.25 배포 준비.** 배포 검사는 [0.3.25 배포 검증](public-release-0.3.25.md)에 기록한다. [설계안](../08-agent-team-design.md) 3단계의 몽글 MCP와, [AI 팀 화면](agent-teams-ui.md)의 크기 조절이다.
 
 ## 왜 만들었나
 
