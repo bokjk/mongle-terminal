@@ -4,6 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { BUILT_IN_TEMPLATES, ROLE_DEFAULTS, rolePromptFile, teamLaunchCommand, teamMemberFlags, teamProblems, teamRolePrompt } from '../../packages/host/teams.js';
+import { claudeModels, codexModels } from '../../packages/host/team-environment.js';
 import { TeamStore } from '../../packages/host/team-store.js';
 import type { TeamMemberSpec } from '../../packages/protocol/index.js';
 
@@ -70,6 +71,26 @@ test('a team across folders gives each CLI its other folders and names them and 
   assert.match(fromParent, /시작 폴더: C:\\work\n/);
   assert.doesNotMatch(fromParent, /브랜치:/);
   assert.doesNotMatch(teamRolePrompt({ name: '혼자', scope: { start: 'C:\\w', folders: ['C:\\w'] } }, members, 0), /작업 범위/, 'one folder needs no scope section');
+});
+
+test('model lists come from each CLI: Codex catalog order without hidden models, Claude aliases from its help', () => {
+  const catalog = JSON.stringify({ models: [
+    { slug: 'gpt-5.5', display_name: 'GPT-5.5', visibility: 'hide', priority: 103 },
+    { slug: 'gpt-6.1-sol', display_name: 'GPT-6.1-Sol', description: 'Latest workhorse model.', visibility: 'list', priority: 1 },
+    { slug: 'gpt-6-astra', display_name: 'GPT-6-Astra', description: 'Our most capable model.', visibility: 'list', priority: 0, model_messages: { instructions_template: 'long' } },
+    { slug: 'anthropic/claude-opus-5-5', display_name: 'anthropic/claude-opus-5-5', visibility: 'list', priority: 5 },
+    { slug: 'bad name', display_name: 'Bad', visibility: 'list', priority: 2 },
+  ] });
+  assert.deepEqual(codexModels(catalog), [
+    { id: 'gpt-6-astra', label: 'GPT-6-Astra', description: 'Our most capable model.' },
+    { id: 'gpt-6.1-sol', label: 'GPT-6.1-Sol', description: 'Latest workhorse model.' },
+    { id: 'anthropic/claude-opus-5-5', label: 'anthropic/claude-opus-5-5' },
+  ]);
+  assert.deepEqual(codexModels('{}'), []);
+  const help = "  --fallback-model <model>              Enable automatic fallback\n  --model <model>                       Model for the current session. Provide\n                                        an alias for the latest model (e.g.\n                                        'fable', 'opus', or 'sonnet') or a\n                                        model's full name.\n  -n, --name <name>                     Set a display name";
+  assert.deepEqual(claudeModels(help).map(model => model.id), ['fable', 'opus', 'sonnet', 'haiku']);
+  assert.match(claudeModels(help)[1].description!, /Opus 계열의 최신 모델/);
+  assert.deepEqual(claudeModels('').map(model => model.id), ['opus', 'sonnet', 'haiku'], 'a help without examples still offers the families');
 });
 
 test('teams and user templates live in their own store and survive a reopen', async t => {

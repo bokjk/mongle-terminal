@@ -10,7 +10,8 @@ import type { ConnectionContext, PresentationSnapshot, ShellProfile, Team, TeamM
 import { BUILT_IN_TEMPLATES, ROLE_DEFAULTS } from '../../packages/host/teams.js';
 import { groupRepositoryIds, leafIds } from '../../packages/protocol/index.js';
 
-const environment = { executable: async (provider: string) => provider === 'claude' ? 'C:\\fake\\claude.exe' : 'C:\\fake\\codex.cmd', version: async () => '9.9.9', loggedIn: async () => true, gitChanges: async () => 2 };
+const modelCalls: string[] = [];
+const environment = { executable: async (provider: string) => provider === 'claude' ? 'C:\\fake\\claude.exe' : 'C:\\fake\\codex.cmd', version: async () => '9.9.9', loggedIn: async () => true, gitChanges: async () => 2, models: async (provider: 'claude' | 'codex') => { modelCalls.push(provider); return provider === 'claude' ? [{ id: 'opus', label: 'opus' }, { id: 'sonnet', label: 'sonnet' }] : [{ id: 'gpt-6-astra', label: 'GPT-6-Astra' }]; } };
 const member = (extra: Partial<TeamMemberSpec>): TeamMemberSpec => ({ name: '설계', role: 'lead', provider: 'claude', model: 'opus', reportTo: 'user', instructions: ROLE_DEFAULTS.lead.instructions, folder: 'base', readOnly: false, ...extra });
 
 test('a team starts its members as PowerShell tabs, types each CLI with its role once the shell is ready, and resumes with the role', { timeout: 60000 }, async t => {
@@ -61,6 +62,11 @@ test('a team starts its members as PowerShell tabs, types each CLI with its role
   await rejects('teams.templates.save', { name: '겹침', members: [member({}), member({ reportTo: '설계' })] }, 'TEAM_INVALID');
   const mine = await request('teams.templates.save', { name: ' 내 팀 ', members: [member({}), member({ name: '검토', role: 'reviewer', provider: 'codex', model: 'gpt-6-astra', reportTo: '설계', readOnly: true })] });
   assert.equal(mine.name, '내 팀');
+  // Model lists: each CLI is asked once and the answer is kept for a while.
+  const models = await request('teams.models', host);
+  assert.deepEqual([models.claude.map((item: any) => item.id), models.codex.map((item: any) => item.id)], [['opus', 'sonnet'], ['gpt-6-astra']]);
+  await request('teams.models', host);
+  assert.deepEqual(modelCalls, ['claude', 'codex'], 'cached');
   await request('teams.templates.save', { id: mine.id, name: '내 팀 2', members: mine.members });
   assert.equal((await request('teams.templates')).at(-1).name, '내 팀 2');
 

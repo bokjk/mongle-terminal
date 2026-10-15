@@ -169,7 +169,7 @@ sequenceDiagram
 
 | 하는 일 | Claude Code | Codex |
 |---|---|---|
-| 모델 | `--model opus` 같은 최신 별칭 | `-m <모델>`, 목록은 app-server [`model/list`](https://learn.chatgpt.com/docs/app-server#list-models-modellist) |
+| 모델 | `--model opus` 같은 최신 별칭. 목록 명령이 없어 구현은 `--help`의 `--model` 설명에 나온 별칭을 쓴다 | `-m <모델>`, 목록은 app-server [`model/list`](https://learn.chatgpt.com/docs/app-server#list-models-modellist). 구현은 세션 없이 모델 카탈로그를 출력하는 `codex debug models`를 쓴다 |
 | 역할 지시문 | `--append-system-prompt` | `-c developer_instructions=...` |
 | 권한 제한 | `--tools`, `--disallowed-tools`, `--permission-mode` | `-s read-only -a never` |
 | 몽글 MCP 연결 | `--mcp-config` | `-c mcp_servers...` |

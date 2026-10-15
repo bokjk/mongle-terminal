@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, Check, ChevronDown, ChevronRight, Crown, LoaderCircle, Plus, RotateCcw, Star, Users, X, XCircle } from 'lucide-react';
-import type { Group, HostState, Team, TeamCheck, TeamScopeFolder, TeamTemplate } from '../../../packages/protocol/index';
+import type { Group, HostState, Team, TeamCheck, TeamModels, TeamScopeFolder, TeamTemplate } from '../../../packages/protocol/index';
 import { Modal } from './Modal';
 import { addMember, addScopeFolder, DEFAULT_TEMPLATE_KEY, draftsFrom, makeLead, modelSuggestions, removeMember, renameMember, ROLE_DEFAULTS, ROLES, scopeDraft, scopeProblems, specsFrom, TEAM_MAX_MEMBERS, teamProblems, toggleScopeFolder, withRole, type MemberDraft, type ScopeDraft } from './team-model';
 import { TeamScopePicker } from './TeamScope';
+import { TeamModelPicker } from './TeamModelPicker';
 
 type Request = <T = unknown>(method: string, params?: unknown) => Promise<T>;
 const message = (error: unknown) => error instanceof Error ? error.message : '요청을 완료하지 못했습니다.';
@@ -44,6 +45,14 @@ export function TeamSetup({state, groupId, request, onClose, onStarted, pickDire
       .finally(() => { if (alive) setScopeLoading(false); });
     return () => { alive = false; };
   }, [target]);
+  const [models, setModels] = useState<TeamModels>();
+  useEffect(() => {
+    if (!state.capabilities?.includes('agent.teams.models')) return;
+    let alive = true;
+    // Without a list the model cells stay boxes with suggestions.
+    request<TeamModels>('teams.models', host).then(list => { if (alive) setModels(list); }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
   const changeScope = (change: Partial<ScopeDraft>) => { setCheck(undefined); setScope(value => value && {...value, ...change}); };
   async function addFolder(path: string) {
     const [folder] = (await request<{folders: TeamScopeFolder[]}>('teams.scope', {...host, groupId: target, paths: [path]})).folders;
@@ -148,13 +157,12 @@ export function TeamSetup({state, groupId, request, onClose, onStarted, pickDire
             </div>
             {members.map((member, index) => {
               const expanded = open === member.key, lead = index === 0;
-              const listId = 'team-models-' + member.key;
               return <div key={member.key} className={'team-member' + (expanded ? ' expanded' : '')} role="rowgroup">
                 <div className="team-member-row" role="row">
                   <span role="cell" className="team-member-name">{lead ? <Crown size={13} aria-label="팀장" className="team-lead-mark"/> : <span className="team-lead-mark" aria-hidden="true"/>}<input className="input" aria-label={(index + 1) + '번 구성원 이름'} value={member.name} maxLength={30} onChange={event => { setCheck(undefined); setMembers(list => renameMember(list, index, event.target.value)); }}/></span>
                   <span role="cell"><select className="select" aria-label={member.name + ' 역할'} value={member.role} onChange={event => { setCheck(undefined); setMembers(list => list.map((item, at) => at === index ? withRole(item, event.target.value as MemberDraft['role']) : item)); }}>{ROLES.map(role => <option key={role} value={role}>{ROLE_DEFAULTS[role].label}</option>)}</select></span>
                   <span role="cell"><select className="select" aria-label={member.name + ' 도구'} value={member.provider} onChange={event => edit(index, {provider: event.target.value as MemberDraft['provider'], model: ''})}><option value="claude">Claude Code</option><option value="codex">Codex</option></select></span>
-                  <span role="cell"><input className="input" aria-label={member.name + ' 모델'} list={listId} value={member.model} maxLength={80} placeholder="도구 기본값" onChange={event => edit(index, {model: event.target.value.trim()})}/><datalist id={listId}>{modelSuggestions(member.provider, templates ?? []).map(model => <option key={model} value={model}/>)}</datalist></span>
+                  <span role="cell"><TeamModelPicker name={member.name} model={member.model} models={models?.[member.provider]} suggestions={modelSuggestions(member.provider, templates ?? [])} onChange={model => edit(index, {model})}/></span>
                   <span role="cell"><select className="select" aria-label={member.name + ' 끝나면 보고'} value={member.reportKey} onChange={event => edit(index, {reportKey: event.target.value})}><option value="user">나</option>{members.filter((other, at) => at !== index).map(other => <option key={other.key} value={other.key}>{other.name.trim() || '(이름 없음)'}</option>)}{member.reportKey === '' && <option value="">{member.reportTo} (없음)</option>}</select></span>
                   <span role="cell"><select className="select" aria-label={member.name + ' 작업 폴더'} value={shared ? 'base' : member.folder} disabled={shared} title={shared ? '여러 폴더를 함께 쓰는 팀은 구성원 모두가 기본 폴더에서 일합니다' : undefined} onChange={event => edit(index, {folder: event.target.value as MemberDraft['folder']})}><option value="base">기본 폴더</option><option value="worktree">새 워크트리</option></select></span>
                   <span role="cell" className="team-member-check"><input type="checkbox" aria-label={member.name + ' 읽기 전용'} checked={member.readOnly} onChange={event => edit(index, {readOnly: event.target.checked})}/></span>
@@ -185,6 +193,7 @@ export function TeamSetup({state, groupId, request, onClose, onStarted, pickDire
               : <span className="team-save-form"><input className="input" aria-label="템플릿 이름" autoFocus maxLength={30} value={saving} onChange={event => setSaving(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); void saveTemplate(); } }}/><button type="button" className="button" disabled={!saving.trim() || busy === 'save'} onClick={() => void saveTemplate()}>저장</button><button type="button" className="icon-button" aria-label="템플릿 저장 취소" onClick={() => setSaving(undefined)}><X size={14}/></button></span>}
           </div>
           {worktrees && <p className="hint">새 워크트리를 고른 구성원은 작업 폴더의 Git 저장소에서 브랜치를 따로 받아 일합니다. 작업 폴더가 Git 저장소가 아니거나 아직 커밋이 없으면 기본 폴더에서 일합니다. 결과는 Git 변경 검토에서 구성원별로 확인하고, 합칠지는 직접 정합니다.</p>}
+          {models && <p className="hint">모델 목록은 이 PC의 Codex가 알려 주는 공식 목록과 Claude Code의 최신 모델 별칭입니다. 목록에 없는 모델은 "직접 입력…"으로 씁니다.</p>}
           {shared && <p className="hint">여러 폴더를 함께 쓰는 팀은 구성원 모두가 기본 폴더에서 일합니다. 팀장이 일을 나눠 같은 파일을 동시에 고치지 않게 하고, 검토는 읽기 전용으로 둡니다. 템플릿의 워크트리 설정은 그대로 저장됩니다.</p>}
           {problems.length > 0 && <ul className="team-problems" role="status">{problems.map(problem => <li key={problem}><AlertTriangle size={13}/>{problem}</li>)}</ul>}
         </> : <>

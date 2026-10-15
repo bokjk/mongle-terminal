@@ -5,7 +5,7 @@ import { join, dirname, basename } from 'node:path';
 import * as pty from 'node-pty';
 import { z } from 'zod';
 import { APP_VERSION, PROTOCOL_VERSION, AppError, GIT_COMMIT_PATTERN, appendTab, dimensionSchema, groupRepositoryIds, idSchema, leafIds, removeLeaf, splitLeaf } from '../protocol/index.js';
-import type { ConnectionContext, Group, HostSettings, HostState, LayoutNode, PresentationSnapshot, Send, ShellProfile, SnapshotEvent, TerminalInfo, Repository, Worktree, WorktreeOperation, ProjectInspection, Team, TeamCheck, TeamMember, TeamMemberSpec, TeamMessage, TeamScope, TeamScopeFolder, TeamTemplate } from '../protocol/index.js';
+import type { ConnectionContext, Group, HostSettings, HostState, LayoutNode, PresentationSnapshot, Send, ShellProfile, SnapshotEvent, TerminalInfo, Repository, Worktree, WorktreeOperation, ProjectInspection, Team, TeamCheck, TeamMember, TeamMemberSpec, TeamMessage, TeamModels, TeamScope, TeamScopeFolder, TeamTemplate } from '../protocol/index.js';
 import { HostStore, type PersistedHost, type PersistedSnapshot } from '../storage/index.js';
 import { agentInputSignal, validAgentSession, validCodexEvent, type AgentSessionIdentity } from '../terminal/agent-status.js';
 import { AGENT_PIPE_NAME, agentResumeCommand, isTerminalReportOnly, resolveAgentExecutable } from '../shell-profiles/agent-resume.js';
@@ -51,6 +51,7 @@ type TeamSource = {repository:Repository;attach:boolean} | {reason:string};
 type ScopedFolder = {folder:TeamScopeFolder;plan?:BranchPlan};
 /** Failures that are not about the folder: the request stops instead of reporting the folder. */
 const HOST_FAILURES = new Set(['WORKTREE_BUSY','HOST_UNAVAILABLE','NOT_CONNECTED']);
+const TEAM_MODELS_FRESH_MS = 10 * 60_000;
 /** A team folder that cannot hold worktrees only changes where members work; busy or closing hosts still stop the request. */
 const TEAM_GIT_REASONS:Record<string,string> = {
   NOT_REPOSITORY:'작업 폴더가 Git 저장소가 아니라서 새 워크트리를 만들 수 없습니다.',
@@ -161,7 +162,7 @@ export class HostCore {
     return result;
   }
   getState(): HostState {
-    return structuredClone({ hostId:this.hostId, bootId:this.bootId, name:this.settings.name, version:APP_VERSION, protocolVersion:PROTOCOL_VERSION, capabilities:['agent.messages','agent.teams','agent.teams.scope','control.acquire-if-free','files.read','files.edit','files.pdf','files.upload','git.read','git.diff','git.review','layout.tabs','notifications.push','pairing.remote-approve','worktrees.manage','worktrees.terminal-context'], groups:this.groups, terminals:this.terminals, repositories:this.repositories,worktrees:this.worktrees,worktreeOperations:this.worktreeOperations,teams:this.teams,profiles:this.profiles, settings:this.settings, ...(this.options.claudeIntegration ? {claudeIntegration:this.options.claudeIntegration} : {}), ...(this.options.codexIntegration ? {codexIntegration:this.options.codexIntegration} : {}), ...(this.storageError ? {storageError:this.storageError} : {}) });
+    return structuredClone({ hostId:this.hostId, bootId:this.bootId, name:this.settings.name, version:APP_VERSION, protocolVersion:PROTOCOL_VERSION, capabilities:['agent.messages','agent.teams','agent.teams.scope','agent.teams.models','control.acquire-if-free','files.read','files.edit','files.pdf','files.upload','git.read','git.diff','git.review','layout.tabs','notifications.push','pairing.remote-approve','worktrees.manage','worktrees.terminal-context'], groups:this.groups, terminals:this.terminals, repositories:this.repositories,worktrees:this.worktrees,worktreeOperations:this.worktreeOperations,teams:this.teams,profiles:this.profiles, settings:this.settings, ...(this.options.claudeIntegration ? {claudeIntegration:this.options.claudeIntegration} : {}), ...(this.options.codexIntegration ? {codexIntegration:this.options.codexIntegration} : {}), ...(this.storageError ? {storageError:this.storageError} : {}) });
   }
   connect(ctx: ConnectionContext, send: Send): void {
     if (!this.initialized || this.closing || this.shutdownPrepared) throw new AppError('HOST_UNAVAILABLE','호스트가 준비되지 않았습니다.');
@@ -295,6 +296,15 @@ export class HostCore {
       if(!store.templates().some(item=>item.id===p.id))throw new AppError('TEMPLATE_READ_ONLY','기본 제공 템플릿은 지울 수 없습니다.');
       store.deleteTemplate(p.id);return {deleted:true};
     }
+    if(method==='teams.models'){
+      this.requireHost(hostRef.strict().parse(params));
+      // Each CLI's own list, asked again after a while so an updated CLI's models show up without a host restart.
+      if(!this.teamModels||Date.now()-this.teamModels.at>TEAM_MODELS_FRESH_MS){
+        const env=this.teamEnvironment();
+        this.teamModels={at:Date.now(),list:Promise.all([env.models('claude'),env.models('codex')]).then(([claude,codex])=>({claude:claude??[],codex:codex??[]}))};
+      }
+      return structuredClone(await this.teamModels.list);
+    }
     if(method==='teams.scope'){
       const p=hostRef.extend({groupId:idSchema,paths:z.array(cwdSchema).min(1).max(8).optional()}).strict().parse(params);this.requireHost(p);
       const group=this.group(p.groupId),folders:TeamScopeFolder[]=[];
@@ -357,6 +367,7 @@ export class HostCore {
   private teamLogChanged(){if(this.teamLogBroadcast||this.closing)return;this.teamLogBroadcast=true;queueMicrotask(()=>{this.teamLogBroadcast=false;this.broadcastState();});}
   private teamMember(terminalId:string){for(const team of this.teams){const member=team.members.find(item=>item.terminalId===terminalId);if(member)return {team,member};}}
   private teamEnvironment():TeamEnvironment{return {...defaultTeamEnvironment,...this.options.teamEnvironment};}
+  private teamModels?:{at:number;list:Promise<TeamModels>};
   /**
    * The repository worktree members branch from, found from the team folder: a project of this group that
    * holds the folder, else the folder's own repository (linked to the group when the team starts), else the

@@ -6,6 +6,7 @@ import type { HostState, Team, TeamMessage, TeamScopeFolder, TerminalInfo } from
 import { BUILT_IN_TEMPLATES, ROLE_DEFAULTS } from '../../packages/host/teams.js';
 import { addMember, addScopeFolder, branchMoves, canCancelTeamMessage, draftsFrom, makeLead, modelSuggestions, removeMember, renameMember, scopeDraft, scopeProblems, specsFrom, teamFlow, teamMessageStatus, teamOfTerminal, teamSendBlocker, toggleScopeFolder, withRole } from '../../apps/web/src/team-model.js';
 import { TeamScopePicker } from '../../apps/web/src/TeamScope.js';
+import { TeamModelPicker } from '../../apps/web/src/TeamModelPicker.js';
 import { TeamBar, TeamChat, TeamSidebarList } from '../../apps/web/src/TeamWorkspace.js';
 
 const terminal = (id: string, extra: Partial<TerminalInfo> = {}): TerminalInfo => ({ id, groupId: 'g', title: id, profileId: 'pwsh', cwd: 'C:/w', generation: '1', status: 'running', cols: 80, rows: 24, ...extra });
@@ -132,4 +133,12 @@ test('a team scope starts in the group folder, takes one working tree per reposi
   assert.match(markup, /체크한 Git 저장소 2곳을 이 브랜치로 맞춥니다/);
   assert.match(markup, /이미 feature\/login/);
   assert.doesNotMatch(renderToStaticMarkup(createElement(TeamScopePicker, { scope: { ...scope, checked: ['D:\\work'], start: 'D:\\work' }, loading: false, error: '', onChange: () => {}, onToggle: () => {}, onAdd: async () => {} })), /맞추기/, 'no branch choice without a checked repository');
+});
+test('a model is picked from the CLI list, with the CLI default first and any other name typed', () => {
+  const models = [{ id: 'gpt-6-astra', label: 'GPT-6-Astra', description: 'Our most capable model.' }, { id: 'gpt-6.1-sol', label: 'GPT-6.1-Sol' }];
+  const picker = renderToStaticMarkup(createElement(TeamModelPicker, { name: '검토', model: 'gpt-6-astra', models, suggestions: [], onChange: () => {} }));
+  assert.match(picker, /<select[^>]*aria-label="검토 모델"/);
+  assert.match(picker, /<option value="">도구 기본값<\/option><option value="gpt-6-astra" title="Our most capable model." selected="">GPT-6-Astra<\/option><option value="gpt-6.1-sol">GPT-6.1-Sol<\/option><option value="__custom__">직접 입력…<\/option>/);
+  assert.match(renderToStaticMarkup(createElement(TeamModelPicker, { name: '검토', model: 'gpt-7-preview', models, suggestions: [], onChange: () => {} })), /<option value="gpt-7-preview" selected="">gpt-7-preview<\/option><option value="__custom__">/, 'a typed model not in the list stays chosen');
+  assert.match(renderToStaticMarkup(createElement(TeamModelPicker, { name: '검토', model: 'opus', suggestions: ['opus'], onChange: () => {} })), /<input[^>]*list=/, 'without a list it stays a box with suggestions');
 });

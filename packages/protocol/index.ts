@@ -41,6 +41,9 @@ export type AgentRole = 'lead' | 'developer' | 'reviewer' | 'tester' | 'research
 /** One member as written in a template or the start form. The first member of a team leads it. */
 export interface TeamMemberSpec { name: string; role: AgentRole; provider: 'claude' | 'codex'; model: string; reportTo: string; instructions: string; extra?: string; folder: 'base' | 'worktree'; readOnly: boolean }
 export interface TeamTemplate { id: string; name: string; builtIn?: true; members: TeamMemberSpec[] }
+/** A model a CLI offers, named the way its own catalog names it. */
+export interface TeamModel { id: string; label: string; description?: string }
+export type TeamModels = Record<TeamMemberSpec['provider'], TeamModel[]>;
 /** A started member: the terminal and worktree it got, or why it did not start. */
 export interface TeamMember extends TeamMemberSpec { id: string; terminalId?: string; worktreeId?: string; error?: string }
 /**
