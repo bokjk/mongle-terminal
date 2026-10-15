@@ -1,6 +1,6 @@
 # Claude 전체 화면 모드의 시작 신호
 
-2026-10-15, Windows x64, Claude Code 2.1.300, 미배포.
+2026-10-15, Windows x64, Claude Code 2.1.300. **0.3.24 배포 준비** 상태다. 배포 검사는 [0.3.24 배포 검증](public-release-0.3.24.md)에 기록한다.
 
 ## 문제
 
