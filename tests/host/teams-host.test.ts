@@ -65,12 +65,14 @@ test('a team starts its members as PowerShell tabs, types each CLI with its role
   assert.equal((await request('teams.templates')).at(-1).name, '내 팀 2');
 
   // The pre-start check speaks for each part. A folder that cannot hold worktrees does not block the team.
-  const shared = await request('teams.check', { ...host, groupId, name: '팀', cwd: dataDir, members: BUILT_IN_TEMPLATES[0].members });
+  assert.ok(BUILT_IN_TEMPLATES.every(template => template.members.every(item => item.folder === 'base')), 'built-in teams start in the base folder');
+  const withWorktrees = BUILT_IN_TEMPLATES[0].members.map(item => item.role === 'lead' ? item : { ...item, folder: 'worktree' as const });
+  const shared = await request('teams.check', { ...host, groupId, name: '팀', cwd: dataDir, members: withWorktrees });
   assert.equal(shared.ready, true, JSON.stringify(shared.checks));
   assert.equal(shared.source, undefined, 'only the result reaches the view');
   const sharedGit = shared.checks.find((item: any) => item.id === 'git');
   assert.equal(sharedGit.status, 'warning');
-  assert.match(sharedGit.message, /개발, 검토도 함께 쓰는 폴더에서 일합니다/);
+  assert.match(sharedGit.message, /개발, 검토도 기본 폴더에서 일합니다/);
   const ready = await request('teams.check', { ...host, groupId, name: '팀', cwd: dataDir, members: mine.members });
   assert.equal(ready.ready, true);
   assert.deepEqual(ready.checks.map((item: any) => [item.id, item.status]), [['shell', 'ok'], ['claude', 'ok'], ['codex', 'ok'], ['folder', 'ok'], ['permissions', 'ok']]);
@@ -155,7 +157,7 @@ test('worktree members branch from the team folder\'s repository, linking it to 
   // A plain folder: the team still starts and the worktree member works in the team folder.
   const plainCheck = await request('teams.check', { ...host, groupId, name: '일반', cwd: plain, members });
   assert.equal(plainCheck.ready, true, JSON.stringify(plainCheck.checks));
-  assert.deepEqual([gitRow(plainCheck).status, /Git 저장소가 아니라서.*개발도 함께 쓰는 폴더에서 일합니다/.test(gitRow(plainCheck).message)], ['warning', true], gitRow(plainCheck).message);
+  assert.deepEqual([gitRow(plainCheck).status, /Git 저장소가 아니라서.*개발도 기본 폴더에서 일합니다/.test(gitRow(plainCheck).message)], ['warning', true], gitRow(plainCheck).message);
   const plainTeam: Team = await request('teams.start', { ...host, groupId, name: '일반', cwd: plain, members });
   assert.deepEqual(plainTeam.members.map(item => [item.folder, item.worktreeId, item.error]), [['base', undefined, undefined], ['base', undefined, undefined]]);
   assert.equal(path.resolve(core.getState().terminals.find(item => item.id === plainTeam.members[1].terminalId)!.cwd), path.resolve(plain));
@@ -254,7 +256,7 @@ test('a team across folders aligns one branch in every repository and gives each
   assert.deepEqual(['시작 폴더', 'front', 'back', 'notes', 'Git'].map(label => [label, row(check, label)?.status]), [['시작 폴더', 'ok'], ['front', 'warning'], ['back', 'ok'], ['notes', 'ok'], ['Git', 'warning']]);
   assert.match(row(check, 'front').message, /^main → feature\/login \(새로 만듦\) · 저장하지 않은 변경 1개도 함께 옮겨집니다\.$/);
   assert.match(row(check, 'notes').message, /Git 저장소가 아닌 폴더라 브랜치는 바꾸지 않습니다/);
-  assert.match(row(check, 'Git').message, /여러 폴더를 함께 쓰는 팀에서는 아직 새 워크트리를 만들지 않습니다\. 새 워크트리로 고른 개발도 함께 쓰는 폴더에서 일합니다/);
+  assert.match(row(check, 'Git').message, /여러 폴더를 함께 쓰는 팀에서는 아직 새 워크트리를 만들지 않습니다\. 새 워크트리로 고른 개발도 기본 폴더에서 일합니다/);
   assert.equal(git(front, 'branch', '--show-current').trim(), 'main', 'the check moves nothing');
 
   const team: Team = await request('teams.start', payload());

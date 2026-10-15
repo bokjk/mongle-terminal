@@ -87,7 +87,9 @@ test('the team screen shows the conversation, the work flow and the member list'
   assert.match(empty, /아직 보낸 메시지가 없습니다/);
   assert.match(empty, /준비되기를 기다리는 중/);
   const bar = renderToStaticMarkup(createElement(TeamBar, { team, state: state([]), onSaveTemplate: () => {}, onRemove: () => {} }));
-  assert.match(bar, /구성원 3명 · 워크트리 2개 · my-app/);
+  assert.match(bar, /구성원 3명 · my-app/);
+  const withWorktree = { ...team, members: team.members.map((member, index) => index ? { ...member, folder: 'worktree' as const } : member) };
+  assert.match(renderToStaticMarkup(createElement(TeamBar, { team: withWorktree, state: state([]), onSaveTemplate: () => {}, onRemove: () => {} })), /구성원 3명 · 워크트리 2개 · my-app/);
   assert.match(bar, /설계 → 나/);
   assert.match(bar, /개발 → 검토/);
   assert.match(bar, /템플릿으로 저장/);

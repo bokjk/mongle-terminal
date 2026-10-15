@@ -401,7 +401,7 @@ export class HostCore {
     let source:TeamSource|undefined;
     if(worktreeMembers.length){
       source=scoped&&scoped.length>1?{reason:'여러 폴더를 함께 쓰는 팀에서는 아직 새 워크트리를 만들지 않습니다.'}:await this.teamRepository(group,cwd,client);
-      if('reason' in source)checks.push({id:'git',label:'Git',status:'warning',message:source.reason+' 새 워크트리로 고른 '+worktreeMembers.map(item=>item.name).join(', ')+'도 함께 쓰는 폴더에서 일합니다. 같은 파일을 동시에 고치지 않도록 일을 나눠 주세요.'});
+      if('reason' in source)checks.push({id:'git',label:'Git',status:'warning',message:source.reason+' 새 워크트리로 고른 '+worktreeMembers.map(item=>item.name).join(', ')+'도 기본 폴더에서 일합니다. 같은 파일을 동시에 고치지 않도록 일을 나눠 주세요.'});
       else{const changes=await env.gitChanges(cwd);checks.push({id:'git',label:'Git',status:changes?'warning':'ok',message:'새 워크트리 '+worktreeMembers.length+'개를 '+source.repository.worktreeRoot+'에 만듭니다.'+(source.attach?' 작업 폴더의 저장소('+basename(source.repository.root)+')를 이 그룹의 프로젝트로 연결합니다.':'')+(changes?' 저장하지 않은 변경 '+changes+'개는 새 워크트리에 들어가지 않습니다.':'')});}
     }
     const inGroup=this.terminals.filter(item=>item.groupId===group.id).length,running=this.terminals.filter(item=>item.status==='running').length;

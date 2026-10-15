@@ -45,22 +45,25 @@ export const ROLE_DEFAULTS: Record<AgentRole, RoleDefault> = {
 function member(name: string, role: AgentRole, provider: TeamMemberSpec['provider'], model: string, reportTo: string, folder: TeamMemberSpec['folder']): TeamMemberSpec {
   return { name, role, provider, model, reportTo, folder, readOnly: ROLE_DEFAULTS[role].readOnly, instructions: ROLE_DEFAULTS[role].instructions };
 }
-/** Offered as they are and never overwritten; an edited copy is saved as the user's own template. */
+/**
+ * Offered as they are and never overwritten; an edited copy is saved as the user's own template. Everyone
+ * starts in the base folder; a separate worktree is an opt-in per member.
+ */
 export const BUILT_IN_TEMPLATES: readonly TeamTemplate[] = [
   { id: 'builtin:design-dev-review', name: '설계·개발·검토 3명', builtIn: true, members: [
     member('설계', 'lead', 'claude', 'opus', 'user', 'base'),
-    member('개발', 'developer', 'claude', 'sonnet', '검토', 'worktree'),
-    member('검토', 'reviewer', 'codex', 'gpt-6-astra', '설계', 'worktree'),
+    member('개발', 'developer', 'claude', 'sonnet', '검토', 'base'),
+    member('검토', 'reviewer', 'codex', 'gpt-6-astra', '설계', 'base'),
   ] },
   { id: 'builtin:four-dev', name: '4명 개발팀', builtIn: true, members: [
     member('설계', 'lead', 'claude', 'opus', 'user', 'base'),
-    member('프런트', 'developer', 'claude', 'sonnet', '검토', 'worktree'),
-    member('백엔드', 'developer', 'codex', 'gpt-6.1-sol', '검토', 'worktree'),
-    member('검토', 'reviewer', 'codex', 'gpt-6-astra', '설계', 'worktree'),
+    member('프런트', 'developer', 'claude', 'sonnet', '검토', 'base'),
+    member('백엔드', 'developer', 'codex', 'gpt-6.1-sol', '검토', 'base'),
+    member('검토', 'reviewer', 'codex', 'gpt-6-astra', '설계', 'base'),
   ] },
   { id: 'builtin:build-review', name: '구현·검토 2명', builtIn: true, members: [
     member('구현', 'developer', 'codex', '', '검토', 'base'),
-    member('검토', 'reviewer', 'claude', 'sonnet', '구현', 'worktree'),
+    member('검토', 'reviewer', 'claude', 'sonnet', '구현', 'base'),
   ] },
 ];
 

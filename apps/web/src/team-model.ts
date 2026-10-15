@@ -64,7 +64,7 @@ export function addMember(drafts: readonly MemberDraft[]): MemberDraft[] {
   let name = '개발', n = 2;
   while (names.has(name)) name = '개발 ' + n++;
   const role: AgentRole = drafts.length ? 'developer' : 'lead';
-  return [...drafts, { key: key(), name: drafts.length ? name : '설계', role, provider: 'claude', model: drafts.length ? 'sonnet' : 'opus', reportTo: drafts[0]?.name ?? 'user', reportKey: drafts[0]?.key ?? 'user', instructions: ROLE_DEFAULTS[role].instructions, folder: drafts.length ? 'worktree' : 'base', readOnly: ROLE_DEFAULTS[role].readOnly }];
+  return [...drafts, { key: key(), name: drafts.length ? name : '설계', role, provider: 'claude', model: drafts.length ? 'sonnet' : 'opus', reportTo: drafts[0]?.name ?? 'user', reportKey: drafts[0]?.key ?? 'user', instructions: ROLE_DEFAULTS[role].instructions, folder: 'base', readOnly: ROLE_DEFAULTS[role].readOnly }];
 }
 /** Moves a member to the top, which makes it the lead. */
 export function makeLead(drafts: readonly MemberDraft[], index: number): MemberDraft[] {

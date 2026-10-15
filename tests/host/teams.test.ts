@@ -15,7 +15,7 @@ test('built-in templates are valid teams whose first member leads and whose revi
     assert.deepEqual(teamProblems(template.name, template.members), [], template.name);
     for (const member of template.members) if (member.role === 'reviewer') assert.equal(member.readOnly, true);
   }
-  assert.equal(BUILT_IN_TEMPLATES[0].members[0].folder, 'base', 'the lead works in the base folder');
+  assert.ok(BUILT_IN_TEMPLATES.every(template => template.members.every(member => member.folder === 'base')), 'everyone starts in the base folder; a worktree is opt-in');
 });
 
 test('a team as written is checked in the user\'s words', () => {
