@@ -140,6 +140,7 @@ export function teamOfTerminal(state: HostState | undefined, terminalId: string)
 
 /** What happened to a message, in the user's words. A waiting one says what it waits for. */
 export function teamMessageStatus(message: TeamMessage, receiver: TerminalInfo | undefined): string {
+  if (message.to === 'user') return '보고';
   if (message.status === 'delivered') return '전달됨';
   if (message.status === 'cancelled') return '취소됨';
   if (message.status === 'failed') return '전달하지 못함';
@@ -149,6 +150,24 @@ export function teamMessageStatus(message: TeamMessage, receiver: TerminalInfo |
   if (at > 0) return '앞 메시지 다음에 전달';
   return '전달하는 중';
 }
+/** How the team screen is split: the lead's share of the width (or height when narrow) and each other member's weight. */
+export type TeamLayout = { lead: number; rows: number[] };
+export const TEAM_LEAD_DEFAULT = 0.63;
+export const clampTeamLead = (value: number) => Math.max(0.25, Math.min(0.8, value));
+/** A saved layout when it still fits the team, else the default: lead about 63%, members equal. */
+export function teamLayout(saved: unknown, others: number): TeamLayout {
+  const value = saved && typeof saved === 'object' ? saved as Partial<TeamLayout> : {};
+  const lead = typeof value.lead === 'number' && Number.isFinite(value.lead) ? clampTeamLead(value.lead) : TEAM_LEAD_DEFAULT;
+  const rows = Array.isArray(value.rows) && value.rows.length === others && value.rows.every(item => typeof item === 'number' && item > 0 && item < 100) ? value.rows : Array<number>(others).fill(1);
+  return { lead, rows };
+}
+/** Moves the boundary between row at and the next one so row at takes this share of the two; each keeps 15%. */
+export function moveTeamRow(rows: readonly number[], at: number, share: number): number[] {
+  if (at < 0 || at + 1 >= rows.length || !Number.isFinite(share)) return [...rows];
+  const pair = rows[at] + rows[at + 1], kept = Math.max(0.15, Math.min(0.85, share));
+  return rows.map((item, index) => index === at ? pair * kept : index === at + 1 ? pair * (1 - kept) : item);
+}
+
 /** Only a message still in the receiver's inbox can be cancelled. */
 export function canCancelTeamMessage(message: TeamMessage, receiver: TerminalInfo | undefined): boolean {
   return message.status === 'waiting' && receiver?.status === 'running' && (receiver.agentInbox?.messages ?? []).some(item => item.id === message.id);

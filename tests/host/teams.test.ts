@@ -3,7 +3,7 @@ import test from 'node:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { BUILT_IN_TEMPLATES, ROLE_DEFAULTS, rolePromptFile, teamLaunchCommand, teamMemberFlags, teamProblems, teamRolePrompt } from '../../packages/host/teams.js';
+import { BUILT_IN_TEMPLATES, ROLE_DEFAULTS, rolePromptFile, teamLaunchCommand, teamMemberFlags, teamProblems, teamRelayConfig, teamRolePrompt } from '../../packages/host/teams.js';
 import { claudeModels, codexModels } from '../../packages/host/team-environment.js';
 import { TeamStore } from '../../packages/host/team-store.js';
 import type { TeamMemberSpec } from '../../packages/protocol/index.js';
@@ -71,6 +71,26 @@ test('a team across folders gives each CLI its other folders and names them and 
   assert.match(fromParent, /시작 폴더: C:\\work\n/);
   assert.doesNotMatch(fromParent, /브랜치:/);
   assert.doesNotMatch(teamRolePrompt({ name: '혼자', scope: { start: 'C:\\w', folders: ['C:\\w'] } }, members, 0), /작업 범위/, 'one folder needs no scope section');
+});
+
+test('the team relay reaches each CLI through its own options, and the role prompt says how to hand out work and report', () => {
+  const json = 'C:\\data\\agent-teams\\t\\m.mcp.json', toml = 'C:\\data\\agent-teams\\t\\m.mcp.toml';
+  assert.equal(teamMemberFlags({ provider: 'claude', model: 'opus', readOnly: true }, 'C:\\p.md', [], json), "--model 'opus' --mcp-config '" + json + "' --allowedTools 'mcp__mongle_team' --append-system-prompt-file 'C:\\p.md' --tools 'Read,Grep,Glob'");
+  assert.equal(teamMemberFlags({ provider: 'codex', model: '', readOnly: true }, 'C:\\p.toml', [], toml), "-c ('mcp_servers.mongle_team=' + [IO.File]::ReadAllText('" + toml + "')) -c ('developer_instructions=' + [IO.File]::ReadAllText('C:\\p.toml')) -s read-only -a never");
+  assert.doesNotMatch(teamMemberFlags({ provider: 'claude', model: '', readOnly: false }, 'C:\\p.md', [], 'C:\\a"b.json')!, /mcp-config/, 'an unsafe relay path is left out');
+  const node = 'C:\\Program Files\\Mongle\\runtime\\node.exe';
+  assert.deepEqual(JSON.parse(teamRelayConfig('claude', node, 'C:\\d\\relay.cjs', 'C:\\d\\k.json')!), { mcpServers: { mongle_team: { type: 'stdio', command: node, args: ['C:\\d\\relay.cjs', 'C:\\d\\k.json'] } } });
+  assert.equal(teamRelayConfig('codex', node, 'C:\\d\\relay.cjs', 'C:\\d\\k.json'), "{ command = 'C:\\Program Files\\Mongle\\runtime\\node.exe', args = ['C:\\d\\relay.cjs', 'C:\\d\\k.json'], startup_timeout_sec = 10, tool_timeout_sec = 30, default_tools_approval_mode = 'approve' }");
+  assert.equal(teamRelayConfig('codex', "C:\\Users\\o'neil\\node.exe", 'C:\\d\\relay.cjs', 'C:\\d\\k.json'), undefined, 'a quote would end a TOML literal string');
+  assert.equal(teamRelayConfig('claude', 'node', 'C:\\d\\relay.cjs', 'C:\\d\\k.json'), undefined, 'only absolute paths');
+  const members = BUILT_IN_TEMPLATES[0].members;
+  const lead = teamRolePrompt({ name: '팀' }, members, 0, { relay: true }), developer = teamRolePrompt({ name: '팀' }, members, 1, { relay: true });
+  assert.match(lead, /send_message로 구성원에게 맡깁니다/);
+  assert.match(lead, /send_message로 사용자에게 결과를 보고하세요/);
+  assert.doesNotMatch(lead, /아직 구성원에게 직접 보내는 도구는 없습니다/);
+  assert.doesNotMatch(developer, /팀장은 사용자가 맡긴 일을/, 'only the lead hands out work');
+  assert.match(developer, new RegExp('send_message로 ' + members[1].reportTo + '에게 결과를 보고하세요'));
+  assert.match(teamRolePrompt({ name: '팀' }, members, 0), /아직 구성원에게 직접 보내는 도구는 없습니다/, 'without the relay the user forwards');
 });
 
 test('model lists come from each CLI: Codex catalog order without hidden models, Claude aliases from its help', () => {

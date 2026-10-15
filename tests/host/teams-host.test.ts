@@ -12,6 +12,12 @@ import { groupRepositoryIds, leafIds } from '../../packages/protocol/index.js';
 
 const modelCalls: string[] = [];
 const environment = { executable: async (provider: string) => provider === 'claude' ? 'C:\\fake\\claude.exe' : 'C:\\fake\\codex.cmd', version: async () => '9.9.9', loggedIn: async () => true, gitChanges: async () => 2, models: async (provider: 'claude' | 'codex') => { modelCalls.push(provider); return provider === 'claude' ? [{ id: 'opus', label: 'opus' }, { id: 'sonnet', label: 'sonnet' }] : [{ id: 'gpt-6-astra', label: 'GPT-6-Astra' }]; } };
+/** These tests check exact launch lines without the relay, even when run from a Mongle terminal that has a pipe. */
+const withoutRelay = (t: { after(fn: () => void): void }) => {
+  const pipe = process.env.MONGLE_AGENT_PIPE;
+  delete process.env.MONGLE_AGENT_PIPE;
+  t.after(() => { if (pipe !== undefined) process.env.MONGLE_AGENT_PIPE = pipe; });
+};
 const member = (extra: Partial<TeamMemberSpec>): TeamMemberSpec => ({ name: '설계', role: 'lead', provider: 'claude', model: 'opus', reportTo: 'user', instructions: ROLE_DEFAULTS.lead.instructions, folder: 'base', readOnly: false, ...extra });
 
 test('a team starts its members as PowerShell tabs, types each CLI with its role once the shell is ready, and resumes with the role', { timeout: 60000 }, async t => {
@@ -97,8 +103,16 @@ test('a team starts its members as PowerShell tabs, types each CLI with its role
   assert.match(await readFile(leadFile, 'utf8'), /당신: 설계 \(팀장\)/);
   assert.match(JSON.parse(await readFile(reviewerFile, 'utf8')), /당신: 검토\. 끝나면 설계에게 보고합니다/);
   await until(() => typed(lead.terminalId).length > 0 && typed(reviewer.terminalId).length > 0, 'each CLI line is typed after the first prompt');
-  assert.deepEqual(typed(lead.terminalId), ["& \"C:\\fake\\claude.exe\" --model 'opus' --append-system-prompt-file '" + leadFile + "'\r"]);
-  assert.deepEqual(typed(reviewer.terminalId), ["codex -m 'gpt-6-astra' -c ('developer_instructions=' + [IO.File]::ReadAllText('" + reviewerFile + "')) -s read-only -a never\r"]);
+  // Each CLI gets the team relay as an MCP server through its own options; the user's CLI settings stay as they are.
+  const relayFolder = path.join(dataDir, 'agent-teams', team.id);
+  const leadRelay = path.join(relayFolder, lead.id + '.mcp.json'), reviewerRelay = path.join(relayFolder, reviewer.id + '.mcp.toml');
+  assert.deepEqual(typed(lead.terminalId), ["& \"C:\\fake\\claude.exe\" --model 'opus' --mcp-config '" + leadRelay + "' --allowedTools 'mcp__mongle_team' --append-system-prompt-file '" + leadFile + "'\r"]);
+  assert.deepEqual(typed(reviewer.terminalId), ["codex -m 'gpt-6-astra' -c ('mcp_servers.mongle_team=' + [IO.File]::ReadAllText('" + reviewerRelay + "')) -c ('developer_instructions=' + [IO.File]::ReadAllText('" + reviewerFile + "')) -s read-only -a never\r"]);
+  const script = path.join(dataDir, 'agent-teams', 'mongle-team-relay.cjs');
+  assert.deepEqual(JSON.parse(await readFile(leadRelay, 'utf8')).mcpServers.mongle_team, { type: 'stdio', command: process.execPath, args: [script, path.join(relayFolder, lead.id + '.relay.json')] });
+  assert.equal(await readFile(reviewerRelay, 'utf8'), "{ command = '" + process.execPath + "', args = ['" + script + "', '" + path.join(relayFolder, reviewer.id + '.relay.json') + "'], startup_timeout_sec = 10, tool_timeout_sec = 30, default_tools_approval_mode = 'approve' }");
+  assert.match(await readFile(script, 'utf8'), /^\/\/ Mongle Terminal team relay v1/);
+  assert.match(await readFile(leadFile, 'utf8'), /send_message로 구성원에게 맡깁니다/, 'the role prompt names the relay');
 
   // The team conversation: a message reaches the member's running agent with the team header, and its fate is recorded.
   await rejects('teams.message', { ...host, teamId: team.id, to: lead.id, text: '시작해 주세요' }, 'AGENT_NOT_RUNNING');
@@ -116,6 +130,27 @@ test('a team starts its members as PowerShell tabs, types each CLI with its role
   const lost = await request('teams.message', { ...host, teamId: team.id, to: lead.id, text: '재시작 전에 보류된 메시지' });
   assert.equal(log()[2].status, 'waiting', 'the previous delivery has not started a turn yet');
 
+  // The relay: a member lists its team and messages a member or the user as itself; its key names the sender.
+  const keyOf = async (id: string) => JSON.parse(await readFile(path.join(relayFolder, id + '.relay.json'), 'utf8'));
+  const leadKey = await keyOf(lead.id), reviewerKey = await keyOf(reviewer.id);
+  assert.equal(leadKey.pipe, process.env.MONGLE_AGENT_PIPE);
+  assert.notEqual(leadKey.key, reviewerKey.key);
+  assert.equal(core.teamRelay('f'.repeat(64), { op: 'list' }).ok, false, 'an unknown key is refused');
+  const roster = core.teamRelay(reviewerKey.key, { op: 'list' }) as { ok: true; text: string };
+  assert.match(roster.text, /^팀: 결제 정리\n- 설계: 설계\(팀장\), 팀장, Claude Code opus\. 지금: 쉬는 중, 받을 메시지 1개\. 끝나면 사용자에게 보고\n- 검토 \(나\): 검토, Codex gpt-6-astra, 읽기 전용\. 지금: 시작하는 중\. 끝나면 설계에게 보고/);
+  const refused = (answer: { ok: boolean; error?: string }) => answer.ok ? '' : answer.error!;
+  assert.match(refused(core.teamRelay(reviewerKey.key, { op: 'send', to: '없는사람', text: '안녕' })), /받을 수 있는 이름: 설계, 사용자/);
+  assert.match(refused(core.teamRelay(reviewerKey.key, { op: 'send', to: '검토', text: '나에게' })), /자기 자신/);
+  assert.match(refused(core.teamRelay(reviewerKey.key, { op: 'send', to: '설계', text: '\x1b\x07\x00' })), /비어 있습니다/, 'control characters are dropped before anything is sent');
+  assert.equal(core.teamRelay(leadKey.key, { op: 'send', to: '검토', text: ' 결제 모듈을\r\n검토해 주세요 ' }).ok, true, 'a starting CLI can be given work');
+  const relayed = log().at(-1)!;
+  assert.deepEqual([relayed.from, relayed.to, relayed.preview, relayed.status], [lead.id, reviewer.id, '결제 모듈을\n검토해 주세요', 'waiting']);
+  const waiting = core.getState().terminals.find(item => item.id === reviewer.terminalId)!.agentInbox!.messages;
+  assert.deepEqual([waiting[0].id, waiting[0].from, waiting[0].preview], [relayed.id, '설계', '[몽글 팀 메시지] 설계 → 검토 결제 모듈을 검토해 주세요'], 'the reviewer receives it with the sender in the header');
+  assert.equal(core.teamRelay(reviewerKey.key, { op: 'send', to: '사용자', text: '검토 끝: 통과' }).ok, true, 'a read-only member can still report');
+  const report = log().at(-1)!;
+  assert.deepEqual([report.from, report.to, report.preview, report.status], [reviewer.id, 'user', '검토 끝: 통과', 'delivered']);
+
   // The reviewer's Codex reports its conversation; after a host restart it reopens with its role and read-only switch.
   const token = (core as any).runtimes.get(reviewer.terminalId).agentToken;
   const sessionId = randomUUID();
@@ -123,19 +158,25 @@ test('a team starts its members as PowerShell tabs, types each CLI with its role
   await core.close();
   core = create(); await core.init();
   assert.deepEqual(core.getState().teams?.map(item => item.name), ['결제 정리'], 'teams survive a restart');
-  assert.deepEqual(core.getState().teams![0].messages?.map(item => [item.id, item.status]), [[sent.id, 'delivered'], [cancelled.id, 'cancelled'], [lost.id, 'failed']], 'the log survives; a message the stopped host held was not delivered');
+  assert.deepEqual(core.getState().teams![0].messages?.map(item => [item.id, item.status]), [[sent.id, 'delivered'], [cancelled.id, 'cancelled'], [lost.id, 'failed'], [relayed.id, 'failed'], [report.id, 'delivered']], 'the log survives; a message the stopped host held was not delivered');
   await until(() => typed(reviewer.terminalId).length > 0, 'the resumed reviewer is typed');
-  assert.deepEqual(typed(reviewer.terminalId), ['__MongleCodex resume ' + sessionId + " -m 'gpt-6-astra' -c ('developer_instructions=' + [IO.File]::ReadAllText('" + reviewerFile + "')) -s read-only -a never\r"]);
+  assert.deepEqual(typed(reviewer.terminalId), ['__MongleCodex resume ' + sessionId + " -m 'gpt-6-astra' -c ('mcp_servers.mongle_team=' + [IO.File]::ReadAllText('" + reviewerRelay + "')) -c ('developer_instructions=' + [IO.File]::ReadAllText('" + reviewerFile + "')) -s read-only -a never\r"]);
+  const resumedKey = await keyOf(reviewer.id);
+  assert.notEqual(resumedKey.key, reviewerKey.key, 'a restarted host names the member with a new key');
+  assert.equal(core.teamRelay(reviewerKey.key, { op: 'list' }).ok, false, 'the previous boot\'s key is refused');
+  assert.equal(core.teamRelay(resumedKey.key, { op: 'list' }).ok, true);
 
   // Removing the team keeps the terminals and drops the record and prompt files.
   core.connect(ctx, () => {});
   await request('teams.remove', { teamId: team.id });
   assert.equal(core.getState().teams?.length, 0);
+  assert.equal(core.teamRelay(resumedKey.key, { op: 'list' }).ok, false, 'a removed team takes its relay keys with it');
   assert.ok(core.getState().terminals.some(item => item.id === lead.terminalId));
   await assert.rejects(readFile(leadFile, 'utf8'));
 });
 
 test('worktree members branch from the team folder\'s repository, linking it to the group, and share a folder without one', { timeout: 120000 }, async t => {
+  withoutRelay(t);
   const root = await mkdtemp(path.join(tmpdir(), 'mongle-team-worktree-'));
   // The project must live outside the app data folder, which the host never opens as a project.
   const dataDir = path.join(root, 'data'), repo = path.join(root, 'repo'), plain = path.join(root, 'plain'), fresh = path.join(root, 'fresh');
@@ -198,6 +239,7 @@ test('worktree members branch from the team folder\'s repository, linking it to 
 });
 
 test('a team across folders aligns one branch in every repository and gives each CLI the other folders', { timeout: 120000 }, async t => {
+  withoutRelay(t);
   const root = await mkdtemp(path.join(tmpdir(), 'mongle-team-scope-'));
   const dataDir = path.join(root, 'data'), front = path.join(root, 'front'), back = path.join(root, 'back'), notes = path.join(root, 'notes');
   const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', ...args], { cwd, windowsHide: true, encoding: 'utf8' });

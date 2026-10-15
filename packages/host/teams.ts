@@ -94,7 +94,7 @@ const reportName = (target: string) => target === 'user' ? '사용자' : target;
  * teammates' messages arrive, then the role's own instructions and this team's extra note. It ends with
  * a blank line because Codex places other developer text right after it.
  */
-export function teamRolePrompt(team: Pick<Team, 'name' | 'scope'>, members: readonly TeamMemberSpec[], index: number): string {
+export function teamRolePrompt(team: Pick<Team, 'name' | 'scope'>, members: readonly TeamMemberSpec[], index: number, options: {relay?: boolean} = {}): string {
   const self = members[index], scope = team.scope;
   const roster = members.map((item, at) => '- ' + item.name + ': ' + ROLE_DEFAULTS[item.role].label + (at === 0 ? ', 팀장' : '') + ', ' + providerName(item.provider) + (item.model ? ' ' + item.model : '') + (item.readOnly ? ', 읽기 전용' : '') + '. 끝나면 ' + reportName(item.reportTo) + '에게 보고');
   const lines = [
@@ -110,7 +110,13 @@ export function teamRolePrompt(team: Pick<Team, 'name' | 'scope'>, members: read
       ...(scope.branch ? ['브랜치: 작업 범위의 Git 저장소는 모두 "' + scope.branch + '" 브랜치에서 일합니다. 다른 브랜치로 바꾸지 마세요.'] : []),
     ] : []),
     '다른 구성원이나 사용자가 보낸 메시지는 "[몽글 팀 메시지]"로 시작하는 글로 이 입력창에 들어옵니다.',
-    '아직 구성원에게 직접 보내는 도구는 없습니다. 맡은 일을 마치면 답변 첫 줄에 "보고 대상: ' + reportName(self.reportTo) + '"을 적고 결과를 정리하세요. 사용자가 몽글 화면에서 전달합니다.',
+    ...(options.relay ? [
+      '구성원에게 메시지를 보낼 때는 몽글 팀 도구(MCP 서버 mongle_team)를 씁니다.',
+      '- list_agents: 구성원의 이름·역할·상태를 봅니다.',
+      '- send_message(to, text): to에 구성원 이름(사용자에게는 "사용자"), text에 내용을 넣습니다. 몽글이 받는 사람의 입력창에 넣으며, 받는 사람이 일하는 중이면 그 일이 끝난 뒤 들어갑니다.',
+      ...(index === 0 ? ['팀장은 사용자가 맡긴 일을 나눠 send_message로 구성원에게 맡깁니다. 맡길 때는 목표, 범위, 끝났다고 판단할 기준을 적습니다. 맡긴 뒤에는 차례를 끝내고 기다리세요. 구성원의 보고는 새 메시지로 들어옵니다.'] : []),
+      '맡은 일을 마치면 반드시 send_message로 ' + reportName(self.reportTo) + '에게 결과를 보고하세요. 화면에 적기만 하면 다음 사람에게 전달되지 않습니다.',
+    ] : ['아직 구성원에게 직접 보내는 도구는 없습니다. 맡은 일을 마치면 답변 첫 줄에 "보고 대상: ' + reportName(self.reportTo) + '"을 적고 결과를 정리하세요. 사용자가 몽글 화면에서 전달합니다.']),
     ...(self.readOnly ? ['이 CLI는 파일을 고칠 수 없는 읽기 전용으로 실행되었습니다.'] : []),
     '',
     '[역할 지시문]',
@@ -148,10 +154,28 @@ function quoted(value: string) { return "'" + value.replaceAll("'", "''") + "'";
  * directories (`--add-dir`); a read-only Codex already reads everywhere and gets no writable folder.
  * Also appended when the conversation is resumed.
  */
-export function teamMemberFlags(spec: Pick<TeamMemberSpec, 'provider' | 'model' | 'readOnly'>, promptFile: string, folders: readonly string[] = []): string | undefined {
+export function teamMemberFlags(spec: Pick<TeamMemberSpec, 'provider' | 'model' | 'readOnly'>, promptFile: string, folders: readonly string[] = [], relayFile?: string): string | undefined {
   if (!safeCliPath(promptFile) || !TEAM_MODEL.test(spec.model) || !folders.every(safeCliPath)) return;
-  if (spec.provider === 'claude') return [spec.model ? '--model ' + quoted(spec.model) : '', folders.length ? '--add-dir ' + folders.map(quoted).join(' ') : '', '--append-system-prompt-file ' + quoted(promptFile), spec.readOnly ? '--tools ' + quoted('Read,Grep,Glob') : ''].filter(Boolean).join(' ');
-  return [spec.model ? '-m ' + quoted(spec.model) : '', ...(spec.readOnly ? [] : folders.map(folder => '--add-dir ' + quoted(folder))), "-c ('developer_instructions=' + [IO.File]::ReadAllText(" + quoted(promptFile) + '))', spec.readOnly ? '-s read-only -a never' : ''].filter(Boolean).join(' ');
+  const relay = relayFile && safeCliPath(relayFile) ? relayFile : undefined;
+  if (spec.provider === 'claude') return [spec.model ? '--model ' + quoted(spec.model) : '', folders.length ? '--add-dir ' + folders.map(quoted).join(' ') : '', relay ? '--mcp-config ' + quoted(relay) + ' --allowedTools ' + quoted('mcp__' + TEAM_RELAY_SERVER) : '', '--append-system-prompt-file ' + quoted(promptFile), spec.readOnly ? '--tools ' + quoted('Read,Grep,Glob') : ''].filter(Boolean).join(' ');
+  return [spec.model ? '-m ' + quoted(spec.model) : '', ...(spec.readOnly ? [] : folders.map(folder => '--add-dir ' + quoted(folder))), relay ? "-c ('mcp_servers." + TEAM_RELAY_SERVER + "=' + [IO.File]::ReadAllText(" + quoted(relay) + '))' : '', "-c ('developer_instructions=' + [IO.File]::ReadAllText(" + quoted(promptFile) + '))', spec.readOnly ? '-s read-only -a never' : ''].filter(Boolean).join(' ');
+}
+
+/** The MCP server name of the team relay; Claude Code names its tools mcp__mongle_team__<tool>. */
+export const TEAM_RELAY_SERVER = 'mongle_team';
+const TOML_LITERAL = /^[^'\x00-\x1f\x7f]+$/;
+/**
+ * The relay's MCP server entry for a member's CLI: Claude Code reads a JSON file (--mcp-config), Codex a TOML
+ * inline table (-c mcp_servers.mongle_team=...). The Codex table uses literal strings only, so the value carries
+ * no double quote or backslash escape through PowerShell's argument passing. Codex calls the relay's tools
+ * without asking ("approve"): they only pass messages and a read-only member must still be able to report.
+ * Undefined when a path cannot be written that way.
+ */
+export function teamRelayConfig(provider: TeamMemberSpec['provider'], node: string, script: string, keyFile: string): string | undefined {
+  if (![node, script, keyFile].every(item => /^[a-z]:\\/i.test(item) && TOML_LITERAL.test(item))) return;
+  if (provider === 'claude') return JSON.stringify({ mcpServers: { [TEAM_RELAY_SERVER]: { type: 'stdio', command: node, args: [script, keyFile] } } }, null, 2) + '\n';
+  const literal = (value: string) => "'" + value + "'";
+  return '{ command = ' + literal(node) + ', args = [' + literal(script) + ', ' + literal(keyFile) + "], startup_timeout_sec = 10, tool_timeout_sec = 30, default_tools_approval_mode = 'approve' }";
 }
 
 /**
@@ -159,8 +183,8 @@ export function teamMemberFlags(spec: Pick<TeamMemberSpec, 'provider' | 'model' 
  * host-resolved absolute path; Codex runs through the session's codex function so the managed wrapper
  * adds --no-daemon and reports the conversation to the host.
  */
-export function teamLaunchCommand(spec: Pick<TeamMemberSpec, 'provider' | 'model' | 'readOnly'>, promptFile: string, claudePath?: string, folders: readonly string[] = []): string | undefined {
-  const flags = teamMemberFlags(spec, promptFile, folders);
+export function teamLaunchCommand(spec: Pick<TeamMemberSpec, 'provider' | 'model' | 'readOnly'>, promptFile: string, claudePath?: string, folders: readonly string[] = [], relayFile?: string): string | undefined {
+  const flags = teamMemberFlags(spec, promptFile, folders, relayFile);
   if (!flags) return;
   if (spec.provider === 'codex') return 'codex ' + flags + '\r';
   if (!claudePath || !safeCliPath(claudePath)) return;

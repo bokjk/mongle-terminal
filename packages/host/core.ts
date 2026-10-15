@@ -19,7 +19,9 @@ import { Uploads, UPLOAD_CHUNK_BYTES, UPLOAD_MAX_BYTES } from './uploads.js';
 import { inspectGit, readGitDiff, readGitReview } from './git.js';
 import { inspectProject, inspectKnownRepository, validateWorktree, prepareWorktree, addWorktree, removeWorktree, samePath, worktreeSlug } from './worktrees.js';
 import { AgentInbox, AGENT_INBOX_MAX, AGENT_MESSAGE_MAX_CHARS, cleanAgentMessage, type AgentMessageOutcome } from './agent-inbox.js';
-import { BUILT_IN_TEMPLATES, TEAM_EXTRA_MAX, TEAM_INSTRUCTIONS_MAX, TEAM_MESSAGE_LOG, TEAM_MESSAGE_PREVIEW, rolePromptFile, safeCliPath, teamLaunchCommand, teamMemberFlags, teamMessageText, teamProblems, teamRolePrompt } from './teams.js';
+import { BUILT_IN_TEMPLATES, ROLE_DEFAULTS, TEAM_EXTRA_MAX, TEAM_INSTRUCTIONS_MAX, TEAM_MESSAGE_LOG, TEAM_MESSAGE_PREVIEW, rolePromptFile, safeCliPath, teamLaunchCommand, teamMemberFlags, teamMessageText, teamProblems, teamRelayConfig, teamRolePrompt } from './teams.js';
+import { TEAM_RELAY_SOURCE } from './team-relay-source.js';
+import type { TeamRelayAnswer, TeamRelayRequest } from './agent-pipe.js';
 import { alignBranch, branchPlan, scopeFolder, validBranchName, type BranchPlan } from './team-scope.js';
 import { TeamStore } from './team-store.js';
 import { defaultTeamEnvironment, type TeamEnvironment } from './team-environment.js';
@@ -345,6 +347,7 @@ export class HostCore {
         if(!team)throw new AppError('TEAM_NOT_FOUND','팀을 찾을 수 없습니다.');
         // The terminals stay as ordinary terminals; only the team record and its prompt files go.
         this.teams=this.teams.filter(item=>item!==team);store.deleteTeam(team.id);
+        for(const member of team.members)this.relayKeys.delete(member.id);
         await rm(this.teamFolder(team.id),{recursive:true,force:true});
         this.broadcastState();return {removed:true};
       });
@@ -361,6 +364,86 @@ export class HostCore {
       if(message.status==='waiting'){message.status=outcome;try{this.teamStore?.saveTeam(team);}catch{/* closing: the next start marks waiting messages failed */}this.teamLogChanged();}
       return;
     }
+  }
+  /** member id -> the key its relay names it with, for this boot. The key file is rewritten whenever the member's CLI is started. */
+  private relayKeys=new Map<string,{key:string;teamId:string}>();
+  /**
+   * Writes a member's relay files (the shared relay script, the member's key and its CLI's MCP entry) and returns
+   * the entry's path. Undefined without the host's agent pipe or when a path cannot be passed safely: the member
+   * then starts without the relay and its role prompt says so.
+   */
+  private async writeTeamRelay(team:Team,member:TeamMember):Promise<string|undefined>{
+    const pipe=process.env.MONGLE_AGENT_PIPE||'';if(!AGENT_PIPE_NAME.test(pipe))return;
+    const folder=this.teamFolder(team.id),script=join(this.options.dataDir,'agent-teams','mongle-team-relay.cjs'),keyFile=join(folder,member.id+'.relay.json');
+    const config=teamRelayConfig(member.provider,process.execPath,script,keyFile);if(!config)return;
+    let entry=this.relayKeys.get(member.id);
+    if(!entry||entry.teamId!==team.id){entry={key:randomBytes(32).toString('hex'),teamId:team.id};this.relayKeys.set(member.id,entry);}
+    try{
+      await mkdir(folder,{recursive:true});
+      if(await readFile(script,'utf8').catch(()=>'')!==TEAM_RELAY_SOURCE)await writeFile(script,TEAM_RELAY_SOURCE,{encoding:'utf8',mode:0o600});
+      await writeFile(keyFile,JSON.stringify({pipe,key:entry.key})+'\n',{encoding:'utf8',mode:0o600});
+      const file=join(folder,member.id+(member.provider==='claude'?'.mcp.json':'.mcp.toml'));
+      await writeFile(file,config,{encoding:'utf8',mode:0o600});
+      return file;
+    }catch{return;}
+  }
+  private relayOwner(key:string){
+    if(typeof key!=='string'||!/^[a-f0-9]{64}$/.test(key))return;
+    const expected=Buffer.from(key);
+    for(const [memberId,entry] of this.relayKeys){
+      if(!timingSafeEqual(Buffer.from(entry.key),expected))continue;
+      const team=this.teams.find(item=>item.id===entry.teamId),member=team?.members.find(item=>item.id===memberId);
+      return team&&member?{team,member}:undefined;
+    }
+  }
+  /** What a member sees of its team: each member, its role and report target, and what it is doing now. */
+  private teamRoster(team:Team,self:TeamMember):string{
+    const doing=(member:TeamMember)=>{
+      const runtime=member.terminalId?this.runtimes.get(member.terminalId):undefined;
+      if(!runtime||runtime.info.status!=='running')return '터미널 닫힘';
+      if(!runtime.inbox?.agentRunning)return runtime.promptIdle?'CLI 꺼짐':'시작하는 중';
+      const status=runtime.info.agentStatus;
+      return status==='working'?'일하는 중':status==='attention'?'사용자 확인 대기':status==='error'?'오류로 멈춤':'쉬는 중';
+    };
+    const lines=team.members.map((member,index)=>{
+      const waiting=member.terminalId?this.runtimes.get(member.terminalId)?.inbox?.size??0:0;
+      return '- '+member.name+(member===self?' (나)':'')+': '+ROLE_DEFAULTS[member.role].label+(index===0?', 팀장':'')+', '+(member.provider==='claude'?'Claude Code':'Codex')+(member.model?' '+member.model:'')+(member.readOnly?', 읽기 전용':'')+'. 지금: '+doing(member)+(waiting?', 받을 메시지 '+waiting+'개':'')+'. 끝나면 '+(member.reportTo==='user'?'사용자':member.reportTo)+'에게 보고';
+    });
+    return ['팀: '+team.name,...lines,'사용자에게 보고하려면 to에 "사용자"를 씁니다.'].join('\n');
+  }
+  /**
+   * A member's team relay asks for its team or sends a message as that member. The key names the sender, so a
+   * member cannot speak for another. Messages to a member go through its inbox like the user's; a report to the
+   * user is only recorded in the team conversation. Every answer is written for the CLI that asked.
+   */
+  teamRelay(key:string,request:TeamRelayRequest):TeamRelayAnswer{
+    const fail=(error:string):TeamRelayAnswer=>({ok:false,error});
+    if(this.closing||this.shutdownPrepared)return fail('몽글터미널이 종료하는 중입니다.');
+    const owner=this.relayOwner(key);
+    if(!owner)return fail('몽글 팀 연결이 끝났습니다. 팀이 해제되었거나 몽글터미널이 다시 시작되었습니다. 사용자에게 알려 주세요.');
+    const {team,member}=owner;
+    if(request.op==='list')return {ok:true,text:this.teamRoster(team,member)};
+    const to=request.to.trim(),user=['사용자','user','나'].includes(to.toLowerCase());
+    const target=user?undefined:team.members.find(item=>item.name===to)??team.members.find(item=>item.name.toLowerCase()===to.toLowerCase());
+    if(!user&&!target)return fail('"'+to.slice(0,40)+'"라는 구성원이 없습니다. 받을 수 있는 이름: '+[...team.members.filter(item=>item!==member).map(item=>item.name),'사용자'].join(', '));
+    if(target===member)return fail('자기 자신에게는 보낼 수 없습니다.');
+    const text=cleanAgentMessage(request.text);
+    if(!text)return fail('보낼 내용이 비어 있습니다.');
+    if(text.length>AGENT_MESSAGE_MAX_CHARS)return fail('메시지는 '+AGENT_MESSAGE_MAX_CHARS+'자까지 보낼 수 있습니다. 긴 내용은 파일에 쓰고 그 파일 위치를 보내 주세요.');
+    const entry:TeamMessage={id:randomUUID(),from:member.id,to:target?target.id:'user',preview:text.replace(/\r/g,'\n').slice(0,TEAM_MESSAGE_PREVIEW),createdAt:Date.now(),status:target?'waiting':'delivered'};
+    if(!target){
+      team.messages=[...(team.messages??[]),entry].slice(-TEAM_MESSAGE_LOG);
+      this.teamStore?.saveTeam(team);this.broadcastState();
+      return {ok:true,text:'사용자에게 보고했습니다. 몽글 팀 대화에 남았습니다.'};
+    }
+    const runtime=target.terminalId?this.runtimes.get(target.terminalId):undefined,inbox=runtime?.inbox;
+    if(!runtime||runtime.info.status!=='running'||!inbox||!runtime.agentShell)return fail(target.name+'의 터미널이 닫혀 있어 보낼 수 없습니다. 사용자에게 알려 주세요.');
+    if(!inbox.agentRunning&&runtime.promptIdle)return fail(target.name+'의 CLI가 꺼져 있어 보낼 수 없습니다. 사용자에게 알려 주세요.');
+    if(inbox.size>=AGENT_INBOX_MAX)return fail(target.name+'에게 아직 전달되지 않은 메시지가 '+AGENT_INBOX_MAX+'개 있습니다. 전달된 뒤 다시 보내 주세요.');
+    team.messages=[...(team.messages??[]),entry].slice(-TEAM_MESSAGE_LOG);
+    inbox.add(teamMessageText(member.name,target.name,text),member.name,false,entry.id);
+    this.teamStore?.saveTeam(team);this.broadcastState();
+    return {ok:true,text:target.name+'에게 보냈습니다. '+target.name+'이(가) 하던 일이 있으면 그 일을 마친 뒤 입력창에 들어갑니다. 답이나 보고는 새 메시지로 들어오니, 기다리는 동안 같은 차례에서 다시 확인하지 말고 차례를 끝내세요.'};
   }
   private teamLogBroadcast=false;
   /** Inboxes settle in the middle of terminal events; views learn of it once those finish. */
@@ -486,7 +569,9 @@ export class HostCore {
     const group=this.group(p.groupId);
     const team:Team={id:randomUUID(),name:p.name.trim(),groupId:group.id,cwd,...(repositoryId?{repositoryId}:{}),...(scope?{scope}:{}),createdAt:Date.now(),members:members.map(item=>({...item,id:randomUUID()}))};
     await mkdir(this.teamFolder(team.id),{recursive:true});
-    for(const [index,member] of team.members.entries())await writeFile(this.promptFile(team.id,member),rolePromptFile(member.provider,teamRolePrompt(team,team.members,index)),'utf8');
+    const relays=new Map<string,string>();
+    for(const member of team.members){const file=await this.writeTeamRelay(team,member);if(file)relays.set(member.id,file);}
+    for(const [index,member] of team.members.entries())await writeFile(this.promptFile(team.id,member),rolePromptFile(member.provider,teamRolePrompt(team,team.members,index,{relay:relays.has(member.id)})),'utf8');
     const save=()=>this.projectCommit(()=>{this.teamStore?.saveTeam(team);this.broadcastState();});
     await this.projectCommit(()=>{this.requireClient(client);this.teams.push(team);this.teamStore?.saveTeam(team);this.broadcastState();});
     let anchor:string|undefined;
@@ -505,7 +590,7 @@ export class HostCore {
         await this.projectCommit(()=>{
           const info=this.terminal(terminalId),runtime=this.runtimes.get(terminalId);
           info.title=member.name;
-          const command=runtime?.agentShell?teamLaunchCommand(member,this.promptFile(team.id,member),claudePath,this.teamFolders(team,member)):undefined;
+          const command=runtime?.agentShell?teamLaunchCommand(member,this.promptFile(team.id,member),claudePath,this.teamFolders(team,member),relays.get(member.id)):undefined;
           if(!runtime||!command)throw new AppError('TEAM_LAUNCH_UNSUPPORTED','PowerShell 터미널에서만 구성원 CLI를 실행할 수 있습니다.');
           this.queueLaunch(runtime,command);this.persist();
         });
@@ -1005,7 +1090,12 @@ export class HostCore {
       let command=resume?.cwd?agentResumeCommand(profile,resume,executable,{codexWrapper}):undefined;
       // A team member reopens with its model, role prompt and read-only switch, so a later compaction keeps the role.
       const membership=this.teamMember(info.id);
-      if(command&&resume&&membership&&membership.member.provider===resume.provider&&profile.kind==='powershell'){const flags=teamMemberFlags(membership.member,this.promptFile(membership.team.id,membership.member),this.teamFolders(membership.team,membership.member));if(flags)command=command.slice(0,-1)+' '+flags+'\r';}
+      if(command&&resume&&membership&&membership.member.provider===resume.provider&&profile.kind==='powershell'){
+        const {team,member}=membership,relay=await this.writeTeamRelay(team,member),promptFile=this.promptFile(team.id,member);
+        // A team started before the relay existed gets the current role prompt, which names it.
+        await writeFile(promptFile,rolePromptFile(member.provider,teamRolePrompt(team,team.members,team.members.indexOf(member),{relay:Boolean(relay)})),'utf8').catch(()=>{});
+        const flags=teamMemberFlags(member,promptFile,this.teamFolders(team,member),relay);if(flags)command=command.slice(0,-1)+' '+flags+'\r';
+      }
       let launch:Awaited<ReturnType<typeof resolveShellLaunch>>|undefined;
       if(command&&resume?.cwd){try{launch=await resolveShellLaunch(profile,resume.cwd);}catch{command=undefined;}}
       else command=undefined;

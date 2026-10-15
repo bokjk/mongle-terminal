@@ -4,10 +4,10 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { HostState, Team, TeamMessage, TeamScopeFolder, TerminalInfo } from '../../packages/protocol/index.js';
 import { BUILT_IN_TEMPLATES, ROLE_DEFAULTS } from '../../packages/host/teams.js';
-import { addMember, addScopeFolder, branchMoves, canCancelTeamMessage, draftsFrom, makeLead, modelSuggestions, removeMember, renameMember, scopeDraft, scopeProblems, specsFrom, teamFlow, teamMessageStatus, teamOfTerminal, teamSendBlocker, toggleScopeFolder, withRole } from '../../apps/web/src/team-model.js';
+import { addMember, addScopeFolder, branchMoves, canCancelTeamMessage, draftsFrom, makeLead, modelSuggestions, moveTeamRow, removeMember, renameMember, scopeDraft, scopeProblems, specsFrom, TEAM_LEAD_DEFAULT, teamFlow, teamLayout, teamMessageStatus, teamOfTerminal, teamSendBlocker, toggleScopeFolder, withRole } from '../../apps/web/src/team-model.js';
 import { TeamScopePicker } from '../../apps/web/src/TeamScope.js';
 import { TeamModelPicker } from '../../apps/web/src/TeamModelPicker.js';
-import { TeamBar, TeamChat, TeamSidebarList } from '../../apps/web/src/TeamWorkspace.js';
+import { TeamBar, TeamChat, TeamSidebarList, TeamWorkspace } from '../../apps/web/src/TeamWorkspace.js';
 
 const terminal = (id: string, extra: Partial<TerminalInfo> = {}): TerminalInfo => ({ id, groupId: 'g', title: id, profileId: 'pwsh', cwd: 'C:/w', generation: '1', status: 'running', cols: 80, rows: 24, ...extra });
 const spec = BUILT_IN_TEMPLATES[0].members;
@@ -85,7 +85,15 @@ test('the team screen shows the conversation, the work flow and the member list'
   assert.match(chat, /보류된 메시지 취소: 끝나면 함께 봐줘/);
   assert.match(chat, /<option value="m0" selected="">설계 \(팀장\)<\/option>/, 'the lead receives by default');
   const empty = renderToStaticMarkup(createElement(TeamChat, { state: state([terminal('t0')]), team, request, onSelect: () => {}, onError: () => {} }));
-  assert.match(empty, /아직 보낸 메시지가 없습니다/);
+  assert.match(empty, /아직 메시지가 없습니다/);
+  // Members' own messages and their reports to the user share the conversation.
+  const relayed: TeamMessage[] = [
+    { id: 'c', from: 'm0', to: 'm1', preview: '로그인 API를 만들어 주세요', createdAt: Date.UTC(2026, 9, 15, 1, 20), status: 'delivered' },
+    { id: 'd', from: 'm2', to: 'user', preview: '검토 끝: 통과', createdAt: Date.UTC(2026, 9, 15, 1, 40), status: 'delivered' },
+  ];
+  const conversation = renderToStaticMarkup(createElement(TeamChat, { state: state(terminals), team: { ...team, messages: relayed }, request, onSelect: () => {}, onError: () => {} }));
+  assert.match(conversation, /설계 → 개발<\/button><span class="team-message-text" title="로그인 API를 만들어 주세요">/);
+  assert.match(conversation, /disabled="">검토 → 나<\/button>.*<span class="team-message-status delivered">보고<\/span>/, 'a report to the user has no terminal to open');
   assert.match(empty, /준비되기를 기다리는 중/);
   const bar = renderToStaticMarkup(createElement(TeamBar, { team, state: state([]), onSaveTemplate: () => {}, onRemove: () => {} }));
   assert.match(bar, /구성원 3명 · my-app/);
@@ -134,6 +142,21 @@ test('a team scope starts in the group folder, takes one working tree per reposi
   assert.match(markup, /이미 feature\/login/);
   assert.doesNotMatch(renderToStaticMarkup(createElement(TeamScopePicker, { scope: { ...scope, checked: ['D:\\work'], start: 'D:\\work' }, loading: false, error: '', onChange: () => {}, onToggle: () => {}, onAdd: async () => {} })), /맞추기/, 'no branch choice without a checked repository');
 });
+test('the team screen splits by the sizes the user dragged, kept per team and team size', () => {
+  assert.deepEqual(teamLayout(undefined, 2), { lead: TEAM_LEAD_DEFAULT, rows: [1, 1] });
+  assert.deepEqual(teamLayout({ lead: 0.95, rows: [2, 1] }, 2), { lead: 0.8, rows: [2, 1] }, 'the lead keeps room for the others');
+  assert.deepEqual(teamLayout({ lead: 0.5, rows: [2, 1] }, 3), { lead: 0.5, rows: [1, 1, 1] }, 'a split saved for another team size starts equal');
+  assert.deepEqual(teamLayout({ lead: 'wide', rows: [0, 1] }, 2), { lead: TEAM_LEAD_DEFAULT, rows: [1, 1] });
+  assert.deepEqual(moveTeamRow([1, 1, 1], 0, 0.75), [1.5, 0.5, 1]);
+  assert.deepEqual(moveTeamRow([1, 1, 1], 1, 0.05).map(value => Math.round(value * 100) / 100), [1, 0.3, 1.7], 'each keeps 15% of the two');
+  assert.deepEqual(moveTeamRow([1, 1], 1, 0.5), [1, 1], 'there is no divider after the last member');
+  const screen = renderToStaticMarkup(createElement(TeamWorkspace, { state: state([terminal('t0'), terminal('t1'), terminal('t2')]), team, renderPane: (id: string) => createElement('i', null, id), request, onSelect: () => {}, onError: () => {}, onSaveTemplate: () => {}, onRemove: () => {} }));
+  assert.match(screen, /style="--team-lead:0\.63fr;--team-rest:0\.37fr"/);
+  assert.match(screen, /role="separator"[^>]*aria-label="팀장 칸 너비"[^>]*aria-valuenow="63"/);
+  assert.match(screen, /role="separator"[^>]*aria-label="개발와 검토 칸 높이"[^>]*aria-valuenow="50"/);
+  assert.equal(screen.match(/role="separator"/g)?.length, 2, 'one handle beside the lead and one between the two others');
+});
+
 test('a model is picked from the CLI list, with the CLI default first and any other name typed', () => {
   const models = [{ id: 'gpt-6-astra', label: 'GPT-6-Astra', description: 'Our most capable model.' }, { id: 'gpt-6.1-sol', label: 'GPT-6.1-Sol' }];
   const picker = renderToStaticMarkup(createElement(TeamModelPicker, { name: '검토', model: 'gpt-6-astra', models, suggestions: [], onChange: () => {} }));

@@ -1152,11 +1152,18 @@ details.command-menu { flex: 0 0 auto; width: auto; max-height: none; overflow: 
 .team-check strong { font-size: 12px; font-weight: 550; }
 .team-check small { color: var(--text-secondary); font-size: 11px; line-height: 1.6; overflow-wrap: anywhere; }
 .team-workspace { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
-.team-panes { display: grid; flex: 1; grid-template-columns: minmax(0, 1.7fr) minmax(260px, 1fr); gap: 8px; min-height: 0; padding: 5px 6px 6px; }
+.team-panes { display: grid; flex: 1; grid-template-columns: minmax(0, var(--team-lead, 1.7fr)) 9px minmax(260px, var(--team-rest, 1fr)); min-height: 0; padding: 5px 6px 6px; }
 .team-panes.single, .team-panes.solo { grid-template-columns: minmax(0, 1fr); }
 .team-pane-slot { display: flex; min-width: 0; min-height: 0; }
-.team-others { display: flex; flex-direction: column; gap: 8px; min-height: 0; overflow-y: auto; }
-.team-others > .team-pane-slot { flex: 1 0 150px; }
+.team-others { display: flex; flex-direction: column; min-height: 0; overflow-y: auto; }
+.team-others > .team-pane-slot { flex: var(--team-row, 1) 1 0; min-height: 120px; }
+/* The same thin handle as the split layout: drag, arrow keys, double click for the first size. */
+.team-divider { position: relative; z-index: 2; min-width: 0; cursor: col-resize; touch-action: none; }
+.team-divider::after { position: absolute; content: ''; top: 10px; bottom: 10px; left: 3px; width: 3px; border-radius: 4px; background: var(--border); transition: background .12s; }
+.team-divider-row { flex: 0 0 9px; height: 9px; cursor: row-resize; }
+.team-divider-row::after { top: 3px; bottom: auto; left: 10px; right: 10px; width: auto; height: 3px; }
+.team-divider:hover::after, .team-divider:active::after, .team-divider:focus-visible::after { background: var(--accent); }
+.team-divider:focus-visible { outline: none; }
 .team-member-badge { display: inline-flex; flex: 0 1 auto; align-items: center; gap: 4px; min-width: 0; overflow: hidden; }
 .team-pane-slot .pane-title { flex: 0 0 auto; max-width: 45%; }
 .team-chip.model { min-width: 0; overflow: hidden; text-overflow: ellipsis; flex-shrink: 1; }
@@ -1167,9 +1174,12 @@ details.command-menu { flex: 0 0 auto; width: auto; max-height: none; overflow: 
   .team-chip-provider, .pane-toolbar [aria-label='터미널 검색'] { display: none; }
 }
 @media (max-width: 1180px) {
-  .team-panes:not(.single):not(.solo) { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1.6fr) minmax(0, 1fr); }
-  .team-others { flex-direction: row; overflow-x: auto; overflow-y: hidden; }
-  .team-others > .team-pane-slot { flex: 1 0 260px; }
+  .team-panes:not(.single):not(.solo) { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, var(--team-lead, 1.6fr)) 9px minmax(0, var(--team-rest, 1fr)); }
+  .team-divider-lead { cursor: row-resize; }
+  .team-divider-lead::after { top: 3px; bottom: auto; left: 10px; right: 10px; width: auto; height: 3px; }
+  .team-divider-row { display: none; }
+  .team-others { flex-direction: row; gap: 8px; overflow-x: auto; overflow-y: hidden; }
+  .team-others > .team-pane-slot { flex: 1 0 260px; min-height: 0; }
 }
 .team-chip { display: inline-flex; align-items: center; gap: 3px; flex-shrink: 0; padding: 1px 6px; border: 1px solid var(--border); border-radius: 999px; color: var(--text-secondary); background: var(--bg); font-size: 9.5px; line-height: 1.5; white-space: nowrap; }
 .team-chip.lead { color: var(--warning); border-color: color-mix(in srgb, var(--warning) 40%, var(--border)); background: var(--warning-dim); }

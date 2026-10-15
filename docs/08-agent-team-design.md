@@ -155,7 +155,7 @@ sequenceDiagram
 ```
 
 1. **동료 확인:** 구성원은 몽글 MCP의 `list_agents`로 동료의 이름·역할·모델·상태를 본다. 상태는 기존 Claude·Codex 훅에서 온다.
-2. **보내기:** `send_message(to, text)`를 부른다. 호스트는 셸마다 주는 비밀 토큰(`MONGLE_AGENT_TOKEN`)으로 보낸 구성원을 확인하므로 이름을 사칭할 수 없다.
+2. **보내기:** `send_message(to, text)`를 부른다. 호스트는 구성원마다 주는 비밀 키로 보낸 구성원을 확인하므로 이름을 사칭할 수 없다. 구현은 셸 토큰(`MONGLE_AGENT_TOKEN`) 대신 팀 폴더의 키 파일을 MCP 서버 인자로 넘긴다. Codex는 MCP 서버에 넘길 환경 변수를 따로 정해야 하고, 키는 실행부를 켤 때마다 새로 만든다([구현](validation/agent-team-relay.md)).
 3. **배달:** 받는 쪽에 맞는 경로를 차례로 시도한다.
    - Codex: 공식 [`codex queue --thread <ID> --message ...`](https://learn.chatgpt.com/docs/developer-commands). 호스트가 셸과 같은 Codex 실행 파일·버전을 찾아 실행해야 해서(이 PC는 PATH의 첫 `codex.exe`가 Codex 앱 내장본), 1단계에서는 Codex도 아래 보호된 터미널 입력을 쓰고 3단계에서 붙인다.
    - Claude: 보호된 터미널 입력. 붙여넣기(bracketed paste) 뒤 Enter를 따로 보낸다. Channels(연구 미리보기)는 조직에서 켠 경우에만 쓰는 선택 경로다. 0단계에서 이 PC의 Claude Team 계정은 조직 정책으로 막혀 있었고, 대화를 이어서 켤 때 수신 연결이 다시 맺어지지 않는다는 보고([#67024](https://github.com/anthropics/claude-code/issues/67024))도 있다.
@@ -194,7 +194,7 @@ Claude Code 도움말(`--system-prompt-snapshot`)은 기록한 시스템 프롬�
 | 0. 확인 실험 | 아래 "먼저 확인할 항목"을 격리된 시험 폴더에서 실제 CLI로 확인 | 2026-10-14 완료. [결과](validation/agent-team-probe.md) |
 | 1. 안전한 전달 | 호스트의 보호된 전달 경로와 보류함, 팀 없이 쓰는 "에이전트에게 메시지 보내기" | 제어권·사람 입력과 충돌하지 않음을 실제 몽글 창에서 확인 |
 | 2. 팀 실행 | 템플릿, 시작 전 점검, 워크트리·터미널·CLI 실행, 역할 전달, 팀 화면 | 시험 저장소에서 3명 팀이 역할을 지키며 일을 넘김 |
-| 3. 에이전트끼리 대화 | 몽글 MCP(`list_agents`, `send_message`), 보고 누락 알림 | 구성원이 스스로 보내고 받은 기록이 남음 |
+| 3. 에이전트끼리 대화 | 몽글 MCP(`list_agents`, `send_message`), 보고 누락 알림 | 구성원이 스스로 보내고 받은 기록이 남음. 2026-10-15 MCP 구현(미배포), 보고 누락 알림은 남음 |
 | 4. 마무리 | 하던 작업을 팀으로 전환, 휴대폰 화면, 템플릿 관리 | 휴대폰에서 승인·지시가 가능함 |
 
 화면을 만드는 단계는 [AGENTS.md](../AGENTS.md) 규칙에 따라 Mobbin 사례를 먼저 확인하고, 실제 앱 조작 검증은 아스트라(`gpt-6-astra`)가 맡는다. 사용자에게 보이는 단계는 README·CHANGELOG·사용자 안내를 함께 고친다. 각 단계는 `dev` 대상 PR 하나로 낸다.
