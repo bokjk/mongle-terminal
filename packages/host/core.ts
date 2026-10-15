@@ -19,7 +19,7 @@ import { Uploads, UPLOAD_CHUNK_BYTES, UPLOAD_MAX_BYTES } from './uploads.js';
 import { inspectGit, readGitDiff, readGitReview } from './git.js';
 import { inspectProject, inspectKnownRepository, validateWorktree, prepareWorktree, addWorktree, removeWorktree, samePath, worktreeSlug } from './worktrees.js';
 import { AgentInbox, AGENT_INBOX_MAX, AGENT_MESSAGE_MAX_CHARS, cleanAgentMessage, type AgentMessageOutcome } from './agent-inbox.js';
-import { BUILT_IN_TEMPLATES, ROLE_DEFAULTS, TEAM_EXTRA_MAX, TEAM_INSTRUCTIONS_MAX, TEAM_MESSAGE_LOG, TEAM_MESSAGE_PREVIEW, rolePromptFile, safeCliPath, teamLaunchCommand, teamMemberFlags, teamMessageText, teamProblems, teamRelayConfig, teamRolePrompt } from './teams.js';
+import { BUILT_IN_TEMPLATES, ROLE_DEFAULTS, TEAM_EXTRA_MAX, TEAM_INSTRUCTIONS_MAX, TEAM_MESSAGE_LOG, TEAM_MESSAGE_PREVIEW, rolePromptFile, safeCliPath, teamLaunchCommand, teamMemberFlags, teamMessageText, teamProblems, teamRelayConfig, teamRolePrompt, withoutTeamHeader } from './teams.js';
 import { TEAM_RELAY_SOURCE } from './team-relay-source.js';
 import type { TeamRelayAnswer, TeamRelayRequest } from './agent-pipe.js';
 import { alignBranch, branchPlan, scopeFolder, validBranchName, type BranchPlan } from './team-scope.js';
@@ -427,7 +427,8 @@ export class HostCore {
     const target=user?undefined:team.members.find(item=>item.name===to)??team.members.find(item=>item.name.toLowerCase()===to.toLowerCase());
     if(!user&&!target)return fail('"'+to.slice(0,40)+'"라는 구성원이 없습니다. 받을 수 있는 이름: '+[...team.members.filter(item=>item!==member).map(item=>item.name),'사용자'].join(', '));
     if(target===member)return fail('자기 자신에게는 보낼 수 없습니다.');
-    const text=cleanAgentMessage(request.text);
+    // A model often copies the header of the messages it got; the receiver gets Mongle's one header only.
+    const text=withoutTeamHeader(cleanAgentMessage(request.text),team.members.map(item=>item.name));
     if(!text)return fail('보낼 내용이 비어 있습니다.');
     if(text.length>AGENT_MESSAGE_MAX_CHARS)return fail('메시지는 '+AGENT_MESSAGE_MAX_CHARS+'자까지 보낼 수 있습니다. 긴 내용은 파일에 쓰고 그 파일 위치를 보내 주세요.');
     const entry:TeamMessage={id:randomUUID(),from:member.id,to:target?target.id:'user',preview:text.replace(/\r/g,'\n').slice(0,TEAM_MESSAGE_PREVIEW),createdAt:Date.now(),status:target?'waiting':'delivered'};

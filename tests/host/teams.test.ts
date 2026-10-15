@@ -3,7 +3,7 @@ import test from 'node:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { BUILT_IN_TEMPLATES, ROLE_DEFAULTS, rolePromptFile, teamLaunchCommand, teamMemberFlags, teamProblems, teamRelayConfig, teamRolePrompt } from '../../packages/host/teams.js';
+import { BUILT_IN_TEMPLATES, ROLE_DEFAULTS, rolePromptFile, teamLaunchCommand, teamMemberFlags, teamProblems, teamRelayConfig, teamRolePrompt, withoutTeamHeader } from '../../packages/host/teams.js';
 import { claudeModels, codexModels } from '../../packages/host/team-environment.js';
 import { TeamStore } from '../../packages/host/team-store.js';
 import type { TeamMemberSpec } from '../../packages/protocol/index.js';
@@ -91,6 +91,20 @@ test('the team relay reaches each CLI through its own options, and the role prom
   assert.doesNotMatch(developer, /팀장은 사용자가 맡긴 일을/, 'only the lead hands out work');
   assert.match(developer, new RegExp('send_message로 ' + members[1].reportTo + '에게 결과를 보고하세요'));
   assert.match(teamRolePrompt({ name: '팀' }, members, 0), /아직 구성원에게 직접 보내는 도구는 없습니다/, 'without the relay the user forwards');
+  assert.match(lead, /머리글은 몽글이 붙이니 쓰지 마세요/);
+});
+
+test('a header a member copied into its message is dropped, so the receiver sees Mongle\'s header once', () => {
+  const names = ['설계', '개발', '검토'];
+  // As seen in the real app: haiku members started their text with the header of the message they had received.
+  assert.equal(withoutTeamHeader('[몽글 팀 메시지] 설계 → 개발 작업: 파일 개수를 세어 주세요', names), '작업: 파일 개수를 세어 주세요');
+  assert.equal(withoutTeamHeader('[몽글 팀 메시지] 개발 → 검토\r파일 4개입니다.', names), '파일 4개입니다.');
+  assert.equal(withoutTeamHeader('[몽글 팀 메시지] 설계 → 사용자 결과: 통과', names), '결과: 통과');
+  assert.equal(withoutTeamHeader(' [몽글 팀 메시지] 설계 → 개발\r[몽글 팀 메시지] 설계 → 개발\r두 번', names), '두 번');
+  assert.equal(withoutTeamHeader('[몽글 팀 메시지] 내용만 있음', names), '내용만 있음', 'a label without a route loses only the label');
+  assert.equal(withoutTeamHeader('[몽글 팀 메시지] 설계 → 나중에 볼 것', names), '설계 → 나중에 볼 것', 'a word that only starts with a name stays');
+  assert.equal(withoutTeamHeader('결과는 [몽글 팀 메시지] 형식으로 옵니다', names), '결과는 [몽글 팀 메시지] 형식으로 옵니다', 'only the start of the text');
+  assert.equal(withoutTeamHeader('[몽글 팀 메시지] 설계 → 개발', names), '');
 });
 
 test('model lists come from each CLI: Codex catalog order without hidden models, Claude aliases from its help', () => {
