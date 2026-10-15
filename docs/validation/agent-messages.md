@@ -1,6 +1,6 @@
 # 에이전트에게 메시지 보내기
 
-2026-10-14, Windows x64. **0.3.24 배포 준비** 상태다. 배포 검사는 [0.3.24 배포 검증](public-release-0.3.24.md)에 기록한다. PowerShell 터미널에서 실행 중인 Claude Code·Codex에게 제어권 없이 메시지를 보내는 기능이다. AI 팀 기능의 1단계 "안전한 전달"에 해당한다([설계안](https://github.com/bokjk/mongle-terminal/pull/88)). 팀 없이도 쓸 수 있다.
+2026-10-14, Windows x64. **0.3.24에 공개**했다. 배포 검사와 공개 파일 검증은 [0.3.24 배포 검증](public-release-0.3.24.md#final)에 기록한다. PowerShell 터미널에서 실행 중인 Claude Code·Codex에게 제어권 없이 메시지를 보내는 기능이다. AI 팀 기능의 1단계 "안전한 전달"에 해당한다([설계안](https://github.com/bokjk/mongle-terminal/pull/88)). 팀 없이도 쓸 수 있다.
 
 ## 배경
 
