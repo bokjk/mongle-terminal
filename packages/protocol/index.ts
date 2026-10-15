@@ -20,9 +20,39 @@ export type ClaudeIntegration = {status:'ready' | 'unavailable'; message?:string
 export type CodexIntegration = {status:'installed' | 'unavailable'; message:string};
 /** agentNotificationCount: the notificationCount value produced by the latest Claude alert (completion, request or error). */
 /** codexHooksReview: Codex shows its startup review of new or changed hooks in this terminal now. */
-export interface TerminalInfo { id: string; groupId: string; title: string; profileId: string; cwd: string; currentCwd?: string; generation: string; status: 'running' | 'exited' | 'interrupted'; cols: number; rows: number; pid?: number; exitCode?: number; controller?: Controller; historyAvailable?: boolean; resumeOnBoot?: boolean; restoreError?: string; worktreeId?: string; notificationCount?: number; agentStatus?: AgentStatus; agentProvider?: 'claude' | 'codex'; agentNotificationCount?: number; codexHooksReview?: boolean; }
+/**
+ * Why a message for the terminal's agent waits: no hook-proven agent runs there, it just started, it is
+ * working or asking, a person submitted something no hook answered yet or may still be typing, the
+ * user turned on do-not-disturb, or the previous message has not started a turn yet.
+ */
+export type AgentHoldReason = 'no-agent' | 'starting' | 'busy' | 'attention' | 'unconfirmed' | 'typing' | 'dnd' | 'delivering';
+/** A waiting message as every view sees it: a short preview, never the full text. */
+export interface AgentInboxMessage { id: string; preview: string; createdAt: number; from: string; force?: true }
+/** Messages waiting for the agent in this terminal generation (host memory only), and how many were delivered. */
+export interface AgentInboxSummary { messages: AgentInboxMessage[]; hold?: AgentHoldReason; delivered: number }
+/**
+ * agentReady: a hook proved that Claude Code or Codex runs in this PowerShell and the shell prompt has
+ * not returned since, so messages can be sent to it (host memory only).
+ */
+export interface TerminalInfo { id: string; groupId: string; title: string; profileId: string; cwd: string; currentCwd?: string; generation: string; status: 'running' | 'exited' | 'interrupted'; cols: number; rows: number; pid?: number; exitCode?: number; controller?: Controller; historyAvailable?: boolean; resumeOnBoot?: boolean; restoreError?: string; worktreeId?: string; notificationCount?: number; agentStatus?: AgentStatus; agentProvider?: 'claude' | 'codex'; agentNotificationCount?: number; codexHooksReview?: boolean; agentDnd?: boolean; agentReady?: boolean; agentInbox?: AgentInboxSummary; }
 export interface HostSettings { name: string; recordHistory: boolean; scrollback: number; }
-export interface HostState { hostId: string; bootId: string; name: string; version: string; protocolVersion: number; capabilities?: string[]; groups: Group[]; terminals: TerminalInfo[]; profiles: ShellProfile[]; settings: HostSettings; claudeIntegration?: ClaudeIntegration; codexIntegration?: CodexIntegration; storageError?: string; repositories?: Repository[]; worktrees?: Worktree[]; worktreeOperations?: WorktreeOperation[]; }
+/** A role picked for a team member; it fills in default instructions and the read-only switch. */
+export type AgentRole = 'lead' | 'developer' | 'reviewer' | 'tester' | 'researcher' | 'custom';
+/** One member as written in a template or the start form. The first member of a team leads it. */
+export interface TeamMemberSpec { name: string; role: AgentRole; provider: 'claude' | 'codex'; model: string; reportTo: string; instructions: string; extra?: string; folder: 'base' | 'worktree'; readOnly: boolean }
+export interface TeamTemplate { id: string; name: string; builtIn?: true; members: TeamMemberSpec[] }
+/** A started member: the terminal and worktree it got, or why it did not start. */
+export interface TeamMember extends TeamMemberSpec { id: string; terminalId?: string; worktreeId?: string; error?: string }
+/**
+ * One message in a team's conversation, saved by the host (the latest 100). from is 'user' or a member id,
+ * to is a member id; preview holds at most the first 200 characters. waiting lasts until the receiver's
+ * inbox delivers, cancels or loses it (the terminal or the host stopped).
+ */
+export interface TeamMessage { id: string; from: string; device?: string; to: string; preview: string; createdAt: number; status: 'waiting' | 'delivered' | 'cancelled' | 'failed' }
+export interface Team { id: string; name: string; groupId: string; cwd: string; repositoryId?: string; createdAt: number; members: TeamMember[]; messages?: TeamMessage[] }
+/** One line of the pre-start check. */
+export interface TeamCheck { id: string; label: string; status: 'ok' | 'warning' | 'error'; message: string }
+export interface HostState { hostId: string; bootId: string; name: string; version: string; protocolVersion: number; capabilities?: string[]; groups: Group[]; terminals: TerminalInfo[]; profiles: ShellProfile[]; settings: HostSettings; claudeIntegration?: ClaudeIntegration; codexIntegration?: CodexIntegration; storageError?: string; repositories?: Repository[]; worktrees?: Worktree[]; worktreeOperations?: WorktreeOperation[]; teams?: Team[]; }
 export interface ConnectionContext { id: string; deviceId: string; deviceName: string; owner: boolean; }
 export interface FileEntry { name: string; path: string; kind: 'directory' | 'file' | 'link' | 'other'; }
 export interface DirectoryListing { root: string; path: string; absolutePath: string; entries: FileEntry[]; truncated: boolean; }

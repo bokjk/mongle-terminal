@@ -25,7 +25,7 @@
 | 질문(AskUserQuestion)에 Enter로 답함 | PostToolUse(입력에 답 추가) → Stop | **응답이 끝날 때까지 확인 요청 유지** |
 | 정상 Stop 뒤 | 약 60초 뒤 Notification(idle_prompt) | 무시 (정상) |
 
-이 실행에만 --settings로 20종 이벤트 기록 훅을 붙여 확인했다. 수동 거절과 Esc 취소 뒤에는 PostToolBatch·PermissionDenied·Stop을 포함해 어떤 훅도 오지 않았다. PermissionRequest에는 tool_use_id가 없고 PreToolUse·PostToolUse에는 있다. 사용자 설정의 다른 훅과 함께 실행할 때는 SessionStart(startup)·SessionEnd가 몽글로 전달되지 않았고, CLI 종료는 셸 프롬프트 표식으로 반영됐다.
+이 실행에만 --settings로 20종 이벤트 기록 훅을 붙여 확인했다. 수동 거절과 Esc 취소 뒤에는 PostToolBatch·PermissionDenied·Stop을 포함해 어떤 훅도 오지 않았다. PermissionRequest에는 tool_use_id가 없고 PreToolUse·PostToolUse에는 있다. 사용자 설정의 다른 훅과 함께 실행할 때는 SessionStart(startup)·SessionEnd가 몽글로 전달되지 않았고, CLI 종료는 셸 프롬프트 표식으로 반영됐다. (2026-10-15 정정: 다른 훅이 아니라 사용자 설정의 Claude Code 전체 화면 모드가 원인이었다. [전체 화면 모드의 시작 신호](claude-fullscreen-start.md))
 
 **Codex:** 사용자 기본 설정에서 정상 응답·/status·Esc 중단·종료 동안 몽글 상태 변화와 BEL/OSC9 알림이 모두 0회였다. Codex 연동은 대화 재개용 SessionStart/End만 전달하므로 **작업 중 표시는 Claude 경로에서만 생긴다.** 다만 기존 화면은 모바일·접힌 사이드바의 터미널 전환 버튼에 그룹 전체 상태를 붙였다. 그래서 같은 그룹의 Claude가 일하면 Codex 터미널을 보고 있어도 작업 중 표시가 보였다.
 

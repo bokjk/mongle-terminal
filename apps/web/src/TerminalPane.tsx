@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { SearchAddon } from '@xterm/addon-search';
-import { Columns2, Rows2, Maximize2, Minimize2, X, Search, Copy, ClipboardPaste, RotateCcw, Pencil, Keyboard, Eye, SquareTerminal, GripVertical, Plus, ShieldCheck, Paperclip } from 'lucide-react';
+import { Columns2, Rows2, Maximize2, Minimize2, X, Search, Copy, ClipboardPaste, RotateCcw, Pencil, Keyboard, Eye, SquareTerminal, GripVertical, Plus, ShieldCheck, Paperclip, MessageSquareText, BellOff, Bell } from 'lucide-react';
 import { BrowserPresentationAdapter } from '../../../packages/terminal/browser';
 import { DEFAULT_TOUCH_SCROLL_SPEED } from '../../../packages/terminal/touch-scrollback';
 import type { AppClient } from '../../../packages/client/index';
@@ -18,13 +18,14 @@ import { TerminalInputQueue } from './terminal-input-queue';
 import type { PresentedNotification } from './use-terminal-notifications';
 import { attachTerminalPathLinks } from './terminal-file-links';
 import { pathForShell, UPLOAD_LIMIT_BYTES, uploadToTerminal } from './terminal-upload';
+import { AgentInboxBanner, AgentMessageDialog, agentName, canMessageAgent } from './AgentMessage';
 
 export interface PaneActions { key(data:string):void; paste(text:string):void; focus():void; search():void; }
 export interface PaneProps {
   onPresentedNotification?(value:PresentedNotification):void;
   touchScrollSpeed?: number;
   worktreeActions?:TerminalWorktreeActions;
-  client: AppClient; state: HostState; info: TerminalInfo; connected: boolean; owner:boolean; connectionId?:string; selected:boolean; maximized:boolean; tabbed?:boolean; tabs?:ReactNode; onNewTab?:()=>void; canAddTab?:boolean; fontSize:number; theme:'dark'|'light'; ctrl:boolean; alt:boolean;
+  client: AppClient; state: HostState; info: TerminalInfo; connected: boolean; owner:boolean; connectionId?:string; selected:boolean; maximized:boolean; tabbed?:boolean; tabs?:ReactNode; /** A team member's pane: its name as the title, labels after it, and no split buttons (the team screen has its own layout). */ team?:{name:string;badge:ReactNode}; onNewTab?:()=>void; canAddTab?:boolean; fontSize:number; theme:'dark'|'light'; ctrl:boolean; alt:boolean;
   onSelect():void; onSplit(axis:'horizontal'|'vertical'):void; onMaximize():void; onClose():void; onRename():void; onRestart():void; onMove():void; onClearHistory():void; onTerminate():void;
   dragEnabled?:boolean;dropPreview?:PaneDropPreview;onPaneDragStart?(event:DragEvent<HTMLElement>):void;onPaneDragEnd?():void;onPaneDragOver?(event:DragEvent<HTMLElement>):void;onPaneDrop?(event:DragEvent<HTMLElement>):void;onPanePointerStart?():void;dragClickAllowed?():boolean;
   onError(message:string):void; confirmPaste(text:string):Promise<boolean>; register(id:string, actions:PaneActions|null):void;
@@ -42,7 +43,7 @@ export function TerminalPane(props:PaneProps) {
   const [narrow,setNarrow]=useState(false);
   const displayedCwd = info.currentCwd || info.cwd;
   const worktree=state.worktrees?.find(item=>item.id===info.worktreeId);
-  const label=terminalLabel(info,state.worktrees);
+  const label=props.team?.name??terminalLabel(info,state.worktrees);
   const canUpload=state.capabilities?.includes('files.upload')===true;
   const mount = useRef<HTMLDivElement>(null);
   const toolbarDrag = useRef(false);
@@ -73,6 +74,12 @@ export function TerminalPane(props:PaneProps) {
   const [copied,setCopied] = useState(false);
   const [upload,setUpload] = useState<{name:string;percent:number;index:number;count:number}|null>(null);
   const [uploadNotice,setUploadNotice] = useState('');
+  const [messageOpen,setMessageOpen] = useState(false);
+  const messagesSupported=state.capabilities?.includes('agent.messages')===true;
+  const canMessage=canMessageAgent(state,info);
+  const waiting=info.agentInbox?.messages.length??0;
+  const agentRequest=<T,>(method:string,params?:unknown)=>client.request<T>(method,params);
+  function toggleDnd(){void client.request('agent.dnd',{id:info.id,hostId:state.hostId,bootId:state.bootId,generation:info.generation,enabled:!info.agentDnd}).catch(error=>props.onError(error instanceof Error?error.message:'방해 금지를 바꾸지 못했습니다.'));}
   const uploadAbort = useRef<AbortController|undefined>(undefined);
   const fileInput = useRef<HTMLInputElement>(null);
   const sendFilesRef = useRef<(files:File[])=>Promise<void>>(async()=>{});
@@ -386,12 +393,14 @@ export function TerminalPane(props:PaneProps) {
   return <section className={`pane ${props.selected?'active':''} ${props.maximized?'maximized':''}`} id={`terminal-panel-${info.id}`} role={props.tabbed?'tabpanel':undefined} aria-labelledby={props.tabbed?`terminal-tab-${info.id}`:undefined} data-terminal-id={info.id} aria-label={props.tabbed?undefined:`${info.title} 패널`} onFocusCapture={()=>props.onSelect()} onPointerDown={event=>{contextPointer.current=event.pointerType;const target=event.target as Element;if(props.dragEnabled&&target.closest('.pane-header')&&!target.closest('.pane-toolbar'))return;props.onSelect();}} onDragEnterCapture={event=>{event.preventDefault();event.stopPropagation();props.onPaneDragOver?.(event);}} onDragOverCapture={event=>{event.preventDefault();event.stopPropagation();props.onPaneDragOver?.(event);}} onDropCapture={event=>{event.preventDefault();event.stopPropagation();props.onPaneDrop?.(event);}}>
     <header className={`pane-header ${props.tabs?'pane-tab-header':''}`} draggable={Boolean(props.dragEnabled)} onPointerDown={event=>{toolbarDrag.current=Boolean((event.target as Element).closest('.pane-toolbar,.new-tab,.terminal-tab-close'));props.onPanePointerStart?.();}} onDragStart={event=>{if(!props.dragEnabled||toolbarDrag.current||(event.target as Element).closest('.pane-toolbar,.new-tab,.terminal-tab-close')){event.preventDefault();return;}props.onPaneDragStart?.(event);}} onDragEnd={props.onPaneDragEnd}>
       {props.tabs?<>{props.dragEnabled&&<span className="pane-drag-handle" title="끌어서 영역과 모든 탭 배치" aria-label="패널 끌어서 배치"><GripVertical size={15}/></span>}{props.tabs}<button className="icon-button new-tab" aria-label="탭 추가" title={props.canAddTab?'이 영역에 새 탭 (Ctrl+Shift+T)':'탭 추가는 호스트 업데이트가 필요합니다'} disabled={!props.connected||!props.canAddTab} onClick={props.onNewTab}><span aria-hidden="true">+</span></button></>:props.dragEnabled?<><span className="pane-drag-handle" title="끌어서 패널 배치" aria-label="패널 끌어서 배치"><GripVertical size={15}/></span><span className="pane-title" onDoubleClick={props.onRename} onClick={focusTitle} title={`${displayedCwd} · 끌어서 패널 배치`}>{label}</span></>:<><SquareTerminal size={14}/><button className="pane-title" onPointerDown={event=>event.preventDefault()} onDoubleClick={props.onRename} onClick={focusTitle} title={displayedCwd}>{label}</button></>}
-      {!props.tabs&&<span className="pane-meta">{info.status==='running'?(controlled?'제어 중':'보기 전용'):info.status==='interrupted'?'중단됨':'종료됨'}</span>}
+      {!props.tabs&&props.team?.badge}
+      {!props.tabs&&!props.team&&<span className="pane-meta">{info.status==='running'?(controlled?'제어 중':'보기 전용'):info.status==='interrupted'?'중단됨':'종료됨'}</span>}
       <div className="pane-toolbar" onPointerEnter={()=>worktreeLauncher.recheck()} onFocusCapture={()=>worktreeLauncher.recheck()}>
         {props.worktreeActions&&!narrow&&<button className="pane-worktree-add" title={worktreeLauncher.title} disabled={worktreeLauncher.disabled} onClick={()=>void worktreeLauncher.open()}><Plus size={13}/>워크트리</button>}
+        {canMessage&&<button className="icon-button agent-message-button" title={`${agentName(info)}에게 메시지`} aria-label={`${agentName(info)}에게 메시지${waiting?` · 보낼 메시지 ${waiting}개`:''}`} disabled={!props.connected} onClick={()=>setMessageOpen(true)}><MessageSquareText size={14}/>{waiting>0&&<span className="agent-message-count-badge" aria-hidden="true">{waiting}</span>}</button>}
         <button className="icon-button" title="터미널 검색" aria-label="터미널 검색" onClick={()=>setSearchOpen(!searchOpen)}><Search size={14}/></button>
-        <button className="icon-button" title="좌우 분할" aria-label="좌우 분할" disabled={!props.connected} onClick={()=>props.onSplit('horizontal')}><Columns2 size={14}/></button>
-        <button className="icon-button" title="상하 분할" aria-label="상하 분할" disabled={!props.connected} onClick={()=>props.onSplit('vertical')}><Rows2 size={14}/></button>
+        {!props.team&&<><button className="icon-button" title="좌우 분할" aria-label="좌우 분할" disabled={!props.connected} onClick={()=>props.onSplit('horizontal')}><Columns2 size={14}/></button>
+        <button className="icon-button" title="상하 분할" aria-label="상하 분할" disabled={!props.connected} onClick={()=>props.onSplit('vertical')}><Rows2 size={14}/></button></>}
         <details className="command-menu"><summary className="icon-button" aria-label="터미널 메뉴">···</summary><div>
           {props.worktreeActions&&narrow&&<button className="menu-item" title={worktreeLauncher.title} disabled={worktreeLauncher.disabled} onClick={event=>{event.currentTarget.closest('details')?.removeAttribute('open');void worktreeLauncher.open();}}><Plus size={14}/>워크트리</button>}
           <button className="menu-item" onClick={props.onRename}><Pencil size={14}/>이름 변경</button>
@@ -399,12 +408,14 @@ export function TerminalPane(props:PaneProps) {
           <button className="menu-item" title="드래그로 선택한 뒤 Ctrl+C · Ctrl+Shift+C" onClick={()=>void copy()}><Copy size={14}/>선택 내용 복사 <kbd className="shortcut-key">Ctrl+C</kbd></button>
           <button className="menu-item" title="Ctrl+V · Ctrl+Shift+V" disabled={!props.connected||info.status!=='running'||inputUncertain||controlError} onClick={()=>void paste()}><ClipboardPaste size={14}/>붙여넣기 <kbd className="shortcut-key">Ctrl+V</kbd></button>
           <button className="menu-item" title={canUpload?'사진이나 파일을 이 터미널의 PC에 저장하고 경로를 입력 줄에 넣습니다':'이 컴퓨터를 업데이트하면 사용할 수 있습니다'} disabled={!props.connected||info.status!=='running'||inputUncertain||controlError||!canUpload||Boolean(upload)} onClick={event=>{event.currentTarget.closest('details')?.removeAttribute('open');fileInput.current?.click();}}><Paperclip size={14}/>파일 첨부…</button>
+          {messagesSupported&&info.status==='running'&&<button className="menu-item" title={canMessage?'작업이 끝나고 아무도 입력하지 않을 때 에이전트 입력창으로 보냅니다':'PowerShell에서 실행한 Claude Code·Codex가 확인되면 보낼 수 있습니다.'} disabled={!props.connected||!canMessage} onClick={event=>{event.currentTarget.closest('details')?.removeAttribute('open');setMessageOpen(true);}}><MessageSquareText size={14}/>{agentName(info)}에게 메시지…</button>}
+          {messagesSupported&&info.status==='running'&&<button className="menu-item" aria-pressed={info.agentDnd===true} title="켜 두면 이 터미널의 에이전트에게 메시지를 보내지 않고 모아 둡니다" disabled={!props.connected} onClick={event=>{event.currentTarget.closest('details')?.removeAttribute('open');toggleDnd();}}>{info.agentDnd?<Bell size={14}/>:<BellOff size={14}/>}{info.agentDnd?'방해 금지 끄기':'방해 금지 켜기'}</button>}
           <button className="menu-item" onClick={props.onRestart}><RotateCcw size={14}/>새 셸로 다시 열기</button>
           <button className="menu-item" onClick={props.onClearHistory}>저장된 출력 지우기</button>
           {info.status==='running'&&<button className="menu-item danger" onClick={props.onTerminate}>작업 종료 · 기록 유지</button>}
         </div></details>
         <button className="icon-button" title={props.maximized?'분할로 돌아가기':'최대화'} aria-label={props.maximized?'분할로 돌아가기':'최대화'} onClick={props.onMaximize}>{props.maximized?<Minimize2 size={14}/>:<Maximize2 size={14}/>}</button>
-        {!props.tabs&&<button className="icon-button" title="터미널 종료 및 패널 닫기" aria-label="터미널 닫기" onClick={props.onClose}><X size={14}/></button>}
+        {!props.tabs&&!props.team&&<button className="icon-button" title="터미널 종료 및 패널 닫기" aria-label="터미널 닫기" onClick={props.onClose}><X size={14}/></button>}
       </div>
     </header>
     {worktreeLauncher.dialog}
@@ -426,6 +437,8 @@ export function TerminalPane(props:PaneProps) {
     {upload&&<div className="connection-banner upload-banner" role="status"><span>{upload.count>1?`(${upload.index}/${upload.count}) `:''}{upload.name} 보내는 중 {upload.percent}%</span><button type="button" className="button subtle" onClick={()=>uploadAbort.current?.abort()}>취소</button></div>}
     {props.dropPreview&&<div className="pane-drop-preview" data-drop-position={props.dropPreview.position} aria-live="polite"><span>{props.dropPreview.label}</span></div>}
     {(frameError||inputUncertain)&&<div className="connection-banner warning">{inputUncertain?'마지막 입력의 전달 여부를 확인해 주세요. 확인 후 제어권을 다시 가져올 수 있습니다.':frameError}</div>}
+    <AgentInboxBanner state={state} info={info} request={agentRequest} onError={props.onError}/>
+    {messageOpen&&<AgentMessageDialog state={state} info={info} request={agentRequest} onClose={()=>setMessageOpen(false)} onError={props.onError}/>}
     {info.restoreError&&<div className="connection-banner warning">{info.restoreError}{info.historyAvailable?' 이전 기록은 그대로 남아 있습니다.':''}</div>}
     {info.codexHooksReview&&info.status==='running'&&<div className="connection-banner codex-hooks-notice" role="status"><ShieldCheck size={15} aria-hidden="true"/><span><strong>Codex가 새 훅을 신뢰할지 묻고 있습니다.</strong> 몽글터미널의 Codex 작업 상태 표시와 대화 재개에 쓰는 훅입니다. 아래 화살표로 <strong>2. Trust all and continue</strong>를 고른 뒤 Enter를 누르세요. 다른 프로그램의 훅도 쓰고 있다면 <strong>1. Review hooks</strong>에서 하나씩 확인하세요.</span></div>}
     {historyTruncated&&<div className="history-notice">오래된 출력 일부를 생략하고 최근 기록을 표시합니다.</div>}

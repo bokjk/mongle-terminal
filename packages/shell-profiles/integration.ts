@@ -58,7 +58,8 @@ if ($env:MONGLE_AGENT_PIPE) {
 }`;
 
 /** Process-local prompt hooks; never edit the user's shell profile files. */
-export function shellIntegration(profile: ShellProfile, args: string[], environment: Record<string, string>, options: {agentPipe?: string} = {}) {
+/** codexWrapper: the Codex integration is installed (the pipe may exist for Claude alone). Defaults to true. */
+export function shellIntegration(profile: ShellProfile, args: string[], environment: Record<string, string>, options: {agentPipe?: string; codexWrapper?: boolean} = {}) {
   const env = { ...environment };
   const integratedArgs = [...args];
   const agentToken = /^[a-f0-9]{64}$/.test(env.MONGLE_AGENT_TOKEN || '') ? env.MONGLE_AGENT_TOKEN : '';
@@ -78,7 +79,7 @@ function global:prompt {
     Write-Host -NoNewline ([char]27 + ']9;9;' + $PWD.ProviderPath + [char]27 + '\')
   }
   $result
-}` + (env.MONGLE_AGENT_PIPE ? CODEX_POWERSHELL_WRAPPER : '');
+}` + (env.MONGLE_AGENT_PIPE && options.codexWrapper !== false ? CODEX_POWERSHELL_WRAPPER : '');
     integratedArgs.push('-NoExit', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64'));
   } else if (profile.kind === 'cmd') {
     const promptKey = Object.keys(env).find(key => key.toUpperCase() === 'PROMPT');

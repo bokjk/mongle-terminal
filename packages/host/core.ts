@@ -1,11 +1,11 @@
 import { randomUUID, randomBytes, createHash, timingSafeEqual } from 'node:crypto';
 import { hostname, homedir } from 'node:os';
-import { readFile, realpath, stat, unlink } from 'node:fs/promises';
+import { mkdir, readFile, realpath, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import { join, dirname, basename } from 'node:path';
 import * as pty from 'node-pty';
 import { z } from 'zod';
 import { APP_VERSION, PROTOCOL_VERSION, AppError, GIT_COMMIT_PATTERN, appendTab, dimensionSchema, groupRepositoryIds, idSchema, leafIds, removeLeaf, splitLeaf } from '../protocol/index.js';
-import type { ConnectionContext, Group, HostSettings, HostState, LayoutNode, PresentationSnapshot, Send, ShellProfile, SnapshotEvent, TerminalInfo, Repository, Worktree, WorktreeOperation, ProjectInspection } from '../protocol/index.js';
+import type { ConnectionContext, Group, HostSettings, HostState, LayoutNode, PresentationSnapshot, Send, ShellProfile, SnapshotEvent, TerminalInfo, Repository, Worktree, WorktreeOperation, ProjectInspection, Team, TeamCheck, TeamMember, TeamMemberSpec, TeamMessage, TeamTemplate } from '../protocol/index.js';
 import { HostStore, type PersistedHost, type PersistedSnapshot } from '../storage/index.js';
 import { agentInputSignal, validAgentSession, validCodexEvent, type AgentSessionIdentity } from '../terminal/agent-status.js';
 import { AGENT_PIPE_NAME, agentResumeCommand, isTerminalReportOnly, resolveAgentExecutable } from '../shell-profiles/agent-resume.js';
@@ -18,6 +18,10 @@ import { readPdfChunk } from './pdf-files.js';
 import { Uploads, UPLOAD_CHUNK_BYTES, UPLOAD_MAX_BYTES } from './uploads.js';
 import { inspectGit, readGitDiff, readGitReview } from './git.js';
 import { inspectProject, inspectKnownRepository, validateWorktree, prepareWorktree, addWorktree, removeWorktree, samePath, worktreeSlug } from './worktrees.js';
+import { AgentInbox, AGENT_INBOX_MAX, AGENT_MESSAGE_MAX_CHARS, cleanAgentMessage, type AgentMessageOutcome } from './agent-inbox.js';
+import { BUILT_IN_TEMPLATES, TEAM_EXTRA_MAX, TEAM_INSTRUCTIONS_MAX, TEAM_MESSAGE_LOG, TEAM_MESSAGE_PREVIEW, rolePromptFile, teamLaunchCommand, teamMemberFlags, teamMessageText, teamProblems, teamRolePrompt } from './teams.js';
+import { TeamStore } from './team-store.js';
+import { defaultTeamEnvironment, type TeamEnvironment } from './team-environment.js';
 
 const nameSchema = z.string().trim().min(1).max(100);
 const cwdSchema = z.string().min(1).max(4096);
@@ -33,7 +37,11 @@ const MAX_FRAME_BYTES = 16 * 1024 * 1024;
 type Attachment = { lastSent: number; lastAck: number; pending?: SnapshotEvent };
 type Client = { ctx: ConnectionContext; send: Send; attached: Map<string, Attachment> };
 type Lease = { connectionId: string; deviceName: string; epoch: number; expires: number; ready: boolean; syncSeq: number; inputSeq: number; dedupe: Map<string, {seq:number; hash:string}> };
-type Runtime = { info: TerminalInfo; engine: TerminalEngine; pty?: pty.IPty; stopPty?:()=>Promise<void>; seq: number; epoch: number; lease?: Lease; timer?: ReturnType<typeof setTimeout>; framePending?: boolean; frameDirty?: boolean; checkpointAt: number; lastFrame?: SnapshotEvent; disposed: boolean; stopping?: boolean; pendingBytes: number; directoryChanged?: boolean; notificationChanged?: boolean; agentToken?: string; pendingResume?: { command: string; timer: ReturnType<typeof setTimeout> } };
+type Runtime = { info: TerminalInfo; engine: TerminalEngine; pty?: pty.IPty; stopPty?:()=>Promise<void>; seq: number; epoch: number; lease?: Lease; timer?: ReturnType<typeof setTimeout>; framePending?: boolean; frameDirty?: boolean; checkpointAt: number; lastFrame?: SnapshotEvent; disposed: boolean; stopping?: boolean; pendingBytes: number; directoryChanged?: boolean; notificationChanged?: boolean; agentToken?: string; pendingResume?: { command: string; timer: ReturnType<typeof setTimeout> }; inbox?: AgentInbox; agentShell?: boolean; pendingLaunch?: { command: string; timer: ReturnType<typeof setTimeout> }; promptIdle?: boolean };
+const messageRef = terminalRef.extend({messageId:z.string().uuid()}).strict();
+const teamMemberSchema = z.object({name:z.string().max(100),role:z.enum(['lead','developer','reviewer','tester','researcher','custom']),provider:z.enum(['claude','codex']),model:z.string().max(80),reportTo:z.string().max(100),instructions:z.string().max(TEAM_INSTRUCTIONS_MAX),extra:z.string().max(TEAM_EXTRA_MAX).optional(),folder:z.enum(['base','worktree']),readOnly:z.boolean()}).strict();
+const teamStartSchema = hostRef.extend({groupId:idSchema,name:z.string().max(100),cwd:cwdSchema,members:z.array(teamMemberSchema).min(1).max(10)}).strict();
+const normalizeTeamMember = (member:z.infer<typeof teamMemberSchema>):TeamMemberSpec => {const extra=member.extra?.trim();return {...member,name:member.name.trim(),reportTo:member.reportTo.trim(),...(extra?{extra}:{extra:undefined})};};
 /** Host-private: the exact agent conversation last verified in a terminal generation. Never in TerminalInfo/state. */
 type AgentSessionRecord = { generation: string; session: AgentSessionIdentity };
 const RESUME_PROMPT_TIMEOUT_MS = 15_000;
@@ -44,6 +52,8 @@ export class HostCore {
   private hostId = '';
   private readonly bootId = randomUUID();
   private settings: HostSettings;
+  private teamStore?: TeamStore;
+  private teams: Team[] = [];
   private profiles: ShellProfile[] = [];
   private groups: Group[] = [];
   private terminals: TerminalInfo[] = [];
@@ -69,7 +79,7 @@ export class HostCore {
   private fileDocuments = new Map<string, { client: Client; root: string; path: string; absolutePath: string }>();
   private uploads: Uploads;
 
-  constructor(private options: { dataDir: string; name?: string; claudeIntegration?: import('../protocol/index.js').ClaudeIntegration; codexIntegration?: { status: 'installed' | 'unavailable'; message: string } }) {
+  constructor(private options: { dataDir: string; name?: string; claudeIntegration?: import('../protocol/index.js').ClaudeIntegration; codexIntegration?: { status: 'installed' | 'unavailable'; message: string }; teamEnvironment?: Partial<TeamEnvironment> }) {
     this.uploads = new Uploads(options.dataDir);
     this.settings = {name: options.name || hostname(), recordHistory: true, scrollback: 5000};
   }
@@ -79,6 +89,13 @@ export class HostCore {
   private async initialize(): Promise<void> {
     if (this.initialized) return;
     this.store = new HostStore(this.options.dataDir);
+    this.teamStore = new TeamStore(this.options.dataDir);
+    this.teams = this.teamStore.teams().filter(team => typeof team?.id === 'string' && Array.isArray(team.members));
+    // Inboxes live in memory: a message still waiting when the host stopped was never delivered.
+    for (const team of this.teams) if (team.messages?.some(message => message.status === 'waiting')) {
+      for (const message of team.messages) if (message.status === 'waiting') message.status = 'failed';
+      this.teamStore.saveTeam(team);
+    }
     const saved = this.store.load();
     this.profiles = await detectShellProfiles();
     this.hostId = saved?.hostId || randomUUID();
@@ -89,7 +106,7 @@ export class HostCore {
       this.repositories = saved.repositories || [];
       this.worktrees = (saved.worktrees || []).map(item=>item.status==='removing'?{...item,status:'missing',reason:'삭제 결과를 확인하려면 목록을 새로고침해 주세요.'}:item);
       this.worktreeOperations = (saved.worktreeOperations || []).map(item=>item.status==='pending'||item.status==='running'?{...item,status:'attention',message:'호스트가 재시작되었습니다. 목록을 새로고침해 작업 결과를 확인해 주세요.'}:item);
-      this.terminals = saved.terminals.map(({controller, pid, agentStatus, agentProvider, agentNotificationCount, codexHooksReview, ...info}) => ({...info, status: info.status === 'running' ? 'interrupted' : info.status, resumeOnBoot: info.status === 'running' || info.resumeOnBoot === true || legacyResume.has(info.id), historyAvailable: Boolean(this.settings.recordHistory && this.store.getSnapshot(info.id, info.generation))}));
+      this.terminals = saved.terminals.map(({controller, pid, agentStatus, agentProvider, agentNotificationCount, codexHooksReview, agentInbox, agentReady, ...info}) => ({...info, status: info.status === 'running' ? 'interrupted' : info.status, resumeOnBoot: info.status === 'running' || info.resumeOnBoot === true || legacyResume.has(info.id), historyAvailable: Boolean(this.settings.recordHistory && this.store.getSnapshot(info.id, info.generation))}));
       // Only an exact, validated conversation bound to the saved generation of a
       // terminal that will be restored survives; anything else is dropped.
       for (const [id, record] of Object.entries(saved.agentSessions || {})) {
@@ -128,7 +145,7 @@ export class HostCore {
     return result;
   }
   getState(): HostState {
-    return structuredClone({ hostId:this.hostId, bootId:this.bootId, name:this.settings.name, version:APP_VERSION, protocolVersion:PROTOCOL_VERSION, capabilities:['control.acquire-if-free','files.read','files.edit','files.pdf','files.upload','git.read','git.diff','git.review','layout.tabs','notifications.push','pairing.remote-approve','worktrees.manage','worktrees.terminal-context'], groups:this.groups, terminals:this.terminals, repositories:this.repositories,worktrees:this.worktrees,worktreeOperations:this.worktreeOperations,profiles:this.profiles, settings:this.settings, ...(this.options.claudeIntegration ? {claudeIntegration:this.options.claudeIntegration} : {}), ...(this.options.codexIntegration ? {codexIntegration:this.options.codexIntegration} : {}), ...(this.storageError ? {storageError:this.storageError} : {}) });
+    return structuredClone({ hostId:this.hostId, bootId:this.bootId, name:this.settings.name, version:APP_VERSION, protocolVersion:PROTOCOL_VERSION, capabilities:['agent.messages','agent.teams','control.acquire-if-free','files.read','files.edit','files.pdf','files.upload','git.read','git.diff','git.review','layout.tabs','notifications.push','pairing.remote-approve','worktrees.manage','worktrees.terminal-context'], groups:this.groups, terminals:this.terminals, repositories:this.repositories,worktrees:this.worktrees,worktreeOperations:this.worktreeOperations,teams:this.teams,profiles:this.profiles, settings:this.settings, ...(this.options.claudeIntegration ? {claudeIntegration:this.options.claudeIntegration} : {}), ...(this.options.codexIntegration ? {codexIntegration:this.options.codexIntegration} : {}), ...(this.storageError ? {storageError:this.storageError} : {}) });
   }
   connect(ctx: ConnectionContext, send: Send): void {
     if (!this.initialized || this.closing || this.shutdownPrepared) throw new AppError('HOST_UNAVAILABLE','호스트가 준비되지 않았습니다.');
@@ -152,6 +169,7 @@ export class HostCore {
     if (method === 'files.list' || method === 'files.preview' || method === 'files.open' || method === 'files.pdf' || method === 'git.status' || method === 'git.diff' || method === 'git.review') return this.readFiles(method, params, ctx);
     if (method === 'files.save' || method === 'files.close' || method === 'files.reload') return this.editFile(method, params, ctx);
     if (method.startsWith('files.upload.')) return this.uploadFile(method, params, ctx);
+    if (method.startsWith('teams.')) return this.teamRequest(method,params,ctx);
     if (method.startsWith('projects.') || method.startsWith('worktrees.')) return this.projectRequest(method,params,ctx);
     if(method==='terminals.create'||method==='terminals.restart') {
       const client=this.connectedClient(ctx);
@@ -240,6 +258,167 @@ export class HostCore {
     if(existing)return structuredClone(existing);
     const target=tabTarget&&leafIds(group.layout).includes(tabTarget)?tabTarget:leafIds(group.layout)[0];
     return this.route('terminals.create',{groupId:group.id,worktreeId:worktree.id,...(target?{tabTarget:target}:{})},client);
+  }
+  /** Teams run outside the terminal queue: starting one waits for worktree jobs that commit through it. */
+  private async teamRequest(method:string,params:unknown,ctx:ConnectionContext):Promise<any> {
+    const client=this.connectedClient(ctx),store=this.teamStore;
+    if(!store)throw new AppError('HOST_UNAVAILABLE','실행부를 준비하고 있습니다.');
+    if(method==='teams.templates')return structuredClone([...BUILT_IN_TEMPLATES,...store.templates()]);
+    if(method==='teams.templates.save'){
+      const p=z.object({id:z.string().max(100).optional(),name:z.string().max(100),members:z.array(teamMemberSchema).max(10)}).strict().parse(params);
+      const members=p.members.map(normalizeTeamMember),problems=teamProblems(p.name,members);
+      if(problems.length)throw new AppError('TEAM_INVALID',problems.join(' '));
+      const existing=store.templates();
+      if(p.id!==undefined&&!existing.some(item=>item.id===p.id))throw new AppError('TEMPLATE_READ_ONLY','기본 제공 템플릿은 바꿀 수 없습니다. 새 템플릿으로 저장해 주세요.');
+      if(p.id===undefined&&existing.length>=50)throw new AppError('LIMIT_REACHED','내 템플릿은 50개까지 저장할 수 있습니다.');
+      const template:TeamTemplate={id:p.id??'user:'+randomUUID(),name:p.name.trim(),members};
+      store.saveTemplate(template);return structuredClone(template);
+    }
+    if(method==='teams.templates.delete'){
+      const p=z.object({id:z.string().max(100)}).strict().parse(params);
+      if(!store.templates().some(item=>item.id===p.id))throw new AppError('TEMPLATE_READ_ONLY','기본 제공 템플릿은 지울 수 없습니다.');
+      store.deleteTemplate(p.id);return {deleted:true};
+    }
+    if(method==='teams.check'){const p=teamStartSchema.parse(params);this.requireHost(p);return this.teamChecks(p.groupId,p.cwd,p.name,p.members.map(normalizeTeamMember));}
+    if(method==='teams.start')return this.startTeam(teamStartSchema.parse(params),client);
+    if(method==='teams.message'){
+      const p=hostRef.extend({teamId:idSchema,to:idSchema,text:z.string().min(1).max(AGENT_MESSAGE_MAX_CHARS*2)}).strict().parse(params);
+      this.requireHost(p);this.requireClient(client);
+      const team=this.teams.find(item=>item.id===p.teamId);if(!team)throw new AppError('TEAM_NOT_FOUND','팀을 찾을 수 없습니다.');
+      const member=team.members.find(item=>item.id===p.to);if(!member)throw new AppError('TEAM_MEMBER_NOT_FOUND','받을 구성원을 찾을 수 없습니다.');
+      const runtime=member.terminalId?this.runtimes.get(member.terminalId):undefined,inbox=runtime?.inbox;
+      if(!runtime||runtime.info.status!=='running'||!inbox||!runtime.agentShell)throw new AppError('AGENT_NOT_RUNNING',member.name+'의 터미널이 실행 중이 아닙니다.');
+      const text=cleanAgentMessage(p.text);
+      if(!text)throw new AppError('INVALID_REQUEST','보낼 내용을 입력해 주세요.');
+      if(text.length>AGENT_MESSAGE_MAX_CHARS)throw new AppError('AGENT_MESSAGE_TOO_LONG','메시지는 '+AGENT_MESSAGE_MAX_CHARS.toLocaleString('ko-KR')+'자까지 보낼 수 있습니다.');
+      if(!inbox.agentRunning)throw new AppError('AGENT_NOT_RUNNING',member.name+'의 터미널에서 실행 중인 Claude Code·Codex를 아직 확인하지 못했습니다. 에이전트가 시작된 뒤 다시 보내 주세요.');
+      if(inbox.size>=AGENT_INBOX_MAX)throw new AppError('AGENT_INBOX_FULL',member.name+'에게 보류 중인 메시지가 '+AGENT_INBOX_MAX+'개입니다. 전달되거나 취소된 뒤 다시 보내 주세요.');
+      const entry:TeamMessage={id:randomUUID(),from:'user',device:client.ctx.deviceName.slice(0,100),to:member.id,preview:text.replace(/\r/g,'\n').slice(0,TEAM_MESSAGE_PREVIEW),createdAt:Date.now(),status:'waiting'};
+      team.messages=[...(team.messages??[]),entry].slice(-TEAM_MESSAGE_LOG);
+      inbox.add(teamMessageText('사용자',member.name,text),client.ctx.deviceName,false,entry.id);
+      this.teamStore?.saveTeam(team);this.broadcastState();
+      return structuredClone(entry);
+    }
+    if(method==='teams.remove'){
+      const p=z.object({teamId:idSchema}).strict().parse(params);
+      return this.projectCommit(async()=>{
+        this.requireClient(client);const team=this.teams.find(item=>item.id===p.teamId);
+        if(!team)throw new AppError('TEAM_NOT_FOUND','팀을 찾을 수 없습니다.');
+        // The terminals stay as ordinary terminals; only the team record and its prompt files go.
+        this.teams=this.teams.filter(item=>item!==team);store.deleteTeam(team.id);
+        await rm(this.teamFolder(team.id),{recursive:true,force:true});
+        this.broadcastState();return {removed:true};
+      });
+    }
+    throw new AppError('UNKNOWN_METHOD','지원하지 않는 팀 요청입니다.');
+  }
+  private requireHost(p:{hostId:string;bootId:string}){if(p.hostId!==this.hostId||p.bootId!==this.bootId)throw new AppError('HOST_CHANGED','호스트가 바뀌었습니다. 다시 연결해 주세요.');}
+  private teamFolder(teamId:string){return join(this.options.dataDir,'agent-teams',teamId);}
+  private promptFile(teamId:string,member:Pick<TeamMember,'id'|'provider'>){return join(this.teamFolder(teamId),member.id+(member.provider==='claude'?'.md':'.toml'));}
+  /** A team message left its receiver's inbox: record how, once. */
+  private teamMessageSettled(id:string,outcome:AgentMessageOutcome){
+    for(const team of this.teams){
+      const message=team.messages?.find(item=>item.id===id);if(!message)continue;
+      if(message.status==='waiting'){message.status=outcome;try{this.teamStore?.saveTeam(team);}catch{/* closing: the next start marks waiting messages failed */}this.teamLogChanged();}
+      return;
+    }
+  }
+  private teamLogBroadcast=false;
+  /** Inboxes settle in the middle of terminal events; views learn of it once those finish. */
+  private teamLogChanged(){if(this.teamLogBroadcast||this.closing)return;this.teamLogBroadcast=true;queueMicrotask(()=>{this.teamLogBroadcast=false;this.broadcastState();});}
+  private teamMember(terminalId:string){for(const team of this.teams){const member=team.members.find(item=>item.terminalId===terminalId);if(member)return {team,member};}}
+  private teamEnvironment():TeamEnvironment{return {...defaultTeamEnvironment,...this.options.teamEnvironment};}
+  /** The pre-start check: shell, each CLI and its login, folder, Git for worktrees, limits and read-only members. */
+  private async teamChecks(groupId:string,cwd:string,name:string,members:TeamMemberSpec[]):Promise<{ready:boolean;checks:TeamCheck[]}> {
+    const env=this.teamEnvironment(),checks:TeamCheck[]=[],group=this.group(groupId);
+    const profile=this.profiles.find(item=>item.kind==='powershell');
+    checks.push(profile?{id:'shell',label:'PowerShell',status:'ok',message:'구성원 터미널을 '+profile.name+'로 엽니다.'}:{id:'shell',label:'PowerShell',status:'error',message:'PowerShell을 찾지 못했습니다. 팀 구성원은 PowerShell 터미널에서만 실행합니다.'});
+    for(const provider of [...new Set(members.map(item=>item.provider))]){
+      const label=provider==='claude'?'Claude Code':'Codex';
+      const [file,version,loggedIn]=await Promise.all([env.executable(provider),env.version(provider),env.loggedIn(provider)]);
+      if(!file){checks.push({id:provider,label,status:'error',message:label+'를 찾지 못했습니다. 설치한 뒤 다시 확인해 주세요.'});continue;}
+      const linked=provider==='claude'?this.options.claudeIntegration?.status==='ready':this.options.codexIntegration?.status==='installed'&&AGENT_PIPE_NAME.test(process.env.MONGLE_AGENT_PIPE||'');
+      const named=label+(version?' '+version:'');
+      if(loggedIn===false)checks.push({id:provider,label,status:'error',message:label+'에 로그인되어 있지 않습니다. 터미널에서 '+(provider==='claude'?'claude auth login':'codex login')+'으로 로그인해 주세요.'});
+      else if(!linked)checks.push({id:provider,label,status:'warning',message:named+'를 실행할 수 있지만 몽글 연동이 준비되지 않아 작업 상태와 메시지 전달을 쓸 수 없습니다.'});
+      else checks.push({id:provider,label,status:'ok',message:named+' · '+(loggedIn?'로그인됨':'로그인 상태는 확인하지 못함')});
+    }
+    try{await resolveShellLaunch(profile??this.profiles[0],cwd);checks.push({id:'folder',label:'작업 폴더',status:'ok',message:cwd});}
+    catch{checks.push({id:'folder',label:'작업 폴더',status:'error',message:'작업 폴더를 열 수 없습니다. 폴더가 있는지 확인해 주세요.'});}
+    const worktrees=members.filter(item=>item.folder==='worktree').length;
+    if(worktrees){
+      const ids=groupRepositoryIds(group);
+      if(ids.length!==1)checks.push({id:'git',label:'Git',status:'error',message:'구성원별 워크트리를 만들려면 이 그룹에서 프로젝트(Git 저장소) 하나를 먼저 열어 주세요.'});
+      else{const repository=this.repository(ids[0]),changes=await env.gitChanges(cwd);checks.push({id:'git',label:'Git',status:changes?'warning':'ok',message:'새 워크트리 '+worktrees+'개를 '+repository.worktreeRoot+'에 만듭니다.'+(changes?' 저장하지 않은 변경 '+changes+'개는 새 워크트리에 들어가지 않습니다.':'')});}
+    }
+    const inGroup=this.terminals.filter(item=>item.groupId===group.id).length,running=this.terminals.filter(item=>item.status==='running').length;
+    if(inGroup+members.length>16||running+members.length>32||this.terminals.length+members.length>128)checks.push({id:'limit',label:'터미널 수',status:'error',message:'터미널 한도를 넘습니다. 사용하지 않는 터미널을 정리해 주세요.'});
+    const readOnly=members.filter(item=>item.readOnly).map(item=>item.name);
+    if(readOnly.length)checks.push({id:'permissions',label:'권한',status:'ok',message:readOnly.join(', ')+': 읽기 전용으로 실행해 파일을 고치지 못하게 합니다.'});
+    for(const problem of teamProblems(name,members))checks.push({id:'team',label:'팀 구성',status:'error',message:problem});
+    return {ready:!checks.some(item=>item.status==='error'),checks};
+  }
+  /**
+   * Starts every member in order: its worktree (through the normal worktree job) or the base folder, a
+   * PowerShell tab beside the lead, then its CLI with the role prompt, typed after the shell's first prompt.
+   * A member that cannot start keeps its error; the others still start.
+   */
+  private async startTeam(p:z.infer<typeof teamStartSchema>,client:Client):Promise<Team> {
+    this.requireHost(p);
+    const members=p.members.map(normalizeTeamMember),check=await this.teamChecks(p.groupId,p.cwd,p.name,members);
+    if(!check.ready)throw new AppError('TEAM_NOT_READY',check.checks.filter(item=>item.status==='error').map(item=>item.message).join(' '));
+    if(this.teams.length>=50)throw new AppError('LIMIT_REACHED','팀은 50개까지 둘 수 있습니다. 쓰지 않는 팀을 정리해 주세요.');
+    const claudePath=members.some(item=>item.provider==='claude')?await this.teamEnvironment().executable('claude'):undefined;
+    const group=this.group(p.groupId),profile=this.profiles.find(item=>item.kind==='powershell')!;
+    const repositoryId=members.some(item=>item.folder==='worktree')?groupRepositoryIds(group)[0]:undefined;
+    const team:Team={id:randomUUID(),name:p.name.trim(),groupId:group.id,cwd:p.cwd,...(repositoryId?{repositoryId}:{}),createdAt:Date.now(),members:members.map(item=>({...item,id:randomUUID()}))};
+    await mkdir(this.teamFolder(team.id),{recursive:true});
+    for(const [index,member] of team.members.entries())await writeFile(this.promptFile(team.id,member),rolePromptFile(member.provider,teamRolePrompt(team,team.members,index)),'utf8');
+    const save=()=>this.projectCommit(()=>{this.teamStore?.saveTeam(team);this.broadcastState();});
+    await this.projectCommit(()=>{this.requireClient(client);this.teams.push(team);this.teamStore?.saveTeam(team);this.broadcastState();});
+    let anchor:string|undefined;
+    for(const member of team.members){
+      try{
+        let terminalId:string;
+        if(member.folder==='worktree'){
+          const repository=this.repository(repositoryId!);
+          const op:WorktreeOperation=await this.projectRequest('worktrees.create',{hostId:this.hostId,bootId:this.bootId,requestId:randomUUID(),groupId:group.id,repositoryId:repository.id,name:(team.name+' '+member.name).slice(0,100),baseRef:repository.baseRef,openTerminal:true,...(anchor?{tabTarget:anchor}:{})},client.ctx);
+          await this.projectTasks.get(repository.id);
+          const done=this.operation(op.id);
+          if(done.status!=='succeeded'||!done.terminalId)throw new AppError('TEAM_WORKTREE_FAILED',done.message||'워크트리를 만들지 못했습니다.');
+          member.worktreeId=done.worktreeId;terminalId=done.terminalId;
+        }else terminalId=(await this.handle('terminals.create',{groupId:group.id,profileId:profile.id,cwd:p.cwd,...(anchor?{tabTarget:anchor}:{})},client.ctx) as TerminalInfo).id;
+        anchor??=terminalId;member.terminalId=terminalId;
+        await this.projectCommit(()=>{
+          const info=this.terminal(terminalId),runtime=this.runtimes.get(terminalId);
+          info.title=member.name;
+          const command=runtime?.agentShell?teamLaunchCommand(member,this.promptFile(team.id,member),claudePath):undefined;
+          if(!runtime||!command)throw new AppError('TEAM_LAUNCH_UNSUPPORTED','PowerShell 터미널에서만 구성원 CLI를 실행할 수 있습니다.');
+          this.queueLaunch(runtime,command);this.persist();
+        });
+      }catch(error){member.error=error instanceof AppError?error.message:'구성원을 시작하지 못했습니다.';}
+      await save();
+    }
+    return structuredClone(team);
+  }
+  /** Types a member's CLI line once, at the new shell's first prompt; typing first or a silent shell cancels it. */
+  private queueLaunch(runtime:Runtime,command:string){
+    this.cancelLaunch(runtime,false);
+    const timer=setTimeout(()=>{if(runtime.pendingLaunch?.timer!==timer)return;runtime.pendingLaunch=undefined;this.notice('TEAM_LAUNCH_SKIPPED',runtime.info.title+': 셸 준비를 확인하지 못해 구성원 CLI를 실행하지 않았습니다. 터미널에서 직접 실행해 주세요.');},RESUME_PROMPT_TIMEOUT_MS);
+    timer.unref?.();runtime.pendingLaunch={command,timer};
+    if(runtime.promptIdle)this.dispatchLaunch(runtime);
+  }
+  private dispatchLaunch(runtime:Runtime):boolean{
+    const pending=runtime.pendingLaunch;if(!pending)return false;
+    clearTimeout(pending.timer);runtime.pendingLaunch=undefined;runtime.promptIdle=false;
+    if(runtime.info.status!=='running'||!runtime.pty)return true;
+    try{runtime.pty.write(pending.command);}catch{/* the shell exited; nothing is retried */}
+    return true;
+  }
+  private cancelLaunch(runtime:Runtime,typed:boolean){
+    const pending=runtime.pendingLaunch;if(!pending)return;
+    clearTimeout(pending.timer);runtime.pendingLaunch=undefined;
+    if(typed)this.notice('TEAM_LAUNCH_SKIPPED',runtime.info.title+': 먼저 입력해서 구성원 CLI를 자동으로 실행하지 않았습니다. 터미널에서 직접 실행해 주세요.');
   }
   private async projectRequest(method:string,params:unknown,ctx:ConnectionContext):Promise<any> {
     const client=this.connectedClient(ctx),ref=hostRef.passthrough().parse(params);
@@ -611,7 +790,10 @@ export class HostCore {
         // Someone typed before the restored shell's first prompt: never append a resume line to their input.
         // Focus/mouse/device reports sent by an attaching view are not typing.
         if(runtime.pendingResume&&!isTerminalReportOnly(p.data))this.abandonResume(runtime);
+        if(runtime.pendingLaunch&&!isTerminalReportOnly(p.data))this.cancelLaunch(runtime,true);
         try {runtime.pty!.write(data);}catch{throw new AppError('WRITE_FAILED','터미널 입력을 전달하지 못했습니다.');}
+        // Keys a person sent hold agent messages until they stop typing; reports from the view are not typing.
+        if(!isTerminalReportOnly(p.data)){runtime.promptIdle=false;runtime.inbox?.observeInput(p.data);}
         // Claude sends no hook after a cancel key or a rejected request, and keys that can move a dialog's
         // selection decide what its Enter means. Only that meaning, never the typed text nor a focus/device
         // report, queues behind already received output: the observer decides with the parsed status. A
@@ -626,6 +808,31 @@ export class HostCore {
         lease.ready=false;this.updateController(runtime);await this.resize(runtime,p.cols,p.rows);
         const frame=await this.frame(runtime.info);this.requireLease(runtime,client,lease.epoch,false);lease.syncSeq=frame.seq;client.attached.get(p.id)!.lastSent=frame.seq;client.attached.get(p.id)!.pending=undefined;
         this.broadcastFrame(frame,client.ctx.id);this.broadcastState();return {frame};
+      }
+      case 'agent.message.send': {
+        const p=terminalRef.extend({text:z.string().min(1).max(AGENT_MESSAGE_MAX_CHARS*2),force:z.boolean().optional()}).strict().parse(params);
+        const runtime=this.running(this.target(p)),inbox=runtime.inbox;
+        if(!inbox||!runtime.agentShell)throw new AppError('AGENT_MESSAGE_UNSUPPORTED','PowerShell 터미널에서 실행한 Claude Code·Codex에만 보낼 수 있습니다.');
+        const text=cleanAgentMessage(p.text);
+        if(!text)throw new AppError('INVALID_REQUEST','보낼 내용을 입력해 주세요.');
+        if(text.length>AGENT_MESSAGE_MAX_CHARS)throw new AppError('AGENT_MESSAGE_TOO_LONG',`메시지는 ${AGENT_MESSAGE_MAX_CHARS.toLocaleString('ko-KR')}자까지 보낼 수 있습니다.`);
+        if(!inbox.agentRunning)throw new AppError('AGENT_NOT_RUNNING','이 터미널에서 실행 중인 Claude Code·Codex를 확인하지 못했습니다. 에이전트를 실행한 뒤 다시 보내 주세요.');
+        if(inbox.size>=AGENT_INBOX_MAX)throw new AppError('AGENT_INBOX_FULL',`보류 중인 메시지가 ${AGENT_INBOX_MAX}개입니다. 전달되거나 취소된 뒤 다시 보내 주세요.`);
+        const messageId=inbox.add(text,client.ctx.deviceName,p.force===true);
+        this.broadcastState();
+        return {messageId,pending:inbox.has(messageId),...(runtime.info.agentInbox?.hold?{hold:runtime.info.agentInbox.hold}:{})};
+      }
+      case 'agent.message.cancel':
+      case 'agent.message.force': {
+        const p=messageRef.parse(params),runtime=this.running(this.target(p));
+        const done=method==='agent.message.cancel'?runtime.inbox?.cancel(p.messageId):runtime.inbox?.force(p.messageId);
+        if(!done)throw new AppError('AGENT_MESSAGE_GONE','이미 전달됐거나 취소된 메시지입니다.');
+        this.broadcastState();return {ok:true};
+      }
+      case 'agent.dnd': {
+        const p=terminalRef.extend({enabled:z.boolean()}).strict().parse(params),info=this.target(p);
+        if(p.enabled)info.agentDnd=true;else delete info.agentDnd;
+        this.persist();this.runtimes.get(info.id)?.inbox?.pump();this.broadcastState();return {enabled:p.enabled};
       }
       case 'settings.update': {
         if(!client.ctx.owner)throw new AppError('OWNER_REQUIRED','이 컴퓨터에서 설정을 변경해 주세요.');
@@ -683,6 +890,9 @@ export class HostCore {
       // Codex needs the session-local PowerShell wrapper, which exists only with a live lifecycle pipe.
       const codexWrapper=this.options.codexIntegration?.status==='installed'&&AGENT_PIPE_NAME.test(process.env.MONGLE_AGENT_PIPE||'');
       let command=resume?.cwd?agentResumeCommand(profile,resume,executable,{codexWrapper}):undefined;
+      // A team member reopens with its model, role prompt and read-only switch, so a later compaction keeps the role.
+      const membership=this.teamMember(info.id);
+      if(command&&resume&&membership&&membership.member.provider===resume.provider&&profile.kind==='powershell'){const flags=teamMemberFlags(membership.member,this.promptFile(membership.team.id,membership.member));if(flags)command=command.slice(0,-1)+' '+flags+'\r';}
       let launch:Awaited<ReturnType<typeof resolveShellLaunch>>|undefined;
       if(command&&resume?.cwd){try{launch=await resolveShellLaunch(profile,resume.cwd);}catch{command=undefined;}}
       else command=undefined;
@@ -717,31 +927,41 @@ export class HostCore {
     const runtime={} as Runtime;
     Object.assign(runtime,{info,seq:0,epoch:0,checkpointAt:0,disposed:false,pendingBytes:0});
     info.notificationCount=0;
-    delete info.agentStatus; delete info.agentProvider; delete info.agentNotificationCount; delete info.codexHooksReview;
+    delete info.agentStatus; delete info.agentProvider; delete info.agentNotificationCount; delete info.codexHooksReview; delete info.agentInbox; delete info.agentReady;
     // Every non-WSL shell gets a per-shell secret: its prompt marker authenticates
     // "back at the shell" for status and agent resume, independent of Claude setup.
     const agentToken = profile.kind !== 'wsl' ? randomBytes(32).toString('hex') : undefined;
     runtime.agentToken=agentToken;
+    // The shell prompt marker that proves the agent has ended exists only in the PowerShell integration.
+    runtime.agentShell=profile.kind==='powershell'&&agentToken!==undefined;
     const current=()=>!runtime.disposed&&!runtime.stopping&&!this.closing&&!this.shutdownPrepared&&this.runtimes.get(info.id)===runtime;
     delete info.currentCwd;
     runtime.engine=new TerminalEngine({cols:info.cols,rows:info.rows,scrollback:this.settings.scrollback,
       notificationsEnabled:()=>!runtime.disposed&&!this.closing&&!this.shutdownPrepared&&this.runtimes.get(info.id)===runtime,
       onNotification:count=>{info.notificationCount=count;runtime.notificationChanged=true;},
       agentToken,
-      onAgentStatus:(status,count,provider='claude')=>{info.agentStatus=status;info.agentProvider=provider;if(count!==undefined)info.agentNotificationCount=count;runtime.notificationChanged=true;},
+      onAgentStatus:(status,count,provider='claude')=>{info.agentStatus=status;info.agentProvider=provider;if(count!==undefined)info.agentNotificationCount=count;runtime.notificationChanged=true;runtime.inbox?.statusChanged(status);},
       onCodexHooksReview:visible=>{if(visible)info.codexHooksReview=true;else delete info.codexHooksReview;runtime.notificationChanged=true;},
-      onAgentSession:session=>{if(current())this.recordAgentSession(info,session);},
+      onAgentSession:session=>{if(!current())return;this.recordAgentSession(info,session);if(session)runtime.inbox?.agentStarted();else runtime.inbox?.agentStopped();},
+      onAgentReport:()=>{if(current())runtime.inbox?.agentReported();},
       // The first prompt after a restore types the resume line and keeps the intent until
       // the CLI reports itself or exits; any other prompt means no agent is running.
-      onShellPrompt:()=>{if(!current())return;if(!this.dispatchResume(runtime))this.recordAgentSession(info,null);},
+      onShellPrompt:()=>{if(!current())return;runtime.inbox?.agentStopped();runtime.promptIdle=true;if(!this.dispatchResume(runtime)){this.recordAgentSession(info,null);this.dispatchLaunch(runtime);}},
       onDirectory:directory=>{if(!runtime.disposed&&info.currentCwd!==directory){info.currentCwd=directory;runtime.directoryChanged=true;}},onResponse:(data:string)=>{try{if(runtime.pty && info.status==='running')runtime.pty.write(data);}catch{/* exit can race an emulator reply */}}});
     this.runtimes.set(info.id,runtime);
+    // Messages for this generation's agent live in host memory and end with it.
+    runtime.inbox=new AgentInbox({
+      write:data=>{if(!current()||info.status!=='running'||!runtime.pty)return false;try{runtime.pty.write(data);return true;}catch{return false;}},
+      facts:()=>({supported:runtime.agentShell===true,status:info.agentStatus,dnd:info.agentDnd===true}),
+      changed:()=>{const summary=runtime.inbox?.summary();if(summary)info.agentInbox=summary;else delete info.agentInbox;if(runtime.agentShell&&runtime.inbox?.agentRunning)info.agentReady=true;else delete info.agentReady;runtime.notificationChanged=true;this.scheduleFrame(runtime);},
+      settled:(id,outcome)=>this.teamMessageSettled(id,outcome),
+    });
     if(resumeCommand){const timer=setTimeout(()=>{if(!runtime.pendingResume||!current())return;this.abandonResume(runtime);this.notice('AGENT_RESUME_SKIPPED',`${info.title}: 셸 준비를 확인하지 못해 이전 대화를 자동으로 이어 가지 않았습니다. 필요하면 직접 다시 열어 주세요.`);},RESUME_PROMPT_TIMEOUT_MS);timer.unref?.();runtime.pendingResume={command:resumeCommand,timer};}
     try {
       if(history)await runtime.engine.restoreHistory(history);
       const environment=safeShellEnvironment();
       if(agentToken)environment.MONGLE_AGENT_TOKEN=agentToken;
-      const integration=shellIntegration(profile,launch.args,environment);
+      const integration=shellIntegration(profile,launch.args,environment,{codexWrapper:this.options.codexIntegration?.status==='installed'});
       runtime.pty=pty.spawn(launch.executable,integration.args,{name:'xterm-256color',cols:info.cols,rows:info.rows,cwd:launch.cwd,env:integration.env,useConpty:true,useConptyDll:true});
       runtime.stopPty=installPtyLifecycle(runtime.pty);
     } catch {
@@ -758,7 +978,7 @@ export class HostCore {
     });
     runtime.pty.onExit(({exitCode})=>{
       if(runtime.disposed || this.runtimes.get(info.id)!==runtime)return;
-      info.status='exited';info.exitCode=exitCode;delete info.pid;delete info.agentStatus;delete info.agentProvider;delete info.agentNotificationCount;delete info.codexHooksReview;runtime.pty=undefined;this.revoke(runtime);this.cancelResume(runtime);
+      info.status='exited';info.exitCode=exitCode;delete info.pid;delete info.agentStatus;delete info.agentProvider;delete info.agentNotificationCount;delete info.codexHooksReview;runtime.inbox?.dispose();delete info.agentInbox;delete info.agentReady;runtime.pty=undefined;this.revoke(runtime);this.cancelResume(runtime);
       // A shell that ended by itself has no conversation to reopen. Shutdown keeps the saved one.
       if(!this.closing && !this.shutdownPrepared){info.resumeOnBoot=false;this.agentSessions.delete(info.id);}
       this.persist();this.broadcastState();
@@ -836,7 +1056,7 @@ export class HostCore {
   /** Types the single pending resume line once, right after the new shell's first authenticated prompt. */
   private dispatchResume(runtime:Runtime):boolean{
     const pending=runtime.pendingResume;if(!pending)return false;
-    this.cancelResume(runtime);
+    this.cancelResume(runtime);runtime.promptIdle=false;
     if(runtime.info.status!=='running'||!runtime.pty)return true;
     try{runtime.pty.write(pending.command);}catch{/* the shell exited; nothing is retried */}
     return true;
@@ -858,9 +1078,24 @@ export class HostCore {
    */
   reportAgentSession(token:string,session:AgentSessionIdentity|null):boolean{
     const runtime=this.agentRuntime(token);if(!runtime)return false;
-    if(session===null){this.recordAgentSession(runtime.info,null);return true;}
+    if(session===null){this.recordAgentSession(runtime.info,null);runtime.inbox?.agentStopped();return true;}
     const valid=validAgentSession(session);if(!valid)return false;
-    this.recordAgentSession(runtime.info,valid);return true;
+    this.recordAgentSession(runtime.info,valid);runtime.inbox?.agentStarted();return true;
+  }
+  /**
+   * Claude's SessionStart from the managed hook through the local pipe. Claude Code's fullscreen UI drops
+   * terminal sequences written before it draws, so this start may never reach the terminal. The pipe is not
+   * ordered with terminal output, so a report counts only while the shell has not shown its prompt since the
+   * last input: a late one can never let a message be pasted into the shell. It records the conversation and
+   * marks the agent ready; Claude's status still comes only from the terminal, in order.
+   */
+  reportClaudeStart(token:string,session:AgentSessionIdentity):boolean{
+    const runtime=this.agentRuntime(token),valid=validAgentSession(session);
+    if(!runtime||!valid||valid.provider!=='claude'||!runtime.agentShell||runtime.promptIdle)return false;
+    this.recordAgentSession(runtime.info,valid);
+    if(!runtime.info.agentProvider){runtime.info.agentProvider='claude';runtime.notificationChanged=true;this.scheduleFrame(runtime);}
+    runtime.inbox?.agentStarted();
+    return true;
   }
   /**
    * Lifecycle end report (e.g. Codex SessionEnd). Clears the record only when it is
@@ -871,7 +1106,7 @@ export class HostCore {
     const runtime=this.agentRuntime(token),valid=validAgentSession(session);if(!runtime||!valid)return false;
     const record=this.agentSessions.get(runtime.info.id);
     if(!record||record.generation!==runtime.info.generation||record.session.provider!==valid.provider||record.session.sessionId!==valid.sessionId)return false;
-    this.recordAgentSession(runtime.info,null);return true;
+    this.recordAgentSession(runtime.info,null);runtime.inbox?.agentStopped();return true;
   }
   /**
    * An event of a Codex turn from the managed hook (through the local IPC). token must be the per-shell
@@ -893,7 +1128,7 @@ export class HostCore {
   private persisted():PersistedHost{
     const agentSessions:NonNullable<PersistedHost['agentSessions']>={};
     for(const info of this.terminals){const record=this.agentSessions.get(info.id);if(record&&record.generation===info.generation)agentSessions[info.id]={generation:record.generation,session:{...record.session}};}
-    return {schemaVersion:2,hostId:this.hostId,settings:this.settings,groups:this.groups,terminals:this.terminals.map(({controller,pid,...info})=>info),repositories:this.repositories,worktrees:this.worktrees,worktreeOperations:this.worktreeOperations,agentSessions};
+    return {schemaVersion:2,hostId:this.hostId,settings:this.settings,groups:this.groups,terminals:this.terminals.map(({controller,pid,agentInbox,agentReady,...info})=>info),repositories:this.repositories,worktrees:this.worktrees,worktreeOperations:this.worktreeOperations,agentSessions};
   }
   private async prepareShutdown():Promise<void>{
     if(this.projectTasks.size)throw new AppError('WORKTREE_BUSY','워크트리 작업이 끝난 뒤 정상 종료를 다시 시도해 주세요.');
@@ -932,15 +1167,15 @@ export class HostCore {
   onState(listener:(state:HostState)=>void){this.stateListeners.add(listener);return()=>{this.stateListeners.delete(listener);};}
   private broadcastState(){const event={type:'state' as const,state:this.getState()};for(const client of this.clients.values())this.send(client,event);for(const listener of this.stateListeners){try{listener(event.state);}catch{/* a listener failure never blocks terminals */}}}
   private notice(code:string,message:string){for(const client of this.clients.values())this.send(client,{type:'notice',code,message});}
-  private async stopTerminal(info:TerminalInfo,preserveForBoot=false){if(!preserveForBoot){info.resumeOnBoot=false;delete info.restoreError;this.agentSessions.delete(info.id);}const r=this.runtimes.get(info.id);if(r){r.stopping=true;this.cancelResume(r);}if(!r){if(!preserveForBoot)info.status='exited';return;}if(r.pty){await r.stopPty?.();r.pty=undefined;}info.status='exited';delete info.pid;this.revoke(r);const frame=await this.frame(info);this.checkpoint(r,frame);this.broadcastFrame(frame);}
-  private async disposeRuntime(id:string){const r=this.runtimes.get(id);if(!r)return;r.stopping=true;if(r.timer)clearTimeout(r.timer);this.cancelResume(r);if(r.pty)await r.stopPty?.();r.disposed=true;await r.engine.dispose();this.runtimes.delete(id);}
+  private async stopTerminal(info:TerminalInfo,preserveForBoot=false){if(!preserveForBoot){info.resumeOnBoot=false;delete info.restoreError;this.agentSessions.delete(info.id);}const r=this.runtimes.get(info.id);if(r){r.stopping=true;this.cancelResume(r);}if(!r){if(!preserveForBoot)info.status='exited';return;}if(r.pty){await r.stopPty?.();r.pty=undefined;}r.inbox?.dispose();delete info.agentInbox;delete info.agentReady;info.status='exited';delete info.pid;this.revoke(r);const frame=await this.frame(info);this.checkpoint(r,frame);this.broadcastFrame(frame);}
+  private async disposeRuntime(id:string){const r=this.runtimes.get(id);if(!r)return;r.stopping=true;if(r.timer)clearTimeout(r.timer);this.cancelResume(r);if(r.pty)await r.stopPty?.();r.disposed=true;r.inbox?.dispose();this.cancelLaunch(r,false);await r.engine.dispose();this.runtimes.delete(id);}
   private async removeTerminal(info:TerminalInfo){this.agentSessions.delete(info.id);await this.disposeRuntime(info.id);for(const c of this.clients.values())c.attached.delete(info.id);const group=this.group(info.groupId);group.layout=removeLeaf(group.layout,info.id);group.revision++;this.terminals=this.terminals.filter(t=>t.id!==info.id);this.archivedFrames.delete(info.id);this.archivedSequences.delete(info.id);this.store.clearSnapshot(info.id);}
   async close():Promise<void>{
     if(this.closing)return;this.closing=true;if(this.leaseTimer)clearInterval(this.leaseTimer);await this.uploads.close();await this.queue;await Promise.allSettled([...this.projectTasks.values()]);await this.queue;
     for(const info of this.terminals)if(info.status==='running')info.resumeOnBoot=true;
     this.persist();
     for(const info of this.terminals){const runtime=this.runtimes.get(info.id);if(runtime){try{await this.stopTerminal(info,true);}catch{}await this.disposeRuntime(info.id);}}
-    this.persist();this.clients.clear();this.store.close();
+    this.persist();this.clients.clear();this.store.close();this.teamStore?.close();
   }
 }
 
