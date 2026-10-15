@@ -8,7 +8,7 @@ import path from 'node:path';
 import { HostCore } from '../../packages/host/core.js';
 import type { ConnectionContext, PresentationSnapshot, ShellProfile, Team, TeamMemberSpec, TerminalInfo } from '../../packages/protocol/index.js';
 import { BUILT_IN_TEMPLATES, ROLE_DEFAULTS } from '../../packages/host/teams.js';
-import { leafIds } from '../../packages/protocol/index.js';
+import { groupRepositoryIds, leafIds } from '../../packages/protocol/index.js';
 
 const environment = { executable: async (provider: string) => provider === 'claude' ? 'C:\\fake\\claude.exe' : 'C:\\fake\\codex.cmd', version: async () => '9.9.9', loggedIn: async () => true, gitChanges: async () => 2 };
 const member = (extra: Partial<TeamMemberSpec>): TeamMemberSpec => ({ name: '설계', role: 'lead', provider: 'claude', model: 'opus', reportTo: 'user', instructions: ROLE_DEFAULTS.lead.instructions, folder: 'base', readOnly: false, ...extra });
@@ -64,14 +64,17 @@ test('a team starts its members as PowerShell tabs, types each CLI with its role
   await request('teams.templates.save', { id: mine.id, name: '내 팀 2', members: mine.members });
   assert.equal((await request('teams.templates')).at(-1).name, '내 팀 2');
 
-  // The pre-start check speaks for each part; worktrees need a project in the group.
-  const blocked = await request('teams.check', { ...host, groupId, name: '팀', cwd: dataDir, members: BUILT_IN_TEMPLATES[0].members });
-  assert.equal(blocked.ready, false);
-  assert.match(blocked.checks.find((item: any) => item.id === 'git').message, /프로젝트\(Git 저장소\) 하나를 먼저/);
+  // The pre-start check speaks for each part. A folder that cannot hold worktrees does not block the team.
+  const shared = await request('teams.check', { ...host, groupId, name: '팀', cwd: dataDir, members: BUILT_IN_TEMPLATES[0].members });
+  assert.equal(shared.ready, true, JSON.stringify(shared.checks));
+  assert.equal(shared.source, undefined, 'only the result reaches the view');
+  const sharedGit = shared.checks.find((item: any) => item.id === 'git');
+  assert.equal(sharedGit.status, 'warning');
+  assert.match(sharedGit.message, /개발, 검토도 기본 폴더에서 함께 일합니다/);
   const ready = await request('teams.check', { ...host, groupId, name: '팀', cwd: dataDir, members: mine.members });
   assert.equal(ready.ready, true);
   assert.deepEqual(ready.checks.map((item: any) => [item.id, item.status]), [['shell', 'ok'], ['claude', 'ok'], ['codex', 'ok'], ['folder', 'ok'], ['permissions', 'ok']]);
-  await rejects('teams.start', { ...host, groupId, name: '팀', cwd: dataDir, members: BUILT_IN_TEMPLATES[0].members }, 'TEAM_NOT_READY');
+  await rejects('teams.start', { ...host, groupId, name: '팀', cwd: dataDir, members: [member({}), member({ reportTo: '설계' })] }, 'TEAM_NOT_READY');
 
   const team: Team = await request('teams.start', { ...host, groupId, name: '결제 정리', cwd: dataDir, members: mine.members });
   assert.deepEqual(team.members.map(item => [item.name, Boolean(item.terminalId), item.error]), [['설계', true, undefined], ['검토', true, undefined]]);
@@ -124,12 +127,13 @@ test('a team starts its members as PowerShell tabs, types each CLI with its role
   await assert.rejects(readFile(leadFile, 'utf8'));
 });
 
-test('worktree members get their own worktree and branch through the normal worktree job', { timeout: 90000 }, async t => {
+test('worktree members branch from the team folder\'s repository, linking it to the group, and share a folder without one', { timeout: 120000 }, async t => {
   const root = await mkdtemp(path.join(tmpdir(), 'mongle-team-worktree-'));
   // The project must live outside the app data folder, which the host never opens as a project.
-  const dataDir = path.join(root, 'data'), repo = path.join(root, 'repo');
+  const dataDir = path.join(root, 'data'), repo = path.join(root, 'repo'), plain = path.join(root, 'plain'), fresh = path.join(root, 'fresh');
   const git = (...args: string[]) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', ...args], { cwd: repo, windowsHide: true });
   await mkdir(repo); git('init', '-q', '-b', 'main'); await writeFile(path.join(repo, 'a.txt'), 'a'); git('add', '.'); git('commit', '-qm', 'init');
+  await mkdir(plain); await mkdir(fresh); execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: fresh, windowsHide: true });
   const program = path.join(root, 'shell.cjs');
   await writeFile(program, "process.stdin.resume();setTimeout(()=>process.stdout.write('\\x1b]777;mongle-shell;'+process.env.MONGLE_AGENT_TOKEN+'\\x07'),300);setInterval(()=>{},1000);");
   const core = new HostCore({ dataDir, claudeIntegration: { status: 'ready' }, teamEnvironment: { ...environment, gitChanges: async () => 0 } });
@@ -142,18 +146,45 @@ test('worktree members get their own worktree and branch through the normal work
   core.connect(ctx, () => {});
   const request = (method: string, params: unknown = {}) => core.handle(method, params, ctx);
   const host = { hostId: core.getState().hostId, bootId: core.getState().bootId };
-  const attached = await request('projects.attach', { ...host, path: repo });
+  // A group the project was never opened in, as when the user made the group or ran git init later.
+  const groupId = core.getState().groups[0].id;
+  const group = () => core.getState().groups.find(item => item.id === groupId)!;
+  const gitRow = (check: any) => check.checks.find((item: any) => item.id === 'git');
   const members = [member({}), member({ name: '개발', role: 'developer', model: 'sonnet', reportTo: '설계', folder: 'worktree', instructions: ROLE_DEFAULTS.developer.instructions })];
-  const check = await request('teams.check', { ...host, groupId: attached.groupId, name: '팀', cwd: repo, members });
+
+  // A plain folder: the team still starts and the worktree member works in the team folder.
+  const plainCheck = await request('teams.check', { ...host, groupId, name: '일반', cwd: plain, members });
+  assert.equal(plainCheck.ready, true, JSON.stringify(plainCheck.checks));
+  assert.deepEqual([gitRow(plainCheck).status, /Git 저장소가 아니라서.*개발도 기본 폴더에서 함께 일합니다/.test(gitRow(plainCheck).message)], ['warning', true], gitRow(plainCheck).message);
+  const plainTeam: Team = await request('teams.start', { ...host, groupId, name: '일반', cwd: plain, members });
+  assert.deepEqual(plainTeam.members.map(item => [item.folder, item.worktreeId, item.error]), [['base', undefined, undefined], ['base', undefined, undefined]]);
+  assert.equal(path.resolve(core.getState().terminals.find(item => item.id === plainTeam.members[1].terminalId)!.cwd), path.resolve(plain));
+  assert.equal(groupRepositoryIds(group()).length, 0, 'a folder without a repository links nothing');
+
+  // A new repository without a commit cannot give worktrees yet, and the check says so.
+  const freshCheck = await request('teams.check', { ...host, groupId, name: '새 저장소', cwd: fresh, members });
+  assert.equal(freshCheck.ready, true);
+  assert.match(gitRow(freshCheck).message, /아직 커밋이 없어.*첫 커밋을 만들면/);
+
+  // The repository holding the team folder is found although the group has no project; starting links it.
+  const check = await request('teams.check', { ...host, groupId, name: '팀', cwd: repo, members });
   assert.equal(check.ready, true, JSON.stringify(check.checks));
-  assert.match(check.checks.find((item: any) => item.id === 'git').message, /새 워크트리 1개/);
-  const team: Team = await request('teams.start', { ...host, groupId: attached.groupId, name: '팀', cwd: repo, members });
+  assert.equal(gitRow(check).status, 'ok');
+  assert.match(gitRow(check).message, /새 워크트리 1개를 .*repo\.worktrees에 만듭니다\. 작업 폴더의 저장소\(repo\)를 이 그룹의 프로젝트로 연결합니다/);
+  assert.equal(groupRepositoryIds(group()).length, 0, 'the check itself changes nothing');
+  const team: Team = await request('teams.start', { ...host, groupId, name: '팀', cwd: repo, members });
   const developer = team.members[1];
   assert.equal(developer.error, undefined);
   const worktree = core.getState().worktrees?.find(item => item.id === developer.worktreeId);
   assert.ok(worktree && worktree.path !== repo, 'the developer works in a new worktree');
+  assert.deepEqual(groupRepositoryIds(group()), [worktree!.repositoryId], 'the team folder\'s repository is now the group\'s project');
+  assert.equal(team.repositoryId, worktree!.repositoryId);
   const terminal = core.getState().terminals.find(item => item.id === developer.terminalId)!;
   assert.equal(terminal.worktreeId, worktree!.id);
   assert.equal(terminal.title, '개발');
   assert.match(execFileSync('git', ['branch', '--list', 'worktree/*'], { cwd: repo, encoding: 'utf8' }), /worktree\//);
+
+  // Next time the linked project is used directly.
+  const again = await request('teams.check', { ...host, groupId, name: '팀 2', cwd: repo, members });
+  assert.doesNotMatch(gitRow(again).message, /연결합니다/);
 });

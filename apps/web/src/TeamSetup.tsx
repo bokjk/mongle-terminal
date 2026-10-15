@@ -157,7 +157,7 @@ export function TeamSetup({state, groupId, request, onClose, onStarted}: {state:
               ? <button type="button" className="button subtle team-save-template" disabled={!members.length} onClick={() => setSaving(selected && !selected.builtIn ? selected.name : name.trim())}>템플릿으로 저장</button>
               : <span className="team-save-form"><input className="input" aria-label="템플릿 이름" autoFocus maxLength={30} value={saving} onChange={event => setSaving(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); void saveTemplate(); } }}/><button type="button" className="button" disabled={!saving.trim() || busy === 'save'} onClick={() => void saveTemplate()}>저장</button><button type="button" className="icon-button" aria-label="템플릿 저장 취소" onClick={() => setSaving(undefined)}><X size={14}/></button></span>}
           </div>
-          {worktrees && <p className="hint">새 워크트리를 고른 구성원은 이 그룹의 Git 저장소에서 브랜치를 따로 받아 일합니다. 결과는 Git 변경 검토에서 구성원별로 확인하고, 합칠지는 직접 정합니다.</p>}
+          {worktrees && <p className="hint">새 워크트리를 고른 구성원은 작업 폴더의 Git 저장소에서 브랜치를 따로 받아 일합니다. 작업 폴더가 Git 저장소가 아니거나 아직 커밋이 없으면 기본 폴더에서 함께 일합니다. 결과는 Git 변경 검토에서 구성원별로 확인하고, 합칠지는 직접 정합니다.</p>}
           {problems.length > 0 && <ul className="team-problems" role="status">{problems.map(problem => <li key={problem}><AlertTriangle size={13}/>{problem}</li>)}</ul>}
         </> : <>
           <p className="hint team-check-intro">{name.trim()} · 구성원 {members.length}명 · {group?.name}. 필수 항목이 모두 통과해야 팀을 시작할 수 있습니다. 모델 요청은 보내지 않습니다.</p>

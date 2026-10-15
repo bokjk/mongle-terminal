@@ -42,6 +42,16 @@ const messageRef = terminalRef.extend({messageId:z.string().uuid()}).strict();
 const teamMemberSchema = z.object({name:z.string().max(100),role:z.enum(['lead','developer','reviewer','tester','researcher','custom']),provider:z.enum(['claude','codex']),model:z.string().max(80),reportTo:z.string().max(100),instructions:z.string().max(TEAM_INSTRUCTIONS_MAX),extra:z.string().max(TEAM_EXTRA_MAX).optional(),folder:z.enum(['base','worktree']),readOnly:z.boolean()}).strict();
 const teamStartSchema = hostRef.extend({groupId:idSchema,name:z.string().max(100),cwd:cwdSchema,members:z.array(teamMemberSchema).min(1).max(10)}).strict();
 const normalizeTeamMember = (member:z.infer<typeof teamMemberSchema>):TeamMemberSpec => {const extra=member.extra?.trim();return {...member,name:member.name.trim(),reportTo:member.reportTo.trim(),...(extra?{extra}:{extra:undefined})};};
+const worktreeRootOf = (root:string) => join(dirname(root),`${basename(root)}.worktrees`);
+/** Where worktree members branch from, or why the team folder cannot give them a worktree. */
+type TeamSource = {repository:Repository;attach:boolean} | {reason:string};
+/** A team folder that cannot hold worktrees only changes where members work; busy or closing hosts still stop the request. */
+const TEAM_GIT_REASONS:Record<string,string> = {
+  NOT_REPOSITORY:'작업 폴더가 Git 저장소가 아니라서 새 워크트리를 만들 수 없습니다.',
+  NO_COMMIT:'작업 폴더의 Git 저장소에 아직 커밋이 없어 새 워크트리를 만들 수 없습니다. 첫 커밋을 만들면 쓸 수 있습니다.',
+  GIT_UNAVAILABLE:'Git을 찾지 못해 새 워크트리를 만들 수 없습니다.',
+};
+const TEAM_GIT_FALLBACK = new Set([...Object.keys(TEAM_GIT_REASONS),'WORKTREE_UNSUPPORTED','FILES_PROTECTED','FILES_UNSUPPORTED','FILES_UNAVAILABLE']);
 /** Host-private: the exact agent conversation last verified in a terminal generation. Never in TerminalInfo/state. */
 type AgentSessionRecord = { generation: string; session: AgentSessionIdentity };
 const RESUME_PROMPT_TIMEOUT_MS = 15_000;
@@ -279,7 +289,7 @@ export class HostCore {
       if(!store.templates().some(item=>item.id===p.id))throw new AppError('TEMPLATE_READ_ONLY','기본 제공 템플릿은 지울 수 없습니다.');
       store.deleteTemplate(p.id);return {deleted:true};
     }
-    if(method==='teams.check'){const p=teamStartSchema.parse(params);this.requireHost(p);return this.teamChecks(p.groupId,p.cwd,p.name,p.members.map(normalizeTeamMember));}
+    if(method==='teams.check'){const p=teamStartSchema.parse(params);this.requireHost(p);const {ready,checks}=await this.teamChecks(p.groupId,p.cwd,p.name,p.members.map(normalizeTeamMember),client);return {ready,checks};}
     if(method==='teams.start')return this.startTeam(teamStartSchema.parse(params),client);
     if(method==='teams.message'){
       const p=hostRef.extend({teamId:idSchema,to:idSchema,text:z.string().min(1).max(AGENT_MESSAGE_MAX_CHARS*2)}).strict().parse(params);
@@ -328,8 +338,30 @@ export class HostCore {
   private teamLogChanged(){if(this.teamLogBroadcast||this.closing)return;this.teamLogBroadcast=true;queueMicrotask(()=>{this.teamLogBroadcast=false;this.broadcastState();});}
   private teamMember(terminalId:string){for(const team of this.teams){const member=team.members.find(item=>item.terminalId===terminalId);if(member)return {team,member};}}
   private teamEnvironment():TeamEnvironment{return {...defaultTeamEnvironment,...this.options.teamEnvironment};}
+  /**
+   * The repository worktree members branch from, found from the team folder: a project of this group that
+   * holds the folder, else the folder's own repository (linked to the group when the team starts), else the
+   * group's only project. Without one, the reason says why; those members then share the team folder.
+   */
+  private async teamRepository(group:Group,cwd:string,client:Client):Promise<TeamSource> {
+    const linked=groupRepositoryIds(group).map(id=>this.repositories.find(item=>item.id===id)).filter((item):item is Repository=>Boolean(item));
+    const directory=await realpath(cwd).catch(()=>cwd);
+    const holding=linked.filter(repository=>within(repository.root,directory)||this.worktrees.some(item=>item.repositoryId===repository.id&&item.status==='ready'&&within(item.path,directory)));
+    if(holding.length===1)return {repository:holding[0],attach:false};
+    let reason:string;
+    try{
+      const inspection=await this.projectRead(()=>inspectProject(cwd,this.options.dataDir),client);
+      const known=this.repositories.find(item=>samePath(item.commonDir,inspection.commonDir));
+      if(known&&linked.includes(known))return {repository:known,attach:false};
+      return {repository:known??{id:'',commonDir:inspection.commonDir,root:inspection.root,baseRef:inspection.baseRef,worktreeRoot:worktreeRootOf(inspection.root),checkedAt:0},attach:true};
+    }catch(error){
+      if(!(error instanceof AppError)||!TEAM_GIT_FALLBACK.has(error.code))throw error;
+      reason=linked.length>1&&error.code==='NOT_REPOSITORY'?'작업 폴더가 이 그룹의 어느 프로젝트에도 속하지 않아 새 워크트리를 만들 저장소를 정할 수 없습니다.':TEAM_GIT_REASONS[error.code]??'새 워크트리를 만들 수 없습니다. '+error.message;
+    }
+    return linked.length===1?{repository:linked[0],attach:false}:{reason};
+  }
   /** The pre-start check: shell, each CLI and its login, folder, Git for worktrees, limits and read-only members. */
-  private async teamChecks(groupId:string,cwd:string,name:string,members:TeamMemberSpec[]):Promise<{ready:boolean;checks:TeamCheck[]}> {
+  private async teamChecks(groupId:string,cwd:string,name:string,members:TeamMemberSpec[],client:Client):Promise<{ready:boolean;checks:TeamCheck[];source?:TeamSource}> {
     const env=this.teamEnvironment(),checks:TeamCheck[]=[],group=this.group(groupId);
     const profile=this.profiles.find(item=>item.kind==='powershell');
     checks.push(profile?{id:'shell',label:'PowerShell',status:'ok',message:'구성원 터미널을 '+profile.name+'로 엽니다.'}:{id:'shell',label:'PowerShell',status:'error',message:'PowerShell을 찾지 못했습니다. 팀 구성원은 PowerShell 터미널에서만 실행합니다.'});
@@ -345,18 +377,19 @@ export class HostCore {
     }
     try{await resolveShellLaunch(profile??this.profiles[0],cwd);checks.push({id:'folder',label:'작업 폴더',status:'ok',message:cwd});}
     catch{checks.push({id:'folder',label:'작업 폴더',status:'error',message:'작업 폴더를 열 수 없습니다. 폴더가 있는지 확인해 주세요.'});}
-    const worktrees=members.filter(item=>item.folder==='worktree').length;
-    if(worktrees){
-      const ids=groupRepositoryIds(group);
-      if(ids.length!==1)checks.push({id:'git',label:'Git',status:'error',message:'구성원별 워크트리를 만들려면 이 그룹에서 프로젝트(Git 저장소) 하나를 먼저 열어 주세요.'});
-      else{const repository=this.repository(ids[0]),changes=await env.gitChanges(cwd);checks.push({id:'git',label:'Git',status:changes?'warning':'ok',message:'새 워크트리 '+worktrees+'개를 '+repository.worktreeRoot+'에 만듭니다.'+(changes?' 저장하지 않은 변경 '+changes+'개는 새 워크트리에 들어가지 않습니다.':'')});}
+    const worktreeMembers=members.filter(item=>item.folder==='worktree');
+    let source:TeamSource|undefined;
+    if(worktreeMembers.length){
+      source=await this.teamRepository(group,cwd,client);
+      if('reason' in source)checks.push({id:'git',label:'Git',status:'warning',message:source.reason+' 새 워크트리로 고른 '+worktreeMembers.map(item=>item.name).join(', ')+'도 기본 폴더에서 함께 일합니다. 같은 파일을 동시에 고치지 않도록 일을 나눠 주세요.'});
+      else{const changes=await env.gitChanges(cwd);checks.push({id:'git',label:'Git',status:changes?'warning':'ok',message:'새 워크트리 '+worktreeMembers.length+'개를 '+source.repository.worktreeRoot+'에 만듭니다.'+(source.attach?' 작업 폴더의 저장소('+basename(source.repository.root)+')를 이 그룹의 프로젝트로 연결합니다.':'')+(changes?' 저장하지 않은 변경 '+changes+'개는 새 워크트리에 들어가지 않습니다.':'')});}
     }
     const inGroup=this.terminals.filter(item=>item.groupId===group.id).length,running=this.terminals.filter(item=>item.status==='running').length;
     if(inGroup+members.length>16||running+members.length>32||this.terminals.length+members.length>128)checks.push({id:'limit',label:'터미널 수',status:'error',message:'터미널 한도를 넘습니다. 사용하지 않는 터미널을 정리해 주세요.'});
     const readOnly=members.filter(item=>item.readOnly).map(item=>item.name);
     if(readOnly.length)checks.push({id:'permissions',label:'권한',status:'ok',message:readOnly.join(', ')+': 읽기 전용으로 실행해 파일을 고치지 못하게 합니다.'});
     for(const problem of teamProblems(name,members))checks.push({id:'team',label:'팀 구성',status:'error',message:problem});
-    return {ready:!checks.some(item=>item.status==='error'),checks};
+    return {ready:!checks.some(item=>item.status==='error'),checks,...(source?{source}:{})};
   }
   /**
    * Starts every member in order: its worktree (through the normal worktree job) or the base folder, a
@@ -365,12 +398,19 @@ export class HostCore {
    */
   private async startTeam(p:z.infer<typeof teamStartSchema>,client:Client):Promise<Team> {
     this.requireHost(p);
-    const members=p.members.map(normalizeTeamMember),check=await this.teamChecks(p.groupId,p.cwd,p.name,members);
+    const members=p.members.map(normalizeTeamMember),check=await this.teamChecks(p.groupId,p.cwd,p.name,members,client);
     if(!check.ready)throw new AppError('TEAM_NOT_READY',check.checks.filter(item=>item.status==='error').map(item=>item.message).join(' '));
     if(this.teams.length>=50)throw new AppError('LIMIT_REACHED','팀은 50개까지 둘 수 있습니다. 쓰지 않는 팀을 정리해 주세요.');
     const claudePath=members.some(item=>item.provider==='claude')?await this.teamEnvironment().executable('claude'):undefined;
-    const group=this.group(p.groupId),profile=this.profiles.find(item=>item.kind==='powershell')!;
-    const repositoryId=members.some(item=>item.folder==='worktree')?groupRepositoryIds(group)[0]:undefined;
+    const profile=this.profiles.find(item=>item.kind==='powershell')!,source=check.source;
+    // As the check said: without a usable repository, worktree members work in the team folder.
+    if(source&&'reason' in source)for(const member of members)if(member.folder==='worktree')member.folder='base';
+    let repositoryId=source&&'repository' in source&&!source.attach?source.repository.id:undefined;
+    if(source&&'repository' in source&&source.attach){
+      const target=this.group(p.groupId);
+      repositoryId=(await this.projectRequest('projects.attach',{hostId:this.hostId,bootId:this.bootId,path:p.cwd,groupId:target.id,revision:target.revision},client.ctx) as {repository:Repository}).repository.id;
+    }
+    const group=this.group(p.groupId);
     const team:Team={id:randomUUID(),name:p.name.trim(),groupId:group.id,cwd:p.cwd,...(repositoryId?{repositoryId}:{}),createdAt:Date.now(),members:members.map(item=>({...item,id:randomUUID()}))};
     await mkdir(this.teamFolder(team.id),{recursive:true});
     for(const [index,member] of team.members.entries())await writeFile(this.promptFile(team.id,member),rolePromptFile(member.provider,teamRolePrompt(team,team.members,index)),'utf8');
@@ -438,7 +478,7 @@ export class HostCore {
         if(p.groupId)this.revision(group!,p.revision??-1);
         if(!repository){
           if(this.repositories.length>=100)throw new AppError('LIMIT_REACHED','프로젝트는 호스트당 100개까지 등록할 수 있습니다.');
-          repository={id:randomUUID(),commonDir:inspection.commonDir,root:inspection.root,baseRef:inspection.baseRef,worktreeRoot:join(dirname(inspection.root),`${basename(inspection.root)}.worktrees`),checkedAt:Date.now()};this.repositories.push(repository);
+          repository={id:randomUUID(),commonDir:inspection.commonDir,root:inspection.root,baseRef:inspection.baseRef,worktreeRoot:worktreeRootOf(inspection.root),checkedAt:Date.now()};this.repositories.push(repository);
         }
         if(!group){
           if(this.groups.length>=100)throw new AppError('LIMIT_REACHED','그룹 개수 한도에 도달했습니다.');
