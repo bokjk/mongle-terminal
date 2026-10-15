@@ -85,9 +85,9 @@ Codex 등 다른 CLI가 보낸 알림도 목록·탭·그룹·모바일 전환 �
 
 ## 시작은 터미널 하나부터
 
-현재 공개 버전은 **0.3.24 Windows 미리보기**입니다. [최종 검사와 공개 파일 검증](docs/validation/public-release-0.3.24.md)을 마쳤습니다.
+현재 공개 버전은 **0.3.25 Windows 미리보기**입니다. [최종 검사와 공개 파일 검증](docs/validation/public-release-0.3.25.md)을 마쳤습니다.
 
-1. **[Windows 11 x64 설치 파일](https://github.com/bokjk/mongle-terminal-releases/releases/latest)**을 받아 설치합니다. 현재 공개 버전은 **0.3.24 미리보기**입니다.
+1. **[Windows 11 x64 설치 파일](https://github.com/bokjk/mongle-terminal-releases/releases/latest)**을 받아 설치합니다. 현재 공개 버전은 **0.3.25 미리보기**입니다.
 2. **새 터미널**을 누르고 셸과 시작 폴더를 고릅니다. Git 저장소가 아니어도 사용할 수 있습니다.
 3. 탭 옆 **+**로 터미널을 더하고, 탭 제목을 가장자리로 끌어 화면을 나눕니다.
 4. 다른 기기에서 이어 쓰려면 **설정 → 원격 연결**에서 연결을 준비합니다.
@@ -95,7 +95,7 @@ Codex 등 다른 CLI가 보낸 알림도 목록·탭·그룹·모바일 전환 �
 <details>
 <summary>설치 파일과 ZIP, 업데이트 안내</summary>
 
-아래 파일명은 배포 준비 중인 **0.3.25** 기준입니다.
+아래 파일명은 **0.3.25** 기준입니다.
 
 - **설치 파일:** `MongleTerminal-Setup-0.3.25-x64.exe`. 현재 사용자용으로 설치하며 관리자 권한이 필요하지 않습니다. 설치본은 새 버전을 확인·다운로드한 뒤 사용자 확인을 받아 설치합니다.
 - **ZIP:** `MongleTerminal-0.3.25-x64.zip`. 폴더 전체를 풀고 `MongleTerminal.exe`를 실행합니다. 업데이트는 수동으로 교체합니다.
