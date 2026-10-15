@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
+import { Fragment, useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent, type PointerEvent, type ReactNode } from 'react';
 import { BookmarkPlus, Bot, Crown, FolderTree, GitBranch, GitFork, Lock, MessagesSquare, Send, Users, X } from 'lucide-react';
 import type { HostState, Team, TeamMessage, TerminalInfo } from '../../../packages/protocol/index';
 import { AGENT_MESSAGE_LIMIT } from './AgentMessage';
@@ -77,6 +77,8 @@ export function TeamWorkspace({state, team, maximized, renderPane, request, onSe
     const share = layout.rows[at - 1] / (layout.rows[at - 1] + layout.rows[at]);
     update({...layout, rows: moveTeamRow(layout.rows, at - 1, event.key === 'Home' ? .5 : share + step!)});
   };
+  // A double click resets the size; without this the browser also selects the words next to the handle.
+  const keepSelection = (event: MouseEvent<HTMLDivElement>) => { if (event.detail > 1) event.preventDefault(); };
   const capture = (event: PointerEvent<HTMLDivElement>) => { if (event.button === 0) event.currentTarget.setPointerCapture(event.pointerId); };
   const release = (event: PointerEvent<HTMLDivElement>) => { if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); };
   const focused = maximized && team.members.find(member => member.terminalId === maximized);
@@ -86,10 +88,10 @@ export function TeamWorkspace({state, team, maximized, renderPane, request, onSe
         {pane(lead, 'team-pane-slot team-lead-slot')}
         {others.length > 0 && <>
           <div role="separator" className="team-divider team-divider-lead" aria-label={narrow ? '팀장 칸 높이' : '팀장 칸 너비'} aria-orientation={narrow ? 'horizontal' : 'vertical'} aria-valuemin={25} aria-valuemax={80} aria-valuenow={Math.round(layout.lead * 100)} tabIndex={0} title="끌어서 크기 조절 · 두 번 클릭하면 처음 크기"
-            onDoubleClick={() => update({...layout, lead: TEAM_LEAD_DEFAULT})} onKeyDown={keyLead} onPointerDown={capture} onPointerMove={dragLead} onPointerUp={release}/>
+            onDoubleClick={() => update({...layout, lead: TEAM_LEAD_DEFAULT})} onMouseDown={keepSelection} onKeyDown={keyLead} onPointerDown={capture} onPointerMove={dragLead} onPointerUp={release}/>
           <div className="team-others">{others.map((member, index) => <Fragment key={member.id}>
             {index > 0 && <div role="separator" className="team-divider team-divider-row" aria-label={others[index - 1].name + '와 ' + member.name + ' 칸 높이'} aria-orientation="horizontal" aria-valuemin={15} aria-valuemax={85} aria-valuenow={Math.round(layout.rows[index - 1] / (layout.rows[index - 1] + layout.rows[index]) * 100)} tabIndex={0} title="끌어서 크기 조절 · 두 번 클릭하면 반반"
-              onDoubleClick={() => update({...layout, rows: moveTeamRow(layout.rows, index - 1, .5)})} onKeyDown={event => keyRow(event, index)} onPointerDown={capture} onPointerMove={event => dragRow(event, index)} onPointerUp={release}/>}
+              onDoubleClick={() => update({...layout, rows: moveTeamRow(layout.rows, index - 1, .5)})} onMouseDown={keepSelection} onKeyDown={event => keyRow(event, index)} onPointerDown={capture} onPointerMove={event => dragRow(event, index)} onPointerUp={release}/>}
             {pane(member, 'team-pane-slot', {'--team-row': layout.rows[index]} as CSSProperties)}
           </Fragment>)}</div>
         </>}

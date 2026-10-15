@@ -142,7 +142,7 @@ test('a team starts its members as PowerShell tabs, types each CLI with its role
   assert.match(refused(core.teamRelay(reviewerKey.key, { op: 'send', to: '없는사람', text: '안녕' })), /받을 수 있는 이름: 설계, 사용자/);
   assert.match(refused(core.teamRelay(reviewerKey.key, { op: 'send', to: '검토', text: '나에게' })), /자기 자신/);
   assert.match(refused(core.teamRelay(reviewerKey.key, { op: 'send', to: '설계', text: '\x1b\x07\x00' })), /비어 있습니다/, 'control characters are dropped before anything is sent');
-  assert.equal(core.teamRelay(leadKey.key, { op: 'send', to: '검토', text: ' 결제 모듈을\r\n검토해 주세요 ' }).ok, true, 'a starting CLI can be given work');
+  assert.equal(core.teamRelay(leadKey.key, { op: 'send', to: '검토', text: ' [몽글 팀 메시지] 설계 → 검토 결제 모듈을\r\n검토해 주세요 ' }).ok, true, 'a starting CLI can be given work; a copied header is dropped');
   const relayed = log().at(-1)!;
   assert.deepEqual([relayed.from, relayed.to, relayed.preview, relayed.status], [lead.id, reviewer.id, '결제 모듈을\n검토해 주세요', 'waiting']);
   const waiting = core.getState().terminals.find(item => item.id === reviewer.terminalId)!.agentInbox!.messages;
