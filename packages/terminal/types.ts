@@ -56,6 +56,8 @@ export interface TerminalEngineOptions {
   onShellPrompt?: () => void;
   /** Codex's startup review of new or changed hooks is on screen (true) or gone again (false). */
   onCodexHooksReview?: (visible: boolean) => void;
+  /** A Codex the shell's wrapper launched drew its input box with no question over it. Once per launch, before any of its hooks. */
+  onCodexComposer?: () => void;
   /** Host lifetime gate; suppress signals without dropping final output/history. */
   notificationsEnabled?: () => boolean;
 }

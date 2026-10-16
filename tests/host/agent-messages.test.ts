@@ -121,3 +121,65 @@ test('agent messages wait for a hook-proven idle agent and reach it as one paste
   assert.equal(saved.agentInbox, undefined, 'waiting messages live in host memory only');
   assert.equal(saved.agentReady, undefined);
 });
+
+test('a Codex its wrapper launched takes one message once its input box shows, the rest once its hooks run', { timeout: 60000 }, async t => {
+  const dataDir = await mkdtemp(path.join(tmpdir(), 'mongle-codex-first-message-'));
+  const signal = path.join(dataDir, 'signal.json'), program = path.join(dataDir, 'fixture.cjs');
+  await writeFile(signal, '{}');
+  // A stand-in shell that prints what the signal file asks: an OSC with this shell's token, then screen text.
+  await writeFile(program, "const fs=require('node:fs');let last='';process.stdin.resume();process.stdout.write('FIXTURE_READY');setInterval(()=>{try{const s=fs.readFileSync(process.argv[2],'utf8');if(s===last)return;last=s;const v=JSON.parse(s);if(v.osc)process.stdout.write('\\x1b]777;'+v.osc.replace('TOKEN',process.env.MONGLE_AGENT_TOKEN)+'\\x07');if(v.text)process.stdout.write(v.text);}catch{}},20);");
+  const core = new HostCore({ dataDir });
+  const internal = core as any, original = internal.startTerminal.bind(core);
+  internal.startTerminal = (info: TerminalInfo, profile: ShellProfile, launch: { cwd: string }, history?: PresentationSnapshot, command?: string) =>
+    original(info, { ...profile, kind: 'powershell' }, { executable: process.execPath, args: [program, signal, '--'], cwd: launch.cwd }, history, command);
+  t.after(async () => {
+    await core.close();
+    assert.equal(path.dirname(path.resolve(dataDir)), path.resolve(tmpdir()));
+    await rm(dataDir, { recursive: true, force: true });
+  });
+  await core.init();
+  const ctx: ConnectionContext = { id: randomUUID(), deviceId: randomUUID(), deviceName: 'Desktop view', owner: true };
+  core.connect(ctx, () => {});
+  const request = (method: string, params: unknown = {}) => core.handle(method, params, ctx);
+  const groupId = core.getState().groups[0].id, profileId = core.getState().profiles[0].id;
+  const terminal: TerminalInfo = await request('terminals.create', { groupId, profileId, cwd: dataDir });
+  const ref = { id: terminal.id, generation: terminal.generation, hostId: core.getState().hostId, bootId: core.getState().bootId };
+  const info = () => core.getState().terminals.find(item => item.id === terminal.id)!;
+  const runtime = internal.runtimes.get(terminal.id), token: string = runtime.agentToken;
+  const writes: string[] = [];
+  const write = runtime.pty.write.bind(runtime.pty);
+  runtime.pty.write = (data: string) => { writes.push(data); return write(data); };
+  const until = async (check: () => boolean, message: string, ms = 8000) => {
+    const deadline = Date.now() + ms;
+    while (!check()) { assert.ok(Date.now() < deadline, message); await new Promise(resolve => setTimeout(resolve, 20)); }
+  };
+  let nonce = 0;
+  const show = async (value: { osc?: string; text?: string }) => { await writeFile(signal, JSON.stringify({ ...value, nonce: ++nonce })); await new Promise(resolve => setTimeout(resolve, 150)); };
+  const pasted = (text: string) => writes.indexOf(START + text + END);
+  const inputBox = '› Ask Codex to do anything\r\n\r\n  ? for shortcuts';
+
+  await show({ text: '\x1b[2J\x1b[H' + inputBox });
+  await new Promise(resolve => setTimeout(resolve, 200));
+  assert.equal(info().agentReady, undefined, 'the same words without the wrapper\'s marker prove nothing');
+  await show({ text: '\x1b[2J\x1b[HPS> codex\r\n' });
+  await show({ osc: 'mongle-codex;TOKEN' });
+  assert.equal(info().agentReady, undefined, 'Codex is still starting');
+  await show({ text: '\x1b[2J\x1b[H>_ OpenAI Codex (v0.163.0)\r\n\r\n' + inputBox });
+  await until(() => info().agentReady === true, 'its input box readies a Codex that has run no hook yet');
+  assert.equal(info().agentProvider, 'codex');
+  await request('agent.message.send', { ...ref, text: 'first' });
+  await until(() => writes[pasted('first') + 1] === '\r', 'the first message is pasted and submitted');
+  await request('agent.message.send', { ...ref, text: 'second' });
+  await new Promise(resolve => setTimeout(resolve, 2000));
+  assert.equal(pasted('second'), -1, 'the next waits until a hook proves Codex runs');
+  assert.equal(info().agentInbox?.hold, 'no-agent');
+  // The first prompt starts Codex's session: its hooks arrive through the pipe.
+  const turn = digest('turn-1');
+  assert.equal(core.reportAgentSession(token, { provider: 'codex', sessionId: randomUUID(), cwd: dataDir }), true);
+  assert.equal(core.reportAgentStatus(token, { event: 'UserPromptSubmit', turn }), true);
+  await until(() => info().agentStatus === 'working', 'the first message started a turn');
+  assert.equal(core.reportAgentStatus(token, { event: 'Stop', turn }), true);
+  await until(() => pasted('second') >= 0, 'delivered once the turn ended');
+  await show({ osc: 'mongle-shell;TOKEN' });
+  await until(() => info().agentReady === undefined, 'back at the shell prompt');
+});

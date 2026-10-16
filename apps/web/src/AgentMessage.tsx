@@ -7,7 +7,7 @@ import { Modal } from './Modal';
 export const AGENT_MESSAGE_LIMIT = 4000;
 
 const holdText: Record<AgentHoldReason, string> = {
-  'no-agent': '에이전트가 다시 실행되기를 기다리는 중',
+  'no-agent': '에이전트가 준비되기를 기다리는 중',
   starting: '에이전트가 준비되기를 기다리는 중',
   busy: '지금 작업이 끝나면 전달',
   attention: '확인 요청에 답한 뒤 전달',

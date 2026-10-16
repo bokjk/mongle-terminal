@@ -108,6 +108,28 @@ test('do-not-disturb, cancel and the shell prompt stop delivery', async () => {
   assert.equal(inbox.summary()?.hold, 'no-agent', 'an ended agent explains the wait before do-not-disturb does');
 });
 
+test('an input box seen on screen lets one message through; the rest wait for a hook', async () => {
+  const { inbox, writes, status } = fixture();
+  inbox.add('first', 'pc'); inbox.add('second', 'pc');
+  // Codex runs its first hook only with its first prompt; its drawn input box is the only sign before that.
+  inbox.agentStarted('screen');
+  assert.equal(inbox.agentRunning, true);
+  await until(() => writes.length === 2, 'the first message goes once the start settles');
+  assert.deepEqual(writes, [START + 'first' + END, '\r']);
+  await sleep(timing.startSettleMs * 2);
+  assert.equal(inbox.summary()?.hold, 'no-agent', 'no hook has proven the agent yet');
+  inbox.agentStarted('screen');
+  assert.equal(inbox.summary()?.hold, 'no-agent', 'the screen lets one message through per start');
+  inbox.agentStarted();
+  status('working'); status('idle');
+  await until(() => writes.length === 4, 'the hook lets the rest through');
+  assert.deepEqual(writes.slice(2), [START + 'second' + END, '\r']);
+  inbox.agentStopped();
+  inbox.add('third', 'pc');
+  inbox.agentStarted('screen');
+  await until(() => writes.length === 6, 'a new launch draws a new input box');
+});
+
 test('an unanswered delivery stops blocking after the acknowledgement window', async () => {
   const { inbox, writes, status } = fixture();
   status('idle'); inbox.agentStarted();

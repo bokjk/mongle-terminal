@@ -93,7 +93,8 @@ interface Pending { id: string; text: string; preview: string; createdAt: number
 
 /**
  * Messages for the agent in one terminal generation, delivered one at a time and only while nothing
- * else may be reading the input box: the agent has proven by its hook that it runs in this shell, it
+ * else may be reading the input box: the agent has proven by its hook that it runs in this shell (a Codex
+ * before its first prompt, which runs no hook yet, by its drawn input box: for one message only), it
  * is not working nor asking, nobody has typed recently or left a draft, and the user did not turn on
  * do-not-disturb. Anything unknown holds the message. A delivery is a bracketed paste of the text and
  * a separate Enter, exactly what a person pasting and submitting would send.
@@ -104,6 +105,8 @@ export class AgentInbox {
   private lastInputAt = Number.NEGATIVE_INFINITY;
   /** When the agent proved that it runs in this shell; undefined while the shell itself has the prompt. */
   private activeSince: number | undefined;
+  /** The start was seen on screen, not proven by a hook: one message may go ('ready'), then none until a hook ('spent'). */
+  private provisional: 'ready' | 'spent' | undefined;
   /** A person submitted something no hook has answered yet (e.g. a slash command that opened a picker). */
   private unconfirmedSubmit = false;
   private deliveringSince: number | undefined;
@@ -164,15 +167,20 @@ export class AgentInbox {
     if (this.draft.observe(data) && this.activeSince !== undefined) this.unconfirmedSubmit = true;
     this.pump();
   }
-  /** The agent's hook proved it runs in this shell. */
-  agentStarted() {
-    if (this.activeSince === undefined) { this.activeSince = this.now(); this.io.changed(); }
+  /**
+   * The agent's hook proved it runs in this shell, or (screen) a Codex its wrapper launched drew its input box.
+   * Codex runs its first hook only with its first prompt, so the screen lets that one message through.
+   */
+  agentStarted(proof: 'hook' | 'screen' = 'hook') {
+    if (proof === 'hook') this.provisional = undefined;
+    if (this.activeSince === undefined) { this.activeSince = this.now(); if (proof === 'screen') this.provisional = 'ready'; this.io.changed(); }
     this.pump();
   }
   /** The shell prompt returned or the agent reported its end: the input box is the shell's again. */
   agentStopped() {
     const was = this.activeSince !== undefined;
     this.activeSince = undefined;
+    this.provisional = undefined;
     this.unconfirmedSubmit = false;
     this.endDelivery();
     if (was) this.io.changed();
@@ -181,6 +189,7 @@ export class AgentInbox {
   /** Any hook event of the agent: it answered whatever was submitted before. */
   agentReported() {
     this.unconfirmedSubmit = false;
+    this.provisional = undefined;
     this.pump();
   }
   /** The agent's status changed: a started turn confirms the delivery. */
@@ -200,7 +209,7 @@ export class AgentInbox {
 
   private reason(facts: InboxFacts, force: boolean, now: number): AgentHoldReason | undefined {
     // Without a running agent nothing can be delivered, whatever else holds the message.
-    if (!facts.supported || this.activeSince === undefined) return 'no-agent';
+    if (!facts.supported || this.activeSince === undefined || this.provisional === 'spent') return 'no-agent';
     if (facts.dnd) return 'dnd';
     if (this.deliveringSince !== undefined) return 'delivering';
     if (facts.status === 'attention') return 'attention';
@@ -240,6 +249,7 @@ export class AgentInbox {
     this.deliveringSince = now;
     this.hold = 'delivering';
     if (!this.io.write(PASTE_START + message.text + PASTE_END)) { this.endDelivery(); this.settle(message.id, 'failed'); this.io.changed(); return; }
+    if (this.provisional === 'ready') this.provisional = 'spent';
     this.submitting = message.id;
     this.submitTimer = setTimeout(() => {
       this.submitTimer = undefined;

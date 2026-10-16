@@ -133,7 +133,19 @@ export class TerminalEngine {
       hooksReview = visible;
       options.onCodexHooksReview?.(visible);
     };
-    this.afterOutput = () => { readCodexScreen(true); readHooksReview(); };
+    // Codex runs its first hook only with its first prompt. After the wrapper's marker says a Codex starts in
+    // this shell, its drawn input box is the sign that it waits for input.
+    // An earlier Codex's hint may still be on screen when the marker comes; only a newly drawn one counts.
+    let codexLaunch: {before: number; shown: boolean} | undefined;
+    const composerHints = (text: string) => text.match(CODEX_COMPOSER)?.length ?? 0;
+    const readComposer = () => {
+      if (!codexLaunch || codexLaunch.shown || this.closing || this.restoringHistory) return;
+      const text = screenText(this.terminal);
+      if (composerHints(text) <= codexLaunch.before || CODEX_HOOKS_REVIEW.test(text) || CODEX_PROMPT.test(text)) return;
+      codexLaunch.shown = true;
+      options.onCodexComposer?.();
+    };
+    this.afterOutput = () => { readCodexScreen(true); readHooksReview(); readComposer(); };
     this.stopCodexWait = () => { if (codexWait) clearTimeout(codexWait); codexWait = undefined; };
     this.observeAgentInput = data => {
       if(this.closing || options.notificationsEnabled?.() === false)return false;
@@ -157,8 +169,10 @@ export class TerminalEngine {
       if (!this.closing && !this.restoringHistory && options.notificationsEnabled?.() !== false) {
         report(agent.accept(data), 'claude');
         if (options.agentToken && data.startsWith('mongle-agent;' + options.agentToken + ';')) options.onAgentReport?.();
+        // The shell's Codex wrapper starts an interactive Codex.
+        if (options.agentToken && data === 'mongle-codex;' + options.agentToken) codexLaunch = {before:composerHints(screenText(this.terminal)), shown:false};
         // Back at the authenticated shell prompt: no Codex of this shell runs any more either.
-        if (options.agentToken && data === 'mongle-shell;' + options.agentToken) { report(codex.reset(), 'codex'); waitForCodexPrompt(); }
+        if (options.agentToken && data === 'mongle-shell;' + options.agentToken) { codexLaunch = undefined; report(codex.reset(), 'codex'); waitForCodexPrompt(); }
       }
       // rxvt-compatible notification. Payload is never retained or executed.
       if (data.startsWith('notify;')) {
@@ -369,6 +383,8 @@ const CODEX_PROMPT = /Would you like to (?:run the following command|make the fo
 const CODEX_REVIEW = /Reviewing approval request/;
 /** Codex's startup question whether to trust new or changed hooks (codex-rs/tui startup_hooks_review.rs). */
 const CODEX_HOOKS_REVIEW = /Hooks need review.*Trust all and continue/;
+/** The hint under Codex's empty input box (codex-rs/tui bottom_pane footer), drawn while Codex waits for input. */
+const CODEX_COMPOSER = /\? for shortcuts/g;
 /**
  * The visible screen as one line of text. Rows a program wrapped itself are joined with a space and rows
  * the terminal wrapped as they are, so a title is found at any width.

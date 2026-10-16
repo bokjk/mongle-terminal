@@ -180,6 +180,6 @@ export function teamSendBlocker(state: HostState, team: Team, memberId: string):
   const terminal = memberTerminal(state, member);
   if (!terminal) return member.name + '의 터미널이 없습니다.' + (member.error ? ' ' + member.error : '');
   if (terminal.status !== 'running') return member.name + '의 터미널이 종료되었습니다. 터미널을 다시 열고 CLI를 실행해 주세요.';
-  if (!terminal.agentReady) return member.name + '의 ' + providerLabel(member.provider) + '가 준비되기를 기다리는 중입니다. 터미널에 폴더 신뢰 같은 확인 질문이 떠 있으면 먼저 답해 주세요.' + (member.provider === 'codex' ? ' Codex는 훅 신뢰 확인(Hooks need review)을 마쳐야 준비됩니다.' : '');
+  if (!terminal.agentReady) return member.name + '의 ' + providerLabel(member.provider) + '가 준비되기를 기다리는 중입니다. 터미널에 폴더 신뢰 같은 확인 질문이 떠 있으면 먼저 답해 주세요.' + (member.provider === 'codex' ? ' Codex는 입력창이 뜨면 준비되며, 훅 신뢰 확인(Hooks need review)이 떠 있으면 먼저 신뢰해 주세요. 계속 기다리면 그 터미널에서 Codex에게 요청을 한 번 보내 주세요.' : '');
   if ((terminal.agentInbox?.messages.length ?? 0) >= 10) return member.name + '에게 보류 중인 메시지가 10개입니다. 전달되거나 취소된 뒤 보내 주세요.';
 }

@@ -1157,6 +1157,8 @@ export class HostCore {
       agentToken,
       onAgentStatus:(status,count,provider='claude')=>{info.agentStatus=status;info.agentProvider=provider;if(count!==undefined)info.agentNotificationCount=count;runtime.notificationChanged=true;runtime.inbox?.statusChanged(status);},
       onCodexHooksReview:visible=>{if(visible)info.codexHooksReview=true;else delete info.codexHooksReview;runtime.notificationChanged=true;},
+      // Codex runs its first hook only with its first prompt; its input box readies it for that one message.
+      onCodexComposer:()=>{if(!current()||!runtime.agentShell||runtime.promptIdle)return;if(info.agentProvider!=='codex'){info.agentProvider='codex';runtime.notificationChanged=true;}runtime.inbox?.agentStarted('screen');},
       onAgentSession:session=>{if(!current())return;this.recordAgentSession(info,session);if(session)runtime.inbox?.agentStarted();else runtime.inbox?.agentStopped();},
       onAgentReport:()=>{if(current())runtime.inbox?.agentReported();},
       // The first prompt after a restore types the resume line and keeps the intent until
