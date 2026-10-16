@@ -179,9 +179,13 @@ test('a team starts its members as PowerShell tabs, types each CLI with its role
   assert.equal(core.teamRelay(reviewerKey.key, { op: 'list' }).ok, false, 'the previous boot\'s key is refused');
   assert.equal(core.teamRelay(resumedKey.key, { op: 'list' }).ok, true);
 
-  // Removing the team keeps the terminals and drops the record and prompt files.
+  // Removing the team keeps the terminals and drops the record and prompt files, and the team messages still waiting.
   core.connect(ctx, () => {});
+  assert.equal(core.teamRelay(resumedKey.key, { op: 'send', to: '설계', text: '해제 전에 보낸 보고' }).ok, true);
+  const leadInbox = (core as any).runtimes.get(lead.terminalId).inbox;
+  assert.equal(leadInbox.size, 1, 'waits until the lead\'s CLI runs');
   await request('teams.remove', { teamId: team.id });
+  assert.equal(leadInbox.size, 0, 'a team message is not delivered once its team is gone');
   assert.equal(core.getState().teams?.length, 0);
   assert.equal(core.teamRelay(resumedKey.key, { op: 'list' }).ok, false, 'a removed team takes its relay keys with it');
   assert.ok(core.getState().terminals.some(item => item.id === lead.terminalId));

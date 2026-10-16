@@ -355,8 +355,16 @@ export class HostCore {
   private requireHost(p:{hostId:string;bootId:string}){if(p.hostId!==this.hostId||p.bootId!==this.bootId)throw new AppError('HOST_CHANGED','호스트가 바뀌었습니다. 다시 연결해 주세요.');}
   private teamFolder(teamId:string){return join(this.options.dataDir,'agent-teams',teamId);}
   private promptFile(teamId:string,member:Pick<TeamMember,'id'|'provider'>){return join(this.teamFolder(teamId),member.id+(member.provider==='claude'?'.md':'.toml'));}
-  /** Forgets a team: its record, the keys its members' relays use and its prompt folder. Its terminals are left as they are. */
+  /**
+   * Forgets a team: its record, the keys its members' relays use and its prompt folder. Its terminals are left as they
+   * are, but team messages still waiting in their inboxes are cancelled: nobody could answer them any more.
+   */
   private async dropTeam(team:Team){
+    for(const message of team.messages??[]){
+      if(message.status!=='waiting')continue;
+      const terminalId=team.members.find(item=>item.id===message.to)?.terminalId;
+      if(terminalId)this.runtimes.get(terminalId)?.inbox?.cancel(message.id);
+    }
     this.teams=this.teams.filter(item=>item!==team);this.teamStore?.deleteTeam(team.id);
     for(const member of team.members)this.relayKeys.delete(member.id);
     // A file a CLI still holds open may stay behind; nothing reads it once the record is gone.
