@@ -143,7 +143,7 @@ export function teamMessageStatus(message: TeamMessage, receiver: TerminalInfo |
   if (message.to === 'user') return '보고';
   if (message.status === 'delivered') return '전달됨';
   if (message.status === 'cancelled') return '취소됨';
-  if (message.status === 'failed') return '전달하지 못함';
+  if (message.status === 'failed') return '전달하지 못함' + (message.reason ? ' · ' + message.reason : '');
   const waiting = receiver?.agentInbox?.messages ?? [];
   const at = waiting.findIndex(item => item.id === message.id);
   if (at === 0) return agentHoldDescription(receiver?.agentInbox?.hold);

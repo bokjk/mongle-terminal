@@ -190,16 +190,24 @@ export function TeamBar({team, state, onSaveTemplate, onRemove}: {team: Team; st
   </footer>;
 }
 
-/** The AI team list in the sidebar; the open team also lists its members. */
-export function TeamSidebarList({state, activeTeamId, activeId, notices, onOpen, onSelectMember}: {state: HostState; activeTeamId: string; activeId: string; notices: TerminalNotices; onOpen(team: Team): void; onSelectMember(team: Team, terminalId: string): void}) {
+/**
+ * The AI team list in the sidebar; the open team also lists its members. Each row has its menu, so a team
+ * whose project was deleted, and which has no screen to open, can still be removed.
+ */
+export function TeamSidebarList({state, activeTeamId, activeId, notices, onOpen, onSelectMember, onSaveTemplate, onRemove}: {state: HostState; activeTeamId: string; activeId: string; notices: TerminalNotices; onOpen(team: Team): void; onSelectMember(team: Team, terminalId: string): void; onSaveTemplate(team: Team): void; onRemove(team: Team): void}) {
   const teams = state.teams ?? [];
   return <nav className="team-list" aria-label="AI 팀">
     {teams.map(team => {
       const terminals = team.members.map(member => memberTerminal(state, member)).filter((item): item is TerminalInfo => Boolean(item));
       const status = aggregateTerminalStatus(terminals, notices), active = team.id === activeTeamId;
+      const orphaned = !state.groups.some(group => group.id === team.groupId);
       return <div key={team.id} className="project-group">
-        <div className={'group-row' + (active ? ' active' : '')}>
-          <button className="group-main" aria-current={active ? 'page' : undefined} aria-description={terminalStatusDescription(status)} onClick={() => onOpen(team)}><Users size={16}/><span className="group-name">{team.name}<span className="group-meta">구성원 {team.members.length}명</span></span><TerminalStatusBadge status={status}/></button>
+        <div className={'group-row' + (active ? ' active' : '') + (orphaned ? ' orphaned' : '')}>
+          <button className="group-main" disabled={orphaned} title={orphaned ? '연결된 프로젝트가 삭제되어 열 수 없습니다. ··· 메뉴에서 팀을 해제해 주세요.' : undefined} aria-current={active ? 'page' : undefined} aria-description={terminalStatusDescription(status)} onClick={() => onOpen(team)}><Users size={16}/><span className="group-name">{team.name}<span className="group-meta">{orphaned ? '프로젝트 삭제됨' : '구성원 ' + team.members.length + '명'}</span></span><TerminalStatusBadge status={status}/></button>
+          <details className="command-menu group-actions"><summary className="icon-button" aria-label={team.name + ' 팀 메뉴'}>···</summary><div>
+            <button type="button" className="menu-item" onClick={() => onSaveTemplate(team)}>템플릿으로 저장</button>
+            <button type="button" className="menu-item danger" onClick={() => onRemove(team)}>팀 해제…</button>
+          </div></details>
         </div>
         {active && <div className="worktree-list" aria-label={team.name + ' 구성원'}>
           {team.members.map((member, index) => {

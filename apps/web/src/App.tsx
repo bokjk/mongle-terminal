@@ -239,13 +239,14 @@ export function App(){
     }catch(error){notify(error instanceof Error?error.message:'템플릿을 저장하지 못했습니다.');}
   }
   async function removeTeam(target:Team){
-    if(!await ask({title:`‘${target.name}’ 팀을 해제할까요?`,description:'팀 화면과 팀 대화 기록, 역할 지시문 파일을 지웁니다. 구성원 터미널과 실행 중인 CLI는 일반 터미널로 남습니다.',action:'팀 해제',danger:true}))return;
-    if(await mutate('teams.remove',{teamId:target.id}))setTeamView('');
+    const orphaned=!state?.groups.some(item=>item.id===target.groupId);
+    if(!await ask({title:`‘${target.name}’ 팀을 해제할까요?`,description:orphaned?'연결된 프로젝트가 이미 삭제되어 팀 기록만 남아 있습니다. 팀 대화 기록과 역할 지시문 파일을 지웁니다.':'팀 화면과 팀 대화 기록, 역할 지시문 파일을 지웁니다. 구성원 터미널과 실행 중인 CLI는 일반 터미널로 남습니다.',action:'팀 해제',danger:true}))return;
+    if(await mutate('teams.remove',{teamId:target.id}))setTeamView(view=>view===target.id?'':view);
   }
   async function mutate(method:string,params:unknown){try{const result=await client.request(method,params);await loadState();return result;}catch(error){notify(error instanceof Error?error.message:'요청을 완료하지 못했습니다.');return undefined;}}
   async function chooseHost(id:string){if(!window.mongle)return;hostSelection.current++;setState(undefined);setGroupId('');setActiveId('');setSidebarOpen(false);setConnection({status:'connecting',owner:false});try{const next=await window.mongle.selectHost(id);setConnection(next);await refreshHosts();if(next.status==='connected')await loadState();}catch(error){setConnection({status:'offline',owner:false,error:error instanceof Error?error.message:'연결 실패'});}}
   async function removeHost(){if(!selectedHost||selectedHost.local||!window.mongle)return;const host=selectedHost;if(await ask({title:`‘${host.name}’ 등록을 해제할까요?`,description:'이 기기에 저장된 접속 정보를 삭제합니다. 대상 컴퓨터의 터미널 작업은 계속됩니다.',action:'등록 해제',danger:true})){try{setState(undefined);await window.mongle.removeHost(host.id);await refreshHosts();}catch(error){notify(error instanceof Error?error.message:'컴퓨터 등록을 해제하지 못했습니다.');}}}
-  async function removeGroup(target:Group){const count=state?.terminals.filter(t=>t.groupId===target.id&&t.status==='running').length||0;if(await ask({title:`‘${target.name}’ 그룹을 삭제할까요?`,description:count?`실행 중인 터미널 ${count}개와 그룹의 기록을 함께 종료하고 삭제합니다.`:'그룹과 이 그룹의 터미널 기록을 삭제합니다.',action:'그룹 삭제',danger:true}))await mutate('groups.delete',{id:target.id,revision:target.revision,terminate:true});}
+  async function removeGroup(target:Group){const count=state?.terminals.filter(t=>t.groupId===target.id&&t.status==='running').length||0,teams=state?.teams?.filter(item=>item.groupId===target.id).map(item=>`‘${item.name}’`).join(', ');if(await ask({title:`‘${target.name}’ 그룹을 삭제할까요?`,description:(count?`실행 중인 터미널 ${count}개와 그룹의 기록을 함께 종료하고 삭제합니다.`:'그룹과 이 그룹의 터미널 기록을 삭제합니다.')+(teams?` 이 그룹의 AI 팀 ${teams}도 함께 해제합니다.`:''),action:'그룹 삭제',danger:true}))await mutate('groups.delete',{id:target.id,revision:target.revision,terminate:true});}
   async function closeTerminal(info:TerminalInfo){const ref={id:info.id,hostId:state?.hostId,bootId:state?.bootId,generation:info.generation};if(await ask({title:`‘${info.title}’ 패널을 닫을까요?`,description:info.status==='running'?'터미널의 실행 중인 작업을 종료하고 패널을 삭제합니다. 창을 닫으면 작업을 유지할 수 있습니다.':'이 패널과 저장된 출력을 삭제합니다.',action:info.status==='running'?'종료하고 닫기':'패널 닫기',danger:true}))await mutate('terminals.remove',{...ref,terminate:true});}
   async function restartTerminal(info:TerminalInfo){const ref={id:info.id,hostId:state?.hostId,bootId:state?.bootId,generation:info.generation};if(info.status==='running'&&!await ask({title:'새 셸로 다시 열까요?',description:'현재 셸과 실행 중인 작업을 종료합니다. 이전 명령은 자동 실행하지 않습니다.',action:'새 셸로 다시 열기',danger:true}))return;await mutate('terminals.restart',{...ref,confirmed:true});}
   async function terminateTerminal(info:TerminalInfo){const ref={id:info.id,hostId:state?.hostId,bootId:state?.bootId,generation:info.generation};if(await ask({title:'실행 중인 작업을 종료할까요?',description:'셸과 실행 중인 작업을 종료합니다. 패널과 이전 출력은 남겨 둡니다.',action:'작업 종료',danger:true}))await mutate('terminals.terminate',ref);}
@@ -292,7 +293,7 @@ export function App(){
         {state&&!state.groups.length&&<p className="hint sidebar-empty">그룹을 만들어 작업을<br/>한곳에 모아 보세요.</p>}
       </nav>
       {teamsSupported&&!mobile&&state&&<><div className="sidebar-section-label team-section-label"><span>AI 팀</span><button className="icon-button" title="AI 팀으로 작업 시작" aria-label="AI 팀으로 작업 시작" disabled={!connected||!state.groups.length} onClick={()=>setTeamSetup(true)}><Plus size={15}/></button></div>
-      <TeamSidebarList state={state} activeTeamId={team?.id||''} activeId={activeId} notices={notifications.notices} onOpen={target=>openTeam(target)} onSelectMember={(target,id)=>openTeam(target,id)}/></>}
+      <TeamSidebarList state={state} activeTeamId={team?.id||''} activeId={activeId} notices={notifications.notices} onOpen={target=>openTeam(target)} onSelectMember={(target,id)=>openTeam(target,id)} onSaveTemplate={target=>void saveTeamTemplate(target)} onRemove={target=>void removeTeam(target)}/></>}
       </div>
       <div className="sidebar-footer">
         {window.mongle&&<UpdateNotice compact={!mobile&&sidebarCollapsed} onExpand={()=>setSidebarCollapsed(false)} onOpenSettings={state?()=>{setSettingsTab('updates');setSettingsOpen(true);}:undefined}/>}
