@@ -51,7 +51,7 @@ export interface TeamMember extends TeamMemberSpec { id: string; terminalId?: st
  * to is a member id; preview holds at most the first 200 characters. waiting lasts until the receiver's
  * inbox delivers, cancels or loses it (the terminal or the host stopped).
  */
-export interface TeamMessage { id: string; from: string; device?: string; to: string; preview: string; createdAt: number; status: 'waiting' | 'delivered' | 'cancelled' | 'failed' }
+export interface TeamMessage { id: string; from: string; device?: string; to: string; preview: string; createdAt: number; status: 'waiting' | 'delivered' | 'cancelled' | 'failed'; reason?: string }
 /** A folder a team can work in: the top of a Git working tree with its branch and uncommitted changes, or a plain folder. */
 export interface TeamScopeFolder { path: string; name: string; git: boolean; branch?: string; changes?: number; /** The repository's shared Git folder; working trees of one repository share it. */ repository?: string }
 /** The folders a team works across: members start in `start` and are given the others; its Git folders may share one branch. */

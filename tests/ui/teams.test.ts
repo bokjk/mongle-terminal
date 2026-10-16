@@ -52,6 +52,7 @@ test('a team message says what became of it and what it waits for', () => {
   assert.equal(teamMessageStatus(message('waiting'), terminal('t0')), '전달하는 중', 'pasted, Enter not sent yet');
   assert.equal(teamMessageStatus(message('delivered'), busy), '전달됨');
   assert.equal(teamMessageStatus(message('failed'), busy), '전달하지 못함');
+  assert.equal(teamMessageStatus({ ...message('failed'), reason: 'CLI 꺼짐' }, busy), '전달하지 못함 · CLI 꺼짐', 'a member\'s message that could not be handed over says why');
   assert.equal(canCancelTeamMessage(message('waiting'), busy), true);
   assert.equal(canCancelTeamMessage(message('delivered'), busy), false);
   assert.equal(canCancelTeamMessage(message('waiting'), terminal('t0')), false, 'already left the inbox');
@@ -102,12 +103,21 @@ test('the team screen shows the conversation, the work flow and the member list'
   assert.match(bar, /설계 → 나/);
   assert.match(bar, /개발 → 검토/);
   assert.match(bar, /템플릿으로 저장/);
-  const list = renderToStaticMarkup(createElement(TeamSidebarList, { state: state(terminals), activeTeamId: 'team', activeId: 't0', notices: new Map(), onOpen: () => {}, onSelectMember: () => {} }));
+  const rows = { notices: new Map(), onOpen: () => {}, onSelectMember: () => {}, onSaveTemplate: () => {}, onRemove: () => {} };
+  const list = renderToStaticMarkup(createElement(TeamSidebarList, { ...rows, state: state(terminals), activeTeamId: 'team', activeId: 't0' }));
   assert.match(list, /로그인 개선/);
   assert.match(list, /aria-label="팀장"/);
   assert.match(list, /Claude · opus/);
   assert.match(list, /Codex · gpt-6-astra/);
-  assert.doesNotMatch(renderToStaticMarkup(createElement(TeamSidebarList, { state: state(terminals), activeTeamId: '', activeId: '', notices: new Map(), onOpen: () => {}, onSelectMember: () => {} })), /Claude · opus/, 'members show only for the open team');
+  assert.doesNotMatch(renderToStaticMarkup(createElement(TeamSidebarList, { ...rows, state: state(terminals), activeTeamId: '', activeId: '' })), /Claude · opus/, 'members show only for the open team');
+  // Every team row has its menu; a team whose project was deleted cannot open but can still be removed.
+  assert.match(list, /aria-label="로그인 개선 팀 메뉴"/);
+  assert.match(list, /템플릿으로 저장.*팀 해제…/);
+  const orphan = renderToStaticMarkup(createElement(TeamSidebarList, { ...rows, state: state(terminals, { groups: [] }), activeTeamId: '', activeId: '' }));
+  assert.match(orphan, /class="group-row orphaned"><button class="group-main" disabled=""/);
+  assert.match(orphan, /프로젝트 삭제됨/);
+  assert.match(orphan, /팀 해제…/);
+  assert.doesNotMatch(list, /프로젝트 삭제됨/);
 });
 test('a team scope starts in the group folder, takes one working tree per repository and shows the branch it aligns', () => {
   const folders: TeamScopeFolder[] = [

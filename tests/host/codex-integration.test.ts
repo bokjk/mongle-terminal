@@ -315,16 +315,19 @@ test('PowerShell wrapper adds --no-daemon and a run nonce only to interactive la
     env.Path = bin + ';relative\\dir;' + searchPath;
     const {stdout, stderr} = await run('pwsh.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
       {env, windowsHide:true, timeout:30000});
-    const lines = stdout.trim().split(/\r?\n/);
+    // A captured launch first prints the marker that tells the host a Codex starts in this shell.
+    const marker = '\x1b]777;mongle-codex;' + TOKEN + '\x07', announced = stdout.includes(marker);
+    const lines = stdout.replaceAll(marker, '').trim().split(/\r?\n/);
     if (!lines[0]?.startsWith('ARGS=') && !lines[0]?.startsWith('USER')) assert.fail(`wrapper produced no CLI output for ${line}: ${stderr.trim()}`);
-    return lines;
+    return Object.assign(lines, {announced});
   };
-  const [interactive, after] = await call('codex -m gpt "fix it"');
+  const launched = await call('codex -m gpt "fix it"'), [interactive, after] = launched;
+  assert.equal(launched.announced, true, 'an interactive launch tells the host');
   assert.match(interactive, /^ARGS=--no-daemon\|-m\|gpt\|fix it;RUN=[a-f0-9]{32}$/); assert.equal(after, 'AFTER=');
   assert.match((await call(`codex resume ${ID}`))[0], new RegExp(`^ARGS=resume\\|--no-daemon\\|${ID};RUN=[a-f0-9]{32}$`));
   assert.match((await call('codex -m exec'))[0], /^ARGS=--no-daemon\|-m\|exec;RUN=/, 'option values are not subcommands');
   for (const line of ['codex exec hi', 'codex --remote ws://h:1', `codex resume ${ID} --remote ws://h:1`, 'codex -m x --remote=ws://h:1', 'codex login', 'codex --version'])
-    assert.equal((await call(line))[0], 'ARGS=' + line.split(' ').slice(1).join('|') + ';RUN=', line);
+  { const out = await call(line); assert.equal(out[0], 'ARGS=' + line.split(' ').slice(1).join('|') + ';RUN=', line); assert.equal(out.announced, false, line); }
   assert.match((await call('codex --no-daemon'))[0], /^ARGS=--no-daemon;RUN=[a-f0-9]{32}$/, 'explicit --no-daemon is kept once and still captured');
   assert.equal((await call('codex', '$env:CODEX_THREAD_ID = "t"\n'))[0], 'ARGS=;RUN=', 'Codex launched inside a Codex turn is not captured');
   assert.equal((await call('codex', 'function codex { Write-Output "USER" }\n'))[0], 'USER', 'existing user function is kept');
