@@ -184,8 +184,10 @@ test('a team starts its members as PowerShell tabs, types each CLI with its role
 
   // Removing the team keeps the terminals and drops the record and prompt files, and the team messages still waiting.
   core.connect(ctx, () => {});
+  // The lead's CLI is starting (its shell prompt may or may not have shown yet): the message waits in its inbox.
+  const leadRuntime = (core as any).runtimes.get(lead.terminalId), leadInbox = leadRuntime.inbox;
+  leadRuntime.promptIdle = false;
   assert.equal(core.teamRelay(resumedKey.key, { op: 'send', to: '설계', text: '해제 전에 보낸 보고' }).ok, true);
-  const leadInbox = (core as any).runtimes.get(lead.terminalId).inbox;
   assert.equal(leadInbox.size, 1, 'waits until the lead\'s CLI runs');
   await request('teams.remove', { teamId: team.id });
   assert.equal(leadInbox.size, 0, 'a team message is not delivered once its team is gone');
