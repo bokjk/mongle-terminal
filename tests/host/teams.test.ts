@@ -3,7 +3,7 @@ import test from 'node:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { BUILT_IN_TEMPLATES, ROLE_DEFAULTS, rolePromptFile, teamLaunchCommand, teamMemberFlags, teamProblems, teamRelayConfig, teamRolePrompt, withoutTeamHeader } from '../../packages/host/teams.js';
+import { BUILT_IN_TEMPLATES, ROLE_DEFAULTS, rolePromptFile, teamLaunchCommand, teamMemberFlags, teamMessageText, teamProblems, teamRelayConfig, teamRolePrompt, withoutTeamHeader } from '../../packages/host/teams.js';
 import { claudeModels, codexModels } from '../../packages/host/team-environment.js';
 import { TeamStore } from '../../packages/host/team-store.js';
 import type { TeamMemberSpec } from '../../packages/protocol/index.js';
@@ -90,6 +90,11 @@ test('the team relay reaches each CLI through its own options, and the role prom
   assert.doesNotMatch(lead, /아직 구성원에게 직접 보내는 도구는 없습니다/);
   assert.doesNotMatch(developer, /팀장은 사용자가 맡긴 일을/, 'only the lead hands out work');
   assert.match(developer, new RegExp('send_message로 ' + members[1].reportTo + '에게 결과를 보고하세요'));
+  // Seen on a user's PC: the lead said "report back to me" and the developer skipped the reviewer.
+  assert.match(lead, /결과를 누구에게 보내라고는 적지 마세요/, 'the lead leaves the next step to the work flow');
+  assert.match(lead, /다음 차례를 건너뛰고 당신에게 결과를 보냈다면 그 결과를 일 흐름의 다음 구성원에게 넘기세요/);
+  assert.match(developer, new RegExp('자기에게 보고하라고 해도 결과는 일 흐름대로 ' + members[1].reportTo + '에게 보냅니다'));
+  assert.doesNotMatch(lead, /자기에게 보고하라고 해도/);
   assert.match(teamRolePrompt({ name: '팀' }, members, 0), /아직 구성원에게 직접 보내는 도구는 없습니다/, 'without the relay the user forwards');
   assert.match(lead, /머리글은 몽글이 붙이니 쓰지 마세요/);
 });
@@ -105,6 +110,15 @@ test('a header a member copied into its message is dropped, so the receiver sees
   assert.equal(withoutTeamHeader('[몽글 팀 메시지] 설계 → 나중에 볼 것', names), '설계 → 나중에 볼 것', 'a word that only starts with a name stays');
   assert.equal(withoutTeamHeader('결과는 [몽글 팀 메시지] 형식으로 옵니다', names), '결과는 [몽글 팀 메시지] 형식으로 옵니다', 'only the start of the text');
   assert.equal(withoutTeamHeader('[몽글 팀 메시지] 설계 → 개발', names), '');
+});
+
+test('work one member hands another ends with whom the result goes to; a copied note is dropped', () => {
+  assert.equal(teamMessageText('설계', '개발', '로그인 API를\r만들어 주세요', '검토'), '[몽글 팀 메시지] 설계 → 개발\r로그인 API를\r만들어 주세요\r\r[몽글 안내] 이 일을 마치면 결과를 send_message로 검토에게 보내세요. 일 흐름에 정해진 다음 차례입니다.');
+  assert.match(teamMessageText('설계', '검토', '봐 주세요', 'user'), /send_message로 사용자에게 보내세요/);
+  assert.equal(teamMessageText('사용자', '설계', '시작해 주세요'), '[몽글 팀 메시지] 사용자 → 설계\r시작해 주세요', 'no note without a next step');
+  const names = ['설계', '개발', '검토'];
+  assert.equal(withoutTeamHeader('[몽글 팀 메시지] 설계 → 개발\r끝났습니다.\r\r[몽글 안내] 이 일을 마치면 결과를 send_message로 검토에게 보내세요. 일 흐름에 정해진 다음 차례입니다.', names), '끝났습니다.');
+  assert.equal(withoutTeamHeader('안내는 [몽글 안내] 줄로 옵니다', names), '안내는 [몽글 안내] 줄로 옵니다', 'only a note on its own line');
 });
 
 test('model lists come from each CLI: Codex catalog order without hidden models, Claude aliases from its help', () => {

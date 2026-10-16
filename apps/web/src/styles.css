@@ -229,7 +229,7 @@ button.host-select:hover { background: var(--surface-hover); border-color: var(-
 .group-actions { display: flex; gap: 3px; margin-left: auto; }
 .group-actions .icon-button { width: 32px; height: 32px; min-height: 32px; }
 .group-row .group-actions { opacity: 0; }
-.group-row:hover .group-actions, .group-row:focus-within .group-actions { opacity: 1; }
+.group-row:hover .group-actions, .group-row:focus-within .group-actions, .group-row.orphaned .group-actions { opacity: 1; }
 .sidebar-footer { display: flex; align-items: center; gap: 10px; padding: 15px 17px; margin-top: auto; border-top: 1px solid var(--border-subtle); color: var(--text-secondary); font-size: 11px; }
 .sidebar-footer .button { justify-content: flex-start; width: 100%; }
 .sidebar-footer .icon-button:last-child { margin-left: auto; }
@@ -1110,6 +1110,12 @@ details.command-menu { flex: 0 0 auto; width: auto; max-height: none; overflow: 
 .team-template-star { margin: 4px 4px 0 0; color: var(--text-muted); }
 .team-template-star.on { color: var(--warning); }
 .team-template-star.on svg { fill: currentColor; }
+.team-template-delete { margin: 4px 4px 0 -4px; color: var(--text-muted); }
+.team-template.confirming { flex-direction: column; gap: 8px; padding: 9px 11px; border-color: var(--danger); background: var(--danger-dim); }
+.team-template-confirm { display: flex; flex-direction: column; gap: 3px; margin: 0; }
+.team-template-confirm strong { font-size: 12px; font-weight: 550; }
+.team-template-confirm small { color: var(--text-muted); font-size: 10px; line-height: 1.5; }
+.team-template-confirm-actions { display: flex; justify-content: flex-end; gap: 6px; }
 .team-members { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: var(--radius); overflow-x: auto; }
 .team-member-head, .team-member-row, .team-member-detail { min-width: 720px; }
 .team-member-head, .team-member-row { display: grid; grid-template-columns: minmax(118px, 1.25fr) minmax(98px, 1fr) minmax(104px, 1fr) minmax(98px, 1fr) minmax(88px, .9fr) minmax(94px, .9fr) 58px 64px; align-items: center; gap: 6px; padding: 6px 8px; }

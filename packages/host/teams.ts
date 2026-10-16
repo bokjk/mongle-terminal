@@ -114,8 +114,11 @@ export function teamRolePrompt(team: Pick<Team, 'name' | 'scope'>, members: read
       '구성원에게 메시지를 보낼 때는 몽글 팀 도구(MCP 서버 mongle_team)를 씁니다.',
       '- list_agents: 구성원의 이름·역할·상태를 봅니다.',
       '- send_message(to, text): to에 구성원 이름(사용자에게는 "사용자"), text에 내용만 넣습니다. "[몽글 팀 메시지] 보낸 사람 → 받는 사람" 머리글은 몽글이 붙이니 쓰지 마세요. 몽글이 받는 사람의 입력창에 넣으며, 받는 사람이 일하는 중이면 그 일이 끝난 뒤 들어갑니다.',
-      ...(index === 0 ? ['팀장은 사용자가 맡긴 일을 나눠 send_message로 구성원에게 맡깁니다. 맡길 때는 목표, 범위, 끝났다고 판단할 기준을 적습니다. 맡긴 뒤에는 차례를 끝내고 기다리세요. 구성원의 보고는 새 메시지로 들어옵니다.'] : []),
-      '맡은 일을 마치면 반드시 send_message로 ' + reportName(self.reportTo) + '에게 결과를 보고하세요. 화면에 적기만 하면 다음 사람에게 전달되지 않습니다.',
+      ...(index === 0 ? [
+        '팀장은 사용자가 맡긴 일을 나눠 send_message로 구성원에게 맡깁니다. 맡길 때는 목표, 범위, 끝났다고 판단할 기준을 적습니다. 결과를 누구에게 보내라고는 적지 마세요. 구성원은 위 목록의 보고 대상(일 흐름)대로 다음 차례에게 결과를 넘깁니다. 맡긴 뒤에는 차례를 끝내고 기다리세요. 구성원의 보고는 새 메시지로 들어옵니다.',
+        '사용자에게 끝났다고 알리기 전에 일 흐름의 단계를 모두 거쳤는지 확인하세요. 구성원이 다음 차례를 건너뛰고 당신에게 결과를 보냈다면 그 결과를 일 흐름의 다음 구성원에게 넘기세요.',
+      ] : []),
+      '맡은 일을 마치면 반드시 send_message로 ' + reportName(self.reportTo) + '에게 결과를 보고하세요. ' + (index === 0 ? '' : '일을 맡긴 구성원이 자기에게 보고하라고 해도 결과는 일 흐름대로 ' + reportName(self.reportTo) + '에게 보냅니다. 사용자가 직접 다르게 지시했을 때만 그 지시를 따릅니다. 질문이나 막힌 점은 맡긴 구성원에게 물어도 됩니다. ') + '화면에 적기만 하면 다음 사람에게 전달되지 않습니다.',
     ] : ['아직 구성원에게 직접 보내는 도구는 없습니다. 맡은 일을 마치면 답변 첫 줄에 "보고 대상: ' + reportName(self.reportTo) + '"을 적고 결과를 정리하세요. 사용자가 몽글 화면에서 전달합니다.']),
     ...(self.readOnly ? ['이 CLI는 파일을 고칠 수 없는 읽기 전용으로 실행되었습니다.'] : []),
     '',
@@ -132,14 +135,17 @@ export const TEAM_MESSAGE_PREVIEW = 200;
 /**
  * A team message as it reaches the receiver's input box: the header the role prompt announces, then the
  * text. The text is already cleaned (line breaks are CR inside the paste) and names hold no control characters.
+ * Work one member hands to another ends with whom the receiver passes its result to: the sender's
+ * "report back to me" would otherwise pull the receiver off the work flow.
  */
-export function teamMessageText(from: string, to: string, text: string): string {
-  return TEAM_MESSAGE_LABEL + ' ' + from + ' → ' + to + '\r' + text;
+export function teamMessageText(from: string, to: string, text: string, next?: string): string {
+  return TEAM_MESSAGE_LABEL + ' ' + from + ' → ' + to + '\r' + text + (next ? '\r\r' + TEAM_FLOW_LABEL + ' 이 일을 마치면 결과를 send_message로 ' + reportName(next) + '에게 보내세요. 일 흐름에 정해진 다음 차례입니다.' : '');
 }
-const TEAM_MESSAGE_LABEL = '[몽글 팀 메시지]';
+const TEAM_MESSAGE_LABEL = '[몽글 팀 메시지]', TEAM_FLOW_LABEL = '[몽글 안내]';
 /**
  * A member's text without the header it copied from the messages it received ("[몽글 팀 메시지] 설계 → 개발"),
- * which Mongle adds itself. Only a leading label, and a route of two known names right after it, are removed.
+ * which Mongle adds itself. Only a leading label, and a route of two known names right after it, are removed,
+ * and a work-flow note copied at the very end.
  */
 export function withoutTeamHeader(text: string, names: readonly string[]): string {
   const known = [...new Set([...names, '사용자', '나', 'user'])].filter(Boolean).sort((a, b) => b.length - a.length);
@@ -155,7 +161,7 @@ export function withoutTeamHeader(text: string, names: readonly string[]): strin
     // The receiver's name must end there, so "→ 나중에" is text, not a route to 나.
     if (to && (!after || /^[\s:：,.]/.test(after))) rest = after.trimStart();
   }
-  return rest;
+  return rest.replace(/(?:^|\r)[ \t]*\[몽글 안내\][^\r]*$/, '').trimEnd();
 }
 
 /** What the prompt file holds: plain text for Claude, a TOML basic string for Codex's -c value. */

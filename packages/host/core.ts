@@ -346,9 +346,7 @@ export class HostCore {
         this.requireClient(client);const team=this.teams.find(item=>item.id===p.teamId);
         if(!team)throw new AppError('TEAM_NOT_FOUND','팀을 찾을 수 없습니다.');
         // The terminals stay as ordinary terminals; only the team record and its prompt files go.
-        this.teams=this.teams.filter(item=>item!==team);store.deleteTeam(team.id);
-        for(const member of team.members)this.relayKeys.delete(member.id);
-        await rm(this.teamFolder(team.id),{recursive:true,force:true});
+        await this.dropTeam(team);
         this.broadcastState();return {removed:true};
       });
     }
@@ -357,6 +355,21 @@ export class HostCore {
   private requireHost(p:{hostId:string;bootId:string}){if(p.hostId!==this.hostId||p.bootId!==this.bootId)throw new AppError('HOST_CHANGED','호스트가 바뀌었습니다. 다시 연결해 주세요.');}
   private teamFolder(teamId:string){return join(this.options.dataDir,'agent-teams',teamId);}
   private promptFile(teamId:string,member:Pick<TeamMember,'id'|'provider'>){return join(this.teamFolder(teamId),member.id+(member.provider==='claude'?'.md':'.toml'));}
+  /**
+   * Forgets a team: its record, the keys its members' relays use and its prompt folder. Its terminals are left as they
+   * are, but team messages still waiting in their inboxes are cancelled: nobody could answer them any more.
+   */
+  private async dropTeam(team:Team){
+    for(const message of team.messages??[]){
+      if(message.status!=='waiting')continue;
+      const terminalId=team.members.find(item=>item.id===message.to)?.terminalId;
+      if(terminalId)this.runtimes.get(terminalId)?.inbox?.cancel(message.id);
+    }
+    this.teams=this.teams.filter(item=>item!==team);this.teamStore?.deleteTeam(team.id);
+    for(const member of team.members)this.relayKeys.delete(member.id);
+    // A file a CLI still holds open may stay behind; nothing reads it once the record is gone.
+    await rm(this.teamFolder(team.id),{recursive:true,force:true}).catch(()=>{});
+  }
   /** A team message left its receiver's inbox: record how, once. */
   private teamMessageSettled(id:string,outcome:AgentMessageOutcome){
     for(const team of this.teams){
@@ -432,19 +445,23 @@ export class HostCore {
     if(!text)return fail('보낼 내용이 비어 있습니다.');
     if(text.length>AGENT_MESSAGE_MAX_CHARS)return fail('메시지는 '+AGENT_MESSAGE_MAX_CHARS+'자까지 보낼 수 있습니다. 긴 내용은 파일에 쓰고 그 파일 위치를 보내 주세요.');
     const entry:TeamMessage={id:randomUUID(),from:member.id,to:target?target.id:'user',preview:text.replace(/\r/g,'\n').slice(0,TEAM_MESSAGE_PREVIEW),createdAt:Date.now(),status:target?'waiting':'delivered'};
-    if(!target){
-      team.messages=[...(team.messages??[]),entry].slice(-TEAM_MESSAGE_LOG);
-      this.teamStore?.saveTeam(team);this.broadcastState();
-      return {ok:true,text:'사용자에게 보고했습니다. 몽글 팀 대화에 남았습니다.'};
-    }
+    const record=(message:TeamMessage)=>{team.messages=[...(team.messages??[]),message].slice(-TEAM_MESSAGE_LOG);this.teamStore?.saveTeam(team);this.broadcastState();};
+    // The lead's "report back to me" can pull a member off the work flow: a member handing its work to anyone
+    // but the next in the flow is told who that is, in case this was its result.
+    const next=member.reportTo==='user'?'사용자':member.reportTo;
+    const offFlow=team.members[0]!==member&&(target?target.name:'user')!==member.reportTo?' 참고: 일 흐름에서 당신의 다음 차례는 '+next+'입니다. 이 메시지가 맡은 일을 끝낸 결과라면 '+next+'에게도 send_message로 보내야 다음 단계가 이어집니다.':'';
+    if(!target){record(entry);return {ok:true,text:'사용자에게 보고했습니다. 몽글 팀 대화에 남았습니다.'+offFlow};}
     const runtime=target.terminalId?this.runtimes.get(target.terminalId):undefined,inbox=runtime?.inbox;
-    if(!runtime||runtime.info.status!=='running'||!inbox||!runtime.agentShell)return fail(target.name+'의 터미널이 닫혀 있어 보낼 수 없습니다. 사용자에게 알려 주세요.');
-    if(!inbox.agentRunning&&runtime.promptIdle)return fail(target.name+'의 CLI가 꺼져 있어 보낼 수 없습니다. 사용자에게 알려 주세요.');
-    if(inbox.size>=AGENT_INBOX_MAX)return fail(target.name+'에게 아직 전달되지 않은 메시지가 '+AGENT_INBOX_MAX+'개 있습니다. 전달된 뒤 다시 보내 주세요.');
+    // What cannot be handed over stays in the conversation with its reason, so the user sees where the flow stopped.
+    const refuse=(reason:string,error:string)=>{record({...entry,status:'failed',reason});return fail(error);};
+    const tell=' 몽글 팀 대화에 "전달하지 못함"으로 남았습니다. send_message로 사용자에게 알려 주세요.';
+    if(!runtime||runtime.info.status!=='running'||!inbox||!runtime.agentShell)return refuse('터미널 닫힘',target.name+'의 터미널이 닫혀 있어 보낼 수 없습니다.'+tell);
+    if(!inbox.agentRunning&&runtime.promptIdle)return refuse('CLI 꺼짐',target.name+'의 CLI가 꺼져 있어 보낼 수 없습니다.'+tell);
+    if(inbox.size>=AGENT_INBOX_MAX)return refuse('보류 메시지 가득 참',target.name+'에게 아직 전달되지 않은 메시지가 '+AGENT_INBOX_MAX+'개 있습니다. 전달된 뒤 다시 보내 주세요.');
     team.messages=[...(team.messages??[]),entry].slice(-TEAM_MESSAGE_LOG);
-    inbox.add(teamMessageText(member.name,target.name,text),member.name,false,entry.id);
+    inbox.add(teamMessageText(member.name,target.name,text,team.members[0]===target?undefined:target.reportTo),member.name,false,entry.id);
     this.teamStore?.saveTeam(team);this.broadcastState();
-    return {ok:true,text:target.name+'에게 보냈습니다. '+target.name+'이(가) 하던 일이 있으면 그 일을 마친 뒤 입력창에 들어갑니다. 답이나 보고는 새 메시지로 들어오니, 기다리는 동안 같은 차례에서 다시 확인하지 말고 차례를 끝내세요.'};
+    return {ok:true,text:target.name+'에게 보냈습니다. '+target.name+'이(가) 하던 일이 있으면 그 일을 마친 뒤 입력창에 들어갑니다. 답이나 보고는 새 메시지로 들어오니, 기다리는 동안 같은 차례에서 다시 확인하지 말고 차례를 끝내세요.'+offFlow};
   }
   private teamLogBroadcast=false;
   /** Inboxes settle in the middle of terminal events; views learn of it once those finish. */
@@ -878,6 +895,8 @@ export class HostCore {
         const terminals=this.terminals.filter(t=>t.groupId===p.id);
         if (!p.terminate && terminals.some(t=>t.status==='running')) throw new AppError('CONFIRM_REQUIRED','실행 중인 터미널을 종료하려면 확인이 필요합니다.');
         for (const info of terminals) await this.removeTerminal(info);
+        // A team's members are this group's terminals: the team goes with them.
+        for (const team of this.teams.filter(item=>item.groupId===p.id)) await this.dropTeam(team);
         this.groups=this.groups.filter(g=>g.id!==p.id);this.persist(true);this.broadcastState();return {removed:true};
       }
       case 'terminals.create': {
@@ -1146,6 +1165,8 @@ export class HostCore {
       agentToken,
       onAgentStatus:(status,count,provider='claude')=>{info.agentStatus=status;info.agentProvider=provider;if(count!==undefined)info.agentNotificationCount=count;runtime.notificationChanged=true;runtime.inbox?.statusChanged(status);},
       onCodexHooksReview:visible=>{if(visible)info.codexHooksReview=true;else delete info.codexHooksReview;runtime.notificationChanged=true;},
+      // Codex runs its first hook only with its first prompt; its input box readies it for that one message.
+      onCodexComposer:()=>{if(!current()||!runtime.agentShell||runtime.promptIdle)return;if(info.agentProvider!=='codex'){info.agentProvider='codex';runtime.notificationChanged=true;}runtime.inbox?.agentStarted('screen');},
       onAgentSession:session=>{if(!current())return;this.recordAgentSession(info,session);if(session)runtime.inbox?.agentStarted();else runtime.inbox?.agentStopped();},
       onAgentReport:()=>{if(current())runtime.inbox?.agentReported();},
       // The first prompt after a restore types the resume line and keeps the intent until
@@ -1156,7 +1177,7 @@ export class HostCore {
     // Messages for this generation's agent live in host memory and end with it.
     runtime.inbox=new AgentInbox({
       write:data=>{if(!current()||info.status!=='running'||!runtime.pty)return false;try{runtime.pty.write(data);return true;}catch{return false;}},
-      facts:()=>({supported:runtime.agentShell===true,status:info.agentStatus,dnd:info.agentDnd===true}),
+      facts:()=>({supported:runtime.agentShell===true,status:info.agentStatus,dnd:info.agentDnd===true,provider:info.agentProvider??this.agentSessions.get(info.id)?.session.provider}),
       changed:()=>{const summary=runtime.inbox?.summary();if(summary)info.agentInbox=summary;else delete info.agentInbox;if(runtime.agentShell&&runtime.inbox?.agentRunning)info.agentReady=true;else delete info.agentReady;runtime.notificationChanged=true;this.scheduleFrame(runtime);},
       settled:(id,outcome)=>this.teamMessageSettled(id,outcome),
     });
@@ -1176,6 +1197,7 @@ export class HostCore {
     info.status='running';info.pid=runtime.pty.pid;info.exitCode=undefined;
     runtime.pty.onData(data=>{
       if(runtime.disposed)return;
+      runtime.inbox?.observeOutput();
       const bytes=Buffer.byteLength(data);runtime.pendingBytes+=bytes;
       if(runtime.pendingBytes>1024*1024)try{runtime.pty?.pause();}catch{}
       void runtime.engine.write(data).then(()=>{runtime.pendingBytes-=bytes;if(runtime.pendingBytes<256*1024)try{runtime.pty?.resume();}catch{}this.scheduleFrame(runtime);}).catch(()=>this.notice('TERMINAL_RENDER_ERROR','터미널 출력을 처리하지 못했습니다.'));

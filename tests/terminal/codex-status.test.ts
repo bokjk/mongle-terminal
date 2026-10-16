@@ -269,3 +269,26 @@ test('the engine reports while Codex asks whether to trust new or changed hooks'
   await engine.write('\x1b[?1049l');
   assert.deepEqual(seen, [true, false]);
 });
+
+test('the engine reports the input box of a Codex the wrapper launched, once, and never from an earlier screen', async t => {
+  const TOKEN = 'c'.repeat(64);
+  let shown = 0;
+  const engine = new TerminalEngine({cols:80, rows:16, onResponse(){}, agentToken:TOKEN, onCodexComposer:()=>{ shown++; }});
+  t.after(()=>engine.dispose());
+  const marker = (token = TOKEN) => '\x1b]777;mongle-codex;' + token + '\x07';
+  await engine.write('› Ask Codex to do anything\r\n  ? for shortcuts\r\n');
+  assert.equal(shown, 0, 'the same words without a launch');
+  await engine.write(marker('d'.repeat(64)) + '\r\n  ? for shortcuts\r\n');
+  assert.equal(shown, 0, 'another shell\'s token');
+  await engine.write('\x1b[2J\x1b[HPS> codex\r\n' + marker());
+  await engine.write('\x1b[?1049h\x1b[H  Hooks need review\r\n> 1. Review hooks\r\n  2. Trust all and continue\r\n\r\n  ? for shortcuts');
+  assert.equal(shown, 0, 'a question covers the input box');
+  await engine.write('\x1b[?1049l\r\n>_ OpenAI Codex\r\n\r\n› Ask Codex to do anything\r\n\r\n  ? for shortcuts');
+  assert.equal(shown, 1, 'the input box of this launch');
+  await engine.write('\r\n  ? for shortcuts');
+  assert.equal(shown, 1, 'once per launch');
+  await engine.write('\x1b]777;mongle-shell;' + TOKEN + '\x07\r\nPS> codex\r\n' + marker());
+  assert.equal(shown, 1, 'the hints already on screen belong to the earlier Codex');
+  await engine.write('\r\n› Ask Codex to do anything\r\n  ? for shortcuts');
+  assert.equal(shown, 2, 'the next launch draws its own');
+});

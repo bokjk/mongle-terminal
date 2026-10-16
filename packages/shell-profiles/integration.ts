@@ -7,7 +7,8 @@ const AGENT_PIPE = /^\\\\\.\\pipe\\mongle-agent-[a-f0-9]{32}$/;
  * user function or alias and never edits profiles. Interactive launches (and
  * `resume`/`fork`) get `--no-daemon` so lifecycle hooks run in this shell's
  * Codex process with this shell's token, plus a one-run nonce the managed hook
- * requires. Other subcommands and explicit --remote/--no-daemon pass through
+ * requires. Such a launch also prints a token marker: Codex runs its first hook only with its first prompt,
+ * so the host learns from the marker that the next input box on screen is Codex's. Other subcommands and explicit --remote/--no-daemon pass through
  * unchanged. Calling codex.exe by full path bypasses this and is not captured.
  */
 export const CODEX_POWERSHELL_WRAPPER = String.raw`
@@ -50,6 +51,7 @@ if ($env:MONGLE_AGENT_PIPE) {
     }
     $previous = $env:MONGLE_CODEX_RUN
     if ($wrapped) { $env:MONGLE_CODEX_RUN = [guid]::NewGuid().ToString('N') } else { Remove-Item Env:MONGLE_CODEX_RUN -ErrorAction SilentlyContinue }
+    if ($wrapped -and $env:MONGLE_AGENT_TOKEN) { Write-Host -NoNewline ([char]27 + ']777;mongle-codex;' + $env:MONGLE_AGENT_TOKEN + [char]7) }
     try { & $cli @final } finally { if ($null -eq $previous) { Remove-Item Env:MONGLE_CODEX_RUN -ErrorAction SilentlyContinue } else { $env:MONGLE_CODEX_RUN = $previous } }
   }
   if (-not (Get-Command codex -CommandType Function,Alias -ErrorAction SilentlyContinue)) {

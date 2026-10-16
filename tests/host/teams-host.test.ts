@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -75,6 +75,9 @@ test('a team starts its members as PowerShell tabs, types each CLI with its role
   assert.deepEqual(modelCalls, ['claude', 'codex'], 'cached');
   await request('teams.templates.save', { id: mine.id, name: '내 팀 2', members: mine.members });
   assert.equal((await request('teams.templates')).at(-1).name, '내 팀 2');
+  const spare = await request('teams.templates.save', { name: '지울 템플릿', members: mine.members });
+  assert.deepEqual(await request('teams.templates.delete', { id: spare.id }), { deleted: true });
+  assert.ok(!(await request('teams.templates')).some((item: any) => item.id === spare.id), 'the user\'s own template is deleted');
 
   // The pre-start check speaks for each part. A folder that cannot hold worktrees does not block the team.
   assert.ok(BUILT_IN_TEMPLATES.every(template => template.members.every(item => item.folder === 'base')), 'built-in teams start in the base folder');
@@ -142,14 +145,27 @@ test('a team starts its members as PowerShell tabs, types each CLI with its role
   assert.match(refused(core.teamRelay(reviewerKey.key, { op: 'send', to: '없는사람', text: '안녕' })), /받을 수 있는 이름: 설계, 사용자/);
   assert.match(refused(core.teamRelay(reviewerKey.key, { op: 'send', to: '검토', text: '나에게' })), /자기 자신/);
   assert.match(refused(core.teamRelay(reviewerKey.key, { op: 'send', to: '설계', text: '\x1b\x07\x00' })), /비어 있습니다/, 'control characters are dropped before anything is sent');
-  assert.equal(core.teamRelay(leadKey.key, { op: 'send', to: '검토', text: ' [몽글 팀 메시지] 설계 → 검토 결제 모듈을\r\n검토해 주세요 ' }).ok, true, 'a starting CLI can be given work; a copied header is dropped');
+  const handed = core.teamRelay(leadKey.key, { op: 'send', to: '검토', text: ' [몽글 팀 메시지] 설계 → 검토 결제 모듈을\r\n검토해 주세요 ' }) as { ok: true; text: string };
+  assert.equal(handed.ok, true, 'a starting CLI can be given work; a copied header is dropped');
+  assert.doesNotMatch(handed.text, /참고:/, 'the lead hands out work without a reminder');
   const relayed = log().at(-1)!;
   assert.deepEqual([relayed.from, relayed.to, relayed.preview, relayed.status], [lead.id, reviewer.id, '결제 모듈을\n검토해 주세요', 'waiting']);
   const waiting = core.getState().terminals.find(item => item.id === reviewer.terminalId)!.agentInbox!.messages;
-  assert.deepEqual([waiting[0].id, waiting[0].from, waiting[0].preview], [relayed.id, '설계', '[몽글 팀 메시지] 설계 → 검토 결제 모듈을 검토해 주세요'], 'the reviewer receives it with the sender in the header');
-  assert.equal(core.teamRelay(reviewerKey.key, { op: 'send', to: '사용자', text: '검토 끝: 통과' }).ok, true, 'a read-only member can still report');
+  assert.deepEqual([waiting[0].id, waiting[0].from], [relayed.id, '설계']);
+  assert.ok(waiting[0].preview.startsWith('[몽글 팀 메시지] 설계 → 검토 결제 모듈을 검토해 주세요'), 'the reviewer receives it with the sender in the header');
+  assert.equal((core as any).runtimes.get(reviewer.terminalId).inbox.pending[0].text, '[몽글 팀 메시지] 설계 → 검토\r결제 모듈을\r검토해 주세요\r\r[몽글 안내] 이 일을 마치면 결과를 send_message로 설계에게 보내세요. 일 흐름에 정해진 다음 차례입니다.', 'and is told whom its result goes to');
+  const reported = core.teamRelay(reviewerKey.key, { op: 'send', to: '사용자', text: '검토 끝: 통과' }) as { ok: true; text: string };
+  assert.equal(reported.ok, true, 'a read-only member can still report');
+  assert.match(reported.text, /참고: 일 흐름에서 당신의 다음 차례는 설계입니다/, 'a member skipping the next in the flow is reminded of it');
   const report = log().at(-1)!;
   assert.deepEqual([report.from, report.to, report.preview, report.status], [reviewer.id, 'user', '검토 끝: 통과', 'delivered']);
+  // What cannot be handed over stays in the conversation with its reason.
+  const reviewerRuntime = (core as any).runtimes.get(reviewer.terminalId);
+  reviewerRuntime.promptIdle = true;
+  assert.match(refused(core.teamRelay(leadKey.key, { op: 'send', to: '검토', text: '하나 더' })), /검토의 CLI가 꺼져 있어 보낼 수 없습니다\. 몽글 팀 대화에 "전달하지 못함"으로 남았습니다/);
+  reviewerRuntime.promptIdle = false;
+  const undelivered = log().at(-1)!;
+  assert.deepEqual([undelivered.from, undelivered.to, undelivered.preview, undelivered.status, undelivered.reason], [lead.id, reviewer.id, '하나 더', 'failed', 'CLI 꺼짐']);
 
   // The reviewer's Codex reports its conversation; after a host restart it reopens with its role and read-only switch.
   const token = (core as any).runtimes.get(reviewer.terminalId).agentToken;
@@ -158,7 +174,7 @@ test('a team starts its members as PowerShell tabs, types each CLI with its role
   await core.close();
   core = create(); await core.init();
   assert.deepEqual(core.getState().teams?.map(item => item.name), ['결제 정리'], 'teams survive a restart');
-  assert.deepEqual(core.getState().teams![0].messages?.map(item => [item.id, item.status]), [[sent.id, 'delivered'], [cancelled.id, 'cancelled'], [lost.id, 'failed'], [relayed.id, 'failed'], [report.id, 'delivered']], 'the log survives; a message the stopped host held was not delivered');
+  assert.deepEqual(core.getState().teams![0].messages?.map(item => [item.id, item.status]), [[sent.id, 'delivered'], [cancelled.id, 'cancelled'], [lost.id, 'failed'], [relayed.id, 'failed'], [report.id, 'delivered'], [undelivered.id, 'failed']], 'the log survives; a message the stopped host held was not delivered');
   await until(() => typed(reviewer.terminalId).length > 0, 'the resumed reviewer is typed');
   assert.deepEqual(typed(reviewer.terminalId), ['__MongleCodex resume ' + sessionId + " -m 'gpt-6-astra' -c ('mcp_servers.mongle_team=' + [IO.File]::ReadAllText('" + reviewerRelay + "')) -c ('developer_instructions=' + [IO.File]::ReadAllText('" + reviewerFile + "')) -s read-only -a never\r"]);
   const resumedKey = await keyOf(reviewer.id);
@@ -166,13 +182,51 @@ test('a team starts its members as PowerShell tabs, types each CLI with its role
   assert.equal(core.teamRelay(reviewerKey.key, { op: 'list' }).ok, false, 'the previous boot\'s key is refused');
   assert.equal(core.teamRelay(resumedKey.key, { op: 'list' }).ok, true);
 
-  // Removing the team keeps the terminals and drops the record and prompt files.
+  // Removing the team keeps the terminals and drops the record and prompt files, and the team messages still waiting.
   core.connect(ctx, () => {});
+  // The lead's CLI is starting (its shell prompt may or may not have shown yet): the message waits in its inbox.
+  const leadRuntime = (core as any).runtimes.get(lead.terminalId), leadInbox = leadRuntime.inbox;
+  leadRuntime.promptIdle = false;
+  assert.equal(core.teamRelay(resumedKey.key, { op: 'send', to: '설계', text: '해제 전에 보낸 보고' }).ok, true);
+  assert.equal(leadInbox.size, 1, 'waits until the lead\'s CLI runs');
   await request('teams.remove', { teamId: team.id });
+  assert.equal(leadInbox.size, 0, 'a team message is not delivered once its team is gone');
   assert.equal(core.getState().teams?.length, 0);
   assert.equal(core.teamRelay(resumedKey.key, { op: 'list' }).ok, false, 'a removed team takes its relay keys with it');
   assert.ok(core.getState().terminals.some(item => item.id === lead.terminalId));
   await assert.rejects(readFile(leadFile, 'utf8'));
+});
+
+test('deleting a group releases its teams, and a team left without its group can still be removed', { timeout: 30000 }, async t => {
+  withoutRelay(t);
+  const dataDir = await mkdtemp(path.join(tmpdir(), 'mongle-team-orphan-'));
+  const create = () => new HostCore({ dataDir, claudeIntegration: { status: 'ready' }, teamEnvironment: environment });
+  let core = create();
+  t.after(async () => {
+    await core.close();
+    assert.equal(path.dirname(path.resolve(dataDir)), path.resolve(tmpdir()));
+    await rm(dataDir, { recursive: true, force: true });
+  });
+  await core.init();
+  const ctx: ConnectionContext = { id: randomUUID(), deviceId: randomUUID(), deviceName: 'Desktop view', owner: true };
+  core.connect(ctx, () => {});
+  const request = (method: string, params: unknown = {}) => core.handle(method, params, ctx);
+  const kept = await request('groups.create', { name: '남는 그룹', cwd: tmpdir() }), gone = await request('groups.create', { name: '지울 그룹', cwd: tmpdir() });
+  // Team records as the host keeps them; whether their terminals run does not matter here.
+  const internal = core as any;
+  const team = (name: string, groupId: string): Team => ({ id: randomUUID(), name, groupId, cwd: tmpdir(), createdAt: 1, members: [{ ...member({}), id: randomUUID() }] });
+  const doomed = team('지울 팀', gone.id), orphan = team('남은 팀', randomUUID()), other = team('다른 팀', kept.id);
+  for (const item of [doomed, orphan, other]) { internal.teams.push(item); internal.teamStore.saveTeam(item); await mkdir(path.join(dataDir, 'agent-teams', item.id), { recursive: true }); }
+  const group = core.getState().groups.find(item => item.id === gone.id)!;
+  await request('groups.delete', { id: gone.id, revision: group.revision, terminate: true });
+  assert.deepEqual(core.getState().teams?.map(item => item.name), ['남은 팀', '다른 팀'], 'the deleted group\'s team goes with it');
+  assert.deepEqual((await readdir(path.join(dataDir, 'agent-teams'))).sort(), [orphan.id, other.id].sort(), 'with its prompt folder');
+  // A team whose group was deleted by an earlier version is removed from its own menu.
+  await request('teams.remove', { teamId: orphan.id });
+  assert.deepEqual(core.getState().teams?.map(item => item.name), ['다른 팀']);
+  await core.close();
+  core = create(); await core.init();
+  assert.deepEqual(core.getState().teams?.map(item => item.name), ['다른 팀'], 'both are gone after a restart');
 });
 
 test('worktree members branch from the team folder\'s repository, linking it to the group, and share a folder without one', { timeout: 120000 }, async t => {
