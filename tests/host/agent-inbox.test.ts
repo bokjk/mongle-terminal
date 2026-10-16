@@ -3,7 +3,7 @@ import test from 'node:test';
 import { AgentInbox, DraftTracker, cleanAgentMessage, type InboxFacts } from '../../packages/host/agent-inbox.js';
 import type { AgentStatus } from '../../packages/protocol/index.js';
 
-const timing = { typingQuietMs: 80, startSettleMs: 40, submitDelayMs: 20, deliveryAckMs: 300 };
+const timing = { typingQuietMs: 80, startSettleMs: 40, submitDelayMs: 20, outputQuietMs: 30, submitMaxMs: 400, startQuietMs: 60, deliveryAckMs: 300 };
 const START = '\x1b[200~', END = '\x1b[201~';
 
 function fixture() {
@@ -128,6 +128,52 @@ test('an input box seen on screen lets one message through; the rest wait for a 
   inbox.add('third', 'pc');
   inbox.agentStarted('screen');
   await until(() => writes.length === 6, 'a new launch draws a new input box');
+});
+
+test('the Enter waits until the CLI has taken the paste and its screen is still, but not forever', async () => {
+  const { inbox, writes, status } = fixture();
+  status('idle'); inbox.agentStarted();
+  await sleep(timing.startSettleMs + 10);
+  inbox.add('long\rmessage', 'pc');
+  assert.equal(writes.length, 1, 'pasted');
+  // The CLI keeps redrawing what it takes in: no Enter while it does.
+  const echo = setInterval(() => inbox.observeOutput(), 10);
+  await sleep(timing.outputQuietMs * 4);
+  assert.equal(writes.length, 1, 'a screen still changing holds the Enter');
+  clearInterval(echo);
+  await until(() => writes.length === 2, 'the Enter follows once the screen is still');
+  assert.equal(writes[1], '\r');
+  status('working'); status('completed');
+  inbox.add('noisy', 'pc');
+  const noise = setInterval(() => inbox.observeOutput(), 10);
+  try {
+    await until(() => writes.length === 4, 'a screen that never settles still gets its Enter after submitMaxMs', timing.submitMaxMs * 3);
+  } finally { clearInterval(noise); }
+});
+
+test('Codex gets the line breaks of a message as line feeds, other CLIs as the CR a terminal pastes', async () => {
+  const { inbox, writes, facts, status } = fixture();
+  status('idle'); inbox.agentStarted();
+  inbox.add('one\rtwo', 'pc');
+  await until(() => writes.length === 2, 'delivered');
+  assert.equal(writes[0], START + 'one\rtwo' + END);
+  status('working'); status('completed');
+  facts.provider = 'codex';
+  inbox.add('three\rfour', 'pc');
+  await until(() => writes.length === 4, 'delivered to Codex');
+  assert.equal(writes[2], START + 'three\nfour' + END, 'a starting Codex would take each CR as Enter');
+});
+
+test('a Codex seen only on screen gets its first message once its screen is still', async () => {
+  const { inbox, writes } = fixture();
+  inbox.add('first', 'pc');
+  inbox.agentStarted('screen');
+  const spinner = setInterval(() => inbox.observeOutput(), 10);
+  await sleep(timing.startSettleMs + timing.startQuietMs * 2);
+  assert.equal(writes.length, 0, 'still starting: its spinner runs');
+  assert.equal(inbox.summary()?.hold, 'starting');
+  clearInterval(spinner);
+  await until(() => writes.length === 2, 'delivered once the screen has been still');
 });
 
 test('an unanswered delivery stops blocking after the acknowledgement window', async () => {

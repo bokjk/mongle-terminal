@@ -15,10 +15,19 @@ export interface AgentInboxTiming {
   startSettleMs: number;
   /** The paste and its Enter are separate writes, so the CLI takes the text before the submit. */
   submitDelayMs: number;
+  /**
+   * The Enter also waits until the terminal has shown nothing new for this long after the paste. Codex on
+   * Windows receives a paste as fast keystrokes and takes an Enter that follows them closely as a new line.
+   */
+  outputQuietMs: number;
+  /** The Enter goes out at most this long after the paste, even if the screen keeps changing. */
+  submitMaxMs: number;
+  /** A start seen only on screen (a Codex before its first hook) waits until its screen has been still this long. */
+  startQuietMs: number;
   /** After a delivery, the next message waits for the agent's turn to start, at most this long. */
   deliveryAckMs: number;
 }
-export const AGENT_INBOX_TIMING: AgentInboxTiming = { typingQuietMs: 3000, startSettleMs: 1500, submitDelayMs: 150, deliveryAckMs: 20000 };
+export const AGENT_INBOX_TIMING: AgentInboxTiming = { typingQuietMs: 3000, startSettleMs: 1500, submitDelayMs: 150, outputQuietMs: 300, submitMaxMs: 3000, startQuietMs: 1000, deliveryAckMs: 20000 };
 
 /**
  * Only printable text, line breaks and tabs remain: a message can never carry a key, an escape
@@ -76,6 +85,8 @@ export interface InboxFacts {
   /** Hook-proven status of the agent; undefined before its first report. */
   status?: AgentStatus;
   dnd: boolean;
+  /** The CLI known to run there, when known. Codex gets its line breaks as line feeds. */
+  provider?: 'claude' | 'codex';
 }
 /** How a message left the inbox: sent with its Enter, cancelled, or not delivered (write failed, the agent or terminal ended first). */
 export type AgentMessageOutcome = 'delivered' | 'cancelled' | 'failed';
@@ -103,6 +114,8 @@ export class AgentInbox {
   private pending: Pending[] = [];
   private draft = new DraftTracker();
   private lastInputAt = Number.NEGATIVE_INFINITY;
+  /** When the terminal last showed something. Only the time is kept. */
+  private lastOutputAt = Number.NEGATIVE_INFINITY;
   /** When the agent proved that it runs in this shell; undefined while the shell itself has the prompt. */
   private activeSince: number | undefined;
   /** The start was seen on screen, not proven by a hook: one message may go ('ready'), then none until a hook ('spent'). */
@@ -161,6 +174,11 @@ export class AgentInbox {
     return true;
   }
 
+  /** The terminal showed new output (a CLI redrawing, typing echo, a spinner). Only the time is kept. */
+  observeOutput() {
+    this.lastOutputAt = this.now();
+    // Holds that wait for a still screen re-check themselves on their timer.
+  }
   /** Keys a person sent to this terminal. Never retained. */
   observeInput(data: string) {
     this.lastInputAt = this.now();
@@ -215,12 +233,15 @@ export class AgentInbox {
     if (facts.status === 'attention') return 'attention';
     if (facts.status === 'working') return 'busy';
     if (now - this.activeSince < this.timing.startSettleMs) return 'starting';
+    // A Codex seen only on screen may still be starting its MCP servers, with its spinner running. What is
+    // pasted then is queued and can be split into several prompts; wait until its screen is still.
+    if (this.provisional === 'ready' && now - this.lastOutputAt < this.timing.startQuietMs) return 'starting';
     if (this.unconfirmedSubmit && !force) return 'unconfirmed';
     if (!force && (this.draft.draft || now - this.lastInputAt < this.timing.typingQuietMs)) return 'typing';
   }
   /** When a timed hold ends by itself; event-driven holds wait for the event. */
   private retryIn(reason: AgentHoldReason, now: number): number | undefined {
-    if (reason === 'starting') return this.activeSince! + this.timing.startSettleMs - now;
+    if (reason === 'starting') return Math.max(this.activeSince! + this.timing.startSettleMs, this.provisional === 'ready' ? this.lastOutputAt + this.timing.startQuietMs : 0) - now;
     if (reason === 'delivering') return this.deliveringSince! + this.timing.deliveryAckMs - now;
     if (reason === 'typing' && !this.draft.draft) return this.lastInputAt + this.timing.typingQuietMs - now;
   }
@@ -248,11 +269,23 @@ export class AgentInbox {
     this.pending.shift();
     this.deliveringSince = now;
     this.hold = 'delivering';
-    if (!this.io.write(PASTE_START + message.text + PASTE_END)) { this.endDelivery(); this.settle(message.id, 'failed'); this.io.changed(); return; }
+    // Messages keep line breaks as CR, what a terminal pastes. A Codex that is still starting takes each CR of a
+    // paste as Enter and splits the message into several prompts; a line feed is its "new line" key everywhere.
+    const text = this.io.facts().provider === 'codex' ? message.text.replace(/\r/g, '\n') : message.text;
+    if (!this.io.write(PASTE_START + text + PASTE_END)) { this.endDelivery(); this.settle(message.id, 'failed'); this.io.changed(); return; }
     if (this.provisional === 'ready') this.provisional = 'spent';
     this.submitting = message.id;
-    this.submitTimer = setTimeout(() => {
+    // The Enter waits until the CLI has taken the whole paste: a moment after it, and until the screen has
+    // been still for a while (counted from the paste at the earliest), but never longer than submitMaxMs.
+    const submit = () => {
       this.submitTimer = undefined;
+      const at = this.now(), still = at - Math.max(this.lastOutputAt, now), late = now + this.timing.submitMaxMs - at;
+      if (late > 0 && (at - now < this.timing.submitDelayMs || still < this.timing.outputQuietMs)) {
+        const wait = Math.max(now + this.timing.submitDelayMs - at, this.timing.outputQuietMs - still, 1);
+        this.submitTimer = setTimeout(submit, Math.min(wait, late));
+        this.submitTimer.unref?.();
+        return;
+      }
       this.submitting = undefined;
       // The prompt is the shell's again: Enter would run the pasted text as a command.
       if (this.disposed || this.activeSince === undefined || !this.io.facts().supported) { this.endDelivery(); this.settle(message.id, 'failed'); this.pump(); return; }
@@ -260,7 +293,8 @@ export class AgentInbox {
       else this.settle(message.id, 'failed');
       this.io.changed();
       this.pump();
-    }, this.timing.submitDelayMs);
+    };
+    this.submitTimer = setTimeout(submit, this.timing.submitDelayMs);
     this.submitTimer.unref?.();
     this.io.changed();
   }

@@ -1177,7 +1177,7 @@ export class HostCore {
     // Messages for this generation's agent live in host memory and end with it.
     runtime.inbox=new AgentInbox({
       write:data=>{if(!current()||info.status!=='running'||!runtime.pty)return false;try{runtime.pty.write(data);return true;}catch{return false;}},
-      facts:()=>({supported:runtime.agentShell===true,status:info.agentStatus,dnd:info.agentDnd===true}),
+      facts:()=>({supported:runtime.agentShell===true,status:info.agentStatus,dnd:info.agentDnd===true,provider:info.agentProvider??this.agentSessions.get(info.id)?.session.provider}),
       changed:()=>{const summary=runtime.inbox?.summary();if(summary)info.agentInbox=summary;else delete info.agentInbox;if(runtime.agentShell&&runtime.inbox?.agentRunning)info.agentReady=true;else delete info.agentReady;runtime.notificationChanged=true;this.scheduleFrame(runtime);},
       settled:(id,outcome)=>this.teamMessageSettled(id,outcome),
     });
@@ -1197,6 +1197,7 @@ export class HostCore {
     info.status='running';info.pid=runtime.pty.pid;info.exitCode=undefined;
     runtime.pty.onData(data=>{
       if(runtime.disposed)return;
+      runtime.inbox?.observeOutput();
       const bytes=Buffer.byteLength(data);runtime.pendingBytes+=bytes;
       if(runtime.pendingBytes>1024*1024)try{runtime.pty?.pause();}catch{}
       void runtime.engine.write(data).then(()=>{runtime.pendingBytes-=bytes;if(runtime.pendingBytes<256*1024)try{runtime.pty?.resume();}catch{}this.scheduleFrame(runtime);}).catch(()=>this.notice('TERMINAL_RENDER_ERROR','터미널 출력을 처리하지 못했습니다.'));
