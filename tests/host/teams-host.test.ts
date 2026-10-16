@@ -75,6 +75,9 @@ test('a team starts its members as PowerShell tabs, types each CLI with its role
   assert.deepEqual(modelCalls, ['claude', 'codex'], 'cached');
   await request('teams.templates.save', { id: mine.id, name: '내 팀 2', members: mine.members });
   assert.equal((await request('teams.templates')).at(-1).name, '내 팀 2');
+  const spare = await request('teams.templates.save', { name: '지울 템플릿', members: mine.members });
+  assert.deepEqual(await request('teams.templates.delete', { id: spare.id }), { deleted: true });
+  assert.ok(!(await request('teams.templates')).some((item: any) => item.id === spare.id), 'the user\'s own template is deleted');
 
   // The pre-start check speaks for each part. A folder that cannot hold worktrees does not block the team.
   assert.ok(BUILT_IN_TEMPLATES.every(template => template.members.every(item => item.folder === 'base')), 'built-in teams start in the base folder');

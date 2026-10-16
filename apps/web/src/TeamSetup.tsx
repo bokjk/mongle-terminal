@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Check, ChevronDown, ChevronRight, Crown, LoaderCircle, Plus, RotateCcw, Star, Users, X, XCircle } from 'lucide-react';
+import { AlertTriangle, Check, ChevronDown, ChevronRight, Crown, LoaderCircle, Plus, RotateCcw, Star, Trash2, Users, X, XCircle } from 'lucide-react';
 import type { Group, HostState, Team, TeamCheck, TeamModels, TeamScopeFolder, TeamTemplate } from '../../../packages/protocol/index';
 import { Modal } from './Modal';
 import { addMember, addScopeFolder, DEFAULT_TEMPLATE_KEY, draftsFrom, makeLead, modelSuggestions, removeMember, renameMember, ROLE_DEFAULTS, ROLES, scopeDraft, scopeProblems, specsFrom, TEAM_MAX_MEMBERS, teamProblems, toggleScopeFolder, withRole, type MemberDraft, type ScopeDraft } from './team-model';
@@ -27,7 +27,9 @@ export function TeamSetup({state, groupId, request, onClose, onStarted, pickDire
   const [open, setOpen] = useState<string>();
   const [step, setStep] = useState<'compose' | 'check'>('compose');
   const [check, setCheck] = useState<{ready: boolean; checks: TeamCheck[]}>();
-  const [busy, setBusy] = useState<'' | 'check' | 'start' | 'save'>('');
+  const [busy, setBusy] = useState<'' | 'check' | 'start' | 'save' | 'delete'>('');
+  /** The user's own template whose deletion waits for a second click. */
+  const [removing, setRemoving] = useState<string>();
   const [error, setError] = useState('');
   const [saving, setSaving] = useState<string>();
   const host = {hostId: state.hostId, bootId: state.bootId};
@@ -117,6 +119,20 @@ export function TeamSetup({state, groupId, request, onClose, onStarted, pickDire
     finally { setBusy(''); }
   }
 
+  /** Deletes one of the user's own templates; the members drafted from it stay as they are. */
+  async function removeTemplate(template: TeamTemplate) {
+    if (busy || template.builtIn) return;
+    setBusy('delete'); setError('');
+    try {
+      await request('teams.templates.delete', {id: template.id});
+      setTemplates(list => list?.filter(item => item.id !== template.id));
+      setRemoving(undefined);
+      if (defaultId === template.id) toggleDefault(template.id);
+      if (templateId === template.id) setTemplateId('');
+    } catch (error) { setError(message(error)); }
+    finally { setBusy(''); }
+  }
+
   return <Modal title="AI 팀으로 작업 시작" onClose={onClose}>
     <form className="team-setup" onSubmit={event => { event.preventDefault(); if (step === 'compose') void runCheck(); else void start(); }}>
       <ol className="team-steps" aria-label="진행 단계">
@@ -142,12 +158,19 @@ export function TeamSetup({state, groupId, request, onClose, onStarted, pickDire
             <legend className="field-label">템플릿</legend>
             {!templates && !error && <p className="hint"><LoaderCircle size={13} className="spin"/> 템플릿을 불러오는 중…</p>}
             <div className="team-template-list" role="radiogroup" aria-label="팀 템플릿">
-              {templates?.map(template => <div key={template.id} className={'team-template' + (template.id === templateId ? ' selected' : '')}>
+              {templates?.map(template => removing === template.id ? <div key={template.id} className="team-template confirming" role="group" aria-label={template.name + ' 템플릿 지우기 확인'}>
+                <p className="team-template-confirm"><strong>‘{template.name}’ 템플릿을 지울까요?</strong><small>내 템플릿에서만 지웁니다. 이 템플릿으로 시작한 팀은 그대로입니다.</small></p>
+                <div className="team-template-confirm-actions">
+                  <button type="button" className="button subtle" onClick={() => setRemoving(undefined)}>취소</button>
+                  <button type="button" className="button danger" disabled={busy !== ''} onClick={() => void removeTemplate(template)}>{busy === 'delete' ? '지우는 중…' : '지우기'}</button>
+                </div>
+              </div> : <div key={template.id} className={'team-template' + (template.id === templateId ? ' selected' : '')}>
                 <button type="button" role="radio" aria-checked={template.id === templateId} className="team-template-main" onClick={() => choose(template)}>
                   <strong>{template.name}</strong>
                   <small>{template.members.map(member => member.name).join(' · ')}{template.builtIn ? ' · 기본 제공' : ' · 내 템플릿'}</small>
                 </button>
                 <button type="button" className={'icon-button team-template-star' + (template.id === defaultId ? ' on' : '')} aria-pressed={template.id === defaultId} aria-label={template.name + (template.id === defaultId ? ' 기본 템플릿 해제' : '을 기본 템플릿으로')} title={template.id === defaultId ? '기본 템플릿 해제' : '다음에도 이 템플릿을 먼저 고르기'} onClick={() => toggleDefault(template.id)}><Star size={14}/></button>
+                {!template.builtIn && <button type="button" className="icon-button danger team-template-delete" aria-label={template.name + ' 템플릿 지우기'} title="내 템플릿 지우기" disabled={busy !== ''} onClick={() => setRemoving(template.id)}><Trash2 size={14}/></button>}
               </div>)}
             </div>
           </fieldset>
